@@ -9,10 +9,6 @@ def test_django_project_loads():
     assert settings.USE_TZ is True
 
 
-def test_intentional_failure_for_ci_verification():
-    """Deliberate failure to verify CI goes red. Must be removed before merge."""
-    assert False, "CI verification: this test must fail"
-
 
 def test_health_endpoint():
     response = Client().get("/health/")
