@@ -9,7 +9,6 @@ def test_django_project_loads():
     assert settings.USE_TZ is True
 
 
-
 def test_health_endpoint():
     response = Client().get("/health/")
     assert response.status_code == 200
