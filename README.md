@@ -93,10 +93,68 @@ Apply formatting:
 docker compose exec web ruff format .
 ```
 
+## WebSocket protocol (T-13)
+
+The full client–server protocol contract lives in two places:
+
+| Artifact | Purpose |
+|---|---|
+| `docs/protocol.md` | Human-readable specification — message schemas, lifecycle diagrams, error codes, extensibility rules |
+| `apps/protocol/` | Shared Python module — constants, validators, builder helpers used by backend handlers |
+
+### Quick reference
+
+```python
+from apps.protocol.constants import MessageType, ErrorCode, PROTOCOL_VERSION
+from apps.protocol.validators import validate_message
+from apps.protocol.exceptions import ProtocolError
+from apps.protocol.schemas import build_server_hello, error_from_protocol_error
+```
+
+**Validating an inbound WebSocket message:**
+
+```python
+try:
+    msg_type, payload = validate_message(raw_text)
+except ProtocolError as exc:
+    await ws.send(json.dumps(error_from_protocol_error(exc)))
+```
+
+**Building an outbound server message:**
+
+```python
+msg = build_server_hello(
+    participant_id="p-abc",
+    server_ts=1_700_000_001_000,
+    client_ts_echo=1_700_000_000_000,
+    event_id="evt-xyz",
+)
+await ws.send(json.dumps(msg))
+```
+
+### Extending the protocol
+
+- **New message type (non-breaking):** add to `MessageType` → add payload validator
+  in `validators.py` → add builder in `schemas.py` → document in `docs/protocol.md`.
+- **Breaking change:** increment `PROTOCOL_VERSION` in `constants.py`, add the new
+  version to `SUPPORTED_VERSIONS`, and document the migration in `docs/protocol.md`.
+- **New error code:** add to `ErrorCode` in `constants.py` — never hard-code error
+  strings in handlers.
+
+See `docs/protocol.md` §11 and §12 for the full extensibility guide and developer
+patterns.
+
 ## Project structure
 
 ```text
 .
+├── apps/
+│   ├── health/              # health-check endpoint (T-03)
+│   └── protocol/            # WebSocket protocol contract (T-13)
+│       ├── constants.py     # MessageType, ErrorCode, PROTOCOL_VERSION
+│       ├── exceptions.py    # ProtocolError
+│       ├── validators.py    # validate_message(), validate_payload()
+│       └── schemas.py       # build_server_*() helpers
 ├── config/
 │   ├── settings/
 │   │   ├── base.py          # shared settings
@@ -106,9 +164,12 @@ docker compose exec web ruff format .
 │   ├── urls.py
 │   ├── wsgi.py
 │   └── asgi.py
+├── docs/
+│   └── protocol.md          # WebSocket protocol specification
 ├── docker/
 │   └── entrypoint.sh        # wait for Postgres, migrate, then start
 ├── tests/
+│   └── test_protocol.py     # protocol contract tests (114 cases)
 ├── docker-compose.yml
 ├── Dockerfile
 ├── manage.py
