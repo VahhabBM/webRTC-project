@@ -6,3 +6,4 @@ gunicorn>=23.0,<24
 pytest>=8.3,<9
 pytest-django>=4.9,<5
 ruff>=0.9,<1
+python-json-logger>=2.0
