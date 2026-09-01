@@ -10,6 +10,16 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
       postgres:
         image: postgres:16-alpine
         env:
@@ -35,7 +45,7 @@ jobs:
       POSTGRES_PASSWORD: ci_password
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"
-      # Redis is not required: conftest.py overrides the cache to locmem.
+      # Redis service runs on localhost:6379 (see services above).
       REDIS_URL: redis://localhost:6379/0
 
     steps:
