@@ -1,7 +1,6 @@
 import logging
 
-import redis
-from django.conf import settings
+from django.core.cache import cache
 from django.db import connections
 from django.db.utils import OperationalError
 from django.http import JsonResponse
@@ -42,8 +41,7 @@ class HealthCheckView(View):
 
     def _check_redis(self):
         try:
-            client = redis.Redis.from_url(settings.REDIS_URL)
-            client.ping()
-            return True
-        except redis.RedisError:
+            cache.set("health_check_ping", "pong", timeout=5)
+            return cache.get("health_check_ping") == "pong"
+        except Exception:
             return False
