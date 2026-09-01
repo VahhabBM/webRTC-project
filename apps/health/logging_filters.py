@@ -9,7 +9,6 @@ SENSITIVE_PATTERNS = [
 
 
 class RedactSensitiveDataFilter(logging.Filter):
-
     def filter(self, record):
         message = record.getMessage()
         for pattern in SENSITIVE_PATTERNS:
