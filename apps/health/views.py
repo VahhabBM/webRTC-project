@@ -1,10 +1,11 @@
 import logging
+
+import redis
+from django.conf import settings
 from django.db import connections
 from django.db.utils import OperationalError
 from django.http import JsonResponse
 from django.views import View
-import redis
-from django.conf import settings
 
 logger = logging.getLogger("health")
 
