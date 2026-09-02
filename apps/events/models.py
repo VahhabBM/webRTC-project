@@ -171,6 +171,7 @@ class Round(models.Model):
 
 class Pair(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="pairs")
     round = models.ForeignKey(Round, on_delete=models.CASCADE, related_name="pairs")
     participant_a = models.ForeignKey(
         Participant, on_delete=models.CASCADE, related_name="pairs_as_a"
@@ -187,12 +188,20 @@ class Pair(models.Model):
     class Meta:
         constraints = [
             models.CheckConstraint(
-                condition=~models.Q(participant_a=models.F("participant_b")),
-                name="pair_participants_are_distinct",
+                condition=models.Q(participant_a__lt=models.F("participant_b")),
+                name="pair_participants_are_ordered",
             ),
             models.UniqueConstraint(
-                fields=("round", "participant_a", "participant_b"),
-                name="uniq_pair_per_round",
+                fields=("event", "participant_a", "participant_b"),
+                name="uniq_pair_per_event",
+            ),
+            models.UniqueConstraint(
+                fields=("round", "participant_a"),
+                name="uniq_pair_participant_a_per_round",
+            ),
+            models.UniqueConstraint(
+                fields=("round", "participant_b"),
+                name="uniq_pair_participant_b_per_round",
             ),
         ]
         indexes = [
@@ -202,6 +211,8 @@ class Pair(models.Model):
         ]
 
     def save(self, *args, **kwargs):
+        if self.round_id and self.event_id is None:
+            self.event_id = self.round.event_id
         if (
             self.participant_a_id
             and self.participant_b_id
