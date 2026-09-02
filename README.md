@@ -93,6 +93,25 @@ Apply formatting:
 docker compose exec web ruff format .
 ```
 
+## Synthetic event data (T-06)
+
+Use the `seed_event` management command to create a new synthetic Event, its rounds,
+sample Tags, and Participants:
+
+```bash
+python manage.py seed_event --participants 10
+python manage.py seed_event --participants 100
+python manage.py seed_event --participants 900 --seed 42
+```
+
+Each invocation creates a new uniquely named Event and never deletes or overwrites
+existing Events or Participants. The predefined sample Tags are reused by name, so
+rerunning the command does not duplicate them. Use `--event-name`, `--description`,
+`--num-rounds`, `--round-duration`, `--break-duration`, and `--start-time` to
+customize Event configuration. `--seed` makes participant names and tag assignment
+reproducible. When running with `DJANGO_SETTINGS_MODULE=config.settings.production`,
+the explicit `--confirm-production` flag is required.
+
 ## WebSocket protocol (T-13)
 
 The full client–server protocol contract lives in two places:
