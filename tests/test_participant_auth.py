@@ -1,4 +1,5 @@
 import hashlib
+import logging
 from datetime import timedelta
 
 import pytest
@@ -13,6 +14,7 @@ from apps.events.auth import (
     resolve_participant_from_scope,
 )
 from apps.events.models import Event, Participant
+from apps.health.logging_filters import RedactSensitiveDataFilter
 
 
 @pytest.fixture
@@ -105,3 +107,19 @@ def test_token_is_reusable_until_expiry(participant, issued_token):
 def test_malformed_token_is_rejected(participant):
     with pytest.raises(InvalidJoinToken):
         authenticate_join_token("not-a-token")
+
+
+@pytest.mark.django_db
+def test_authentication_does_not_log_raw_token(participant, caplog):
+    raw = issue_join_token(participant)
+    record = logging.LogRecord(
+        "django.request",
+        logging.WARNING,
+        __file__,
+        1,
+        "Bad Request: /join/%s-invalid/",
+        (raw,),
+        None,
+    )
+    RedactSensitiveDataFilter().filter(record)
+    assert raw not in record.getMessage()

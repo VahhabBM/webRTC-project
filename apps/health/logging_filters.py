@@ -3,6 +3,7 @@ import re
 
 SENSITIVE_PATTERNS = [
     re.compile(r"token=[\w\-\.]+", re.IGNORECASE),
+    re.compile(r"(/join/)[^/\s]+", re.IGNORECASE),
     re.compile(r"password=\S+", re.IGNORECASE),
     re.compile(r"[\w\.-]+@[\w\.-]+\.\w+"),  # ایمیل
 ]
