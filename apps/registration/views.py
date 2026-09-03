@@ -11,6 +11,7 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
 from apps.events.models import Event, Participant, ParticipantTag
+from apps.registration.services.email_service import EmailService
 
 from .forms import RegistrationError, validate_registration_data
 from .models import EmailVerificationToken, TermsAcceptance
@@ -99,3 +100,14 @@ class VerifyEmailView(View):
         verification.mark_used()
 
         return JsonResponse({"message": "ثبت‌نام شما با موفقیت تأیید شد."}, status=200)
+
+
+@staticmethod
+def _send_verification_email(participant, token):
+    event_title = getattr(participant.event, "title", "همسان‌گزینی")
+    EmailService.send_verification_email(
+        recipient_email=participant.email,
+        name=participant.name,
+        token=token.token,
+        event_title=event_title,
+    )
