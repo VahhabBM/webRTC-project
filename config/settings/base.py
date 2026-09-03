@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "apps.health",
     "apps.events",
+    "apps.registration",
 ]
 
 MIDDLEWARE = [
