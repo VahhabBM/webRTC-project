@@ -1,0 +1,15 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+  <h2>پیوند اختصاصی ورود به رویداد</h2>
+  <p>سلام {{ name }} عزیز،</p>
+  <p>پیوند ورود بدون رمز عبور شما برای رویداد «{{ event_title }}» ایجاد شد. برای ورود به محیط رویداد، روی دکمه زیر کلیک کنید:</p>
+
+  <div style="text-align: center;">
+    <a href="{{ action_url }}" class="btn-action">ورود به محیط رویداد</a>
+  </div>
+
+  <p>⚠️ این پیوند مختص شماست؛ لطفاً آن را در اختیار افراد دیگر قرار ندهید.</p>
+  <p>پیوند جایگزین:</p>
+  <p class="raw-link">{{ action_url }}</p>
+{% endblock %}

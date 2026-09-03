@@ -1,0 +1,15 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+  <h2>تأیید ایمیل و تکمیل ثبت‌نام</h2>
+  <p>سلام {{ name }} عزیز،</p>
+  <p>از ثبت‌نام شما در رویداد «{{ event_title }}» متشکریم. جهت فعال‌سازی حساب و نهایی‌سازی حضور خود، روی دکمه زیر کلیک کنید:</p>
+
+  <div style="text-align: center;">
+    <a href="{{ action_url }}" class="btn-action">تأیید ایمیل و فعال‌سازی</a>
+  </div>
+
+  <p>این پیوند تا <strong>{{ expiration_hours }} ساعت</strong> دیگر معتبر خواهد بود.</p>
+  <p>اگر دکمه برای شما باز نشد، پیوند زیر را در مرورگر وارد کنید:</p>
+  <p class="raw-link">{{ action_url }}</p>
+{% endblock %}

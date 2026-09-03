@@ -137,3 +137,18 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+
+# --- پیکربندی سرویس ایمیل (تسک 09-T) ---
+EMAIL_BACKEND = os.environ.get(
+    "DJANGO_EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend",
+)
+DEFAULT_FROM_EMAIL = os.environ.get(
+    "DEFAULT_FROM_EMAIL",
+    "رویداد همسان‌گزینی <noreply@eventmatching.ir>",
+)
+SERVER_EMAIL = DEFAULT_FROM_EMAIL
+
+# آدرس پایه برای تولید لینک‌های فعال‌سازی و ورود
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:8000")
