@@ -190,9 +190,8 @@ def _require_nonempty_str(
 
 
 def _validate_client_hello(payload: dict) -> None:
-    _require_nonempty_str(
-        payload, "participant_token", original_type=MessageType.CLIENT_HELLO
-    )
+    # Identity is established by T-08's Django session. Any legacy token-like
+    # field is never consulted for authentication.
     _require_positive_int(payload, "client_ts", original_type=MessageType.CLIENT_HELLO)
 
 
@@ -282,6 +281,25 @@ def _validate_server_hello(payload: dict) -> None:
                 "Each element of 'supported_versions' must be an integer",
                 original_type=MessageType.SERVER_HELLO,
             )
+    if "capacity" in payload:
+        capacity = payload["capacity"]
+        if not isinstance(capacity, dict):
+            raise ProtocolError(
+                ErrorCode.ERR_INVALID_MESSAGE,
+                "Optional field 'capacity' must be an object",
+                original_type=MessageType.SERVER_HELLO,
+            )
+        max_participants = _require_positive_int(
+            capacity,
+            "max_participants",
+            original_type=MessageType.SERVER_HELLO,
+        )
+        if max_participants < 2:
+            raise ProtocolError(
+                ErrorCode.ERR_INVALID_MESSAGE,
+                "Field 'capacity.max_participants' must be at least 2",
+                original_type=MessageType.SERVER_HELLO,
+            )
 
 
 def _validate_server_clock_sync(payload: dict) -> None:
@@ -315,6 +333,7 @@ def _validate_server_pairing(payload: dict) -> None:
     _require_nonempty_str(
         payload, "partner_id", original_type=MessageType.SERVER_PAIRING
     )
+    _require(payload, "is_offerer", bool, original_type=MessageType.SERVER_PAIRING)
     _require_positive_int(
         payload, "round_start_ts", original_type=MessageType.SERVER_PAIRING
     )

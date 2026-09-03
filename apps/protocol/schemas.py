@@ -77,20 +77,23 @@ def build_server_hello(
     client_ts_echo: int,
     event_id: str,
     supported_versions: list[int] | None = None,
+    max_participants: int | None = None,
 ) -> dict:
     """Build a ``server.hello`` message."""
     if supported_versions is None:
         from .constants import SUPPORTED_VERSIONS
 
         supported_versions = sorted(SUPPORTED_VERSIONS)
-    return build_message(
-        MessageType.SERVER_HELLO,
+    payload = dict(
         participant_id=participant_id,
         server_ts=server_ts,
         client_ts_echo=client_ts_echo,
         event_id=event_id,
         supported_versions=supported_versions,
     )
+    if max_participants is not None:
+        payload["capacity"] = {"max_participants": max_participants}
+    return build_message(MessageType.SERVER_HELLO, **payload)
 
 
 def build_server_clock_sync(*, client_ts_echo: int, server_ts: int) -> dict:
@@ -118,6 +121,7 @@ def build_server_pairing(
     partner_id: str,
     round_start_ts: int,
     round_end_ts: int,
+    is_offerer: bool = False,
     partner_display_name: str | None = None,
     partner_tags: list[str] | None = None,
 ) -> dict:
@@ -128,6 +132,7 @@ def build_server_pairing(
         partner_id=partner_id,
         round_start_ts=round_start_ts,
         round_end_ts=round_end_ts,
+        is_offerer=is_offerer,
     )
     if partner_display_name is not None:
         payload["partner_display_name"] = partner_display_name

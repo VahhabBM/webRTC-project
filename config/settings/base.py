@@ -145,3 +145,8 @@ SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = env_bool("DJANGO_SESSION_COOKIE_SECURE", default=False)
 PARTICIPANT_JOIN_BASE_URL = os.environ.get("PARTICIPANT_JOIN_BASE_URL", "")
+
+# WebSocket protocol policy defaults. T-14 may override these per deployment
+# or event; protocol constants expose the same documented defaults.
+PROTOCOL_RECONNECT_WINDOW_SECONDS = 300
+PROTOCOL_RATE_LIMIT_MESSAGES_PER_MINUTE = 60

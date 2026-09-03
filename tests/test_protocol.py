@@ -18,6 +18,14 @@ import json
 import pytest
 
 from apps.protocol.constants import (
+    CLOSE_AUTHENTICATION_FAILED,
+    CLOSE_INTERNAL_ERROR,
+    CLOSE_NORMAL,
+    CLOSE_POLICY_VIOLATION,
+    CLOSE_VERSION_MISMATCH,
+    DEFAULT_RATE_LIMIT_MESSAGES_PER_MINUTE,
+    DEFAULT_RECONNECT_WINDOW_SECONDS,
+    ERROR_CLOSE_CODES,
     PROTOCOL_VERSION,
     SUPPORTED_VERSIONS,
     ErrorCode,
@@ -72,6 +80,16 @@ def _assert_protocol_error(raw: str, code: str) -> ProtocolError:
 
 
 class TestConstants:
+    def test_operational_defaults_and_close_codes(self):
+        assert DEFAULT_RECONNECT_WINDOW_SECONDS == 300
+        assert DEFAULT_RATE_LIMIT_MESSAGES_PER_MINUTE == 60
+        assert CLOSE_NORMAL == 1000
+        assert 4000 <= CLOSE_AUTHENTICATION_FAILED <= 4999
+        assert 4000 <= CLOSE_VERSION_MISMATCH <= 4999
+        assert 4000 <= CLOSE_POLICY_VIOLATION <= 4999
+        assert 4000 <= CLOSE_INTERNAL_ERROR <= 4999
+        assert ERROR_CLOSE_CODES[ErrorCode.ERR_VERSION_MISMATCH] == 4002
+
     def test_protocol_version_is_int(self):
         assert isinstance(PROTOCOL_VERSION, int)
         assert PROTOCOL_VERSION >= 1
@@ -267,25 +285,28 @@ class TestEnvelopeValidation:
 
 
 class TestClientHello:
-    VALID = {"participant_token": "tok-abc", "client_ts": 1_700_000_000_000}
+    VALID = {"client_ts": 1_700_000_000_000}
 
     def test_valid(self):
         raw = _wrap(MessageType.CLIENT_HELLO, self.VALID)
         msg_type, payload = validate_message(raw)
         assert msg_type == MessageType.CLIENT_HELLO
-        assert payload["participant_token"] == "tok-abc"
+        assert payload["client_ts"] == 1_700_000_000_000
 
     def test_missing_token(self):
-        bad = {"client_ts": 1_000}
-        _assert_protocol_error(
-            _wrap(MessageType.CLIENT_HELLO, bad), ErrorCode.ERR_INVALID_MESSAGE
+        msg_type, _ = validate_message(
+            _wrap(MessageType.CLIENT_HELLO, {"client_ts": 1_000})
         )
+        assert msg_type == MessageType.CLIENT_HELLO
 
     def test_blank_token(self):
-        bad = {"participant_token": "   ", "client_ts": 1_000}
-        _assert_protocol_error(
-            _wrap(MessageType.CLIENT_HELLO, bad), ErrorCode.ERR_INVALID_MESSAGE
+        msg_type, _ = validate_message(
+            _wrap(
+                MessageType.CLIENT_HELLO,
+                {"participant_token": "   ", "client_ts": 1_000},
+            )
         )
+        assert msg_type == MessageType.CLIENT_HELLO
 
     def test_missing_client_ts(self):
         bad = {"participant_token": "tok"}
@@ -531,6 +552,16 @@ class TestServerBuilders:
         )
         assert msg["payload"]["supported_versions"] == [1]
 
+    def test_server_hello_capacity(self):
+        msg = build_server_hello(
+            participant_id="p-1",
+            server_ts=2_000_000,
+            client_ts_echo=1_000_000,
+            event_id="evt-1",
+            max_participants=900,
+        )
+        assert msg["payload"]["capacity"] == {"max_participants": 900}
+
     def test_server_hello_rejects_blank_participant_id(self):
         with pytest.raises(ProtocolError):
             build_server_hello(
@@ -558,6 +589,7 @@ class TestServerBuilders:
             round_end_ts=10_000,
         )
         assert msg["type"] == MessageType.SERVER_PAIRING
+        assert msg["payload"]["is_offerer"] is False
         assert "partner_display_name" not in msg["payload"]
         assert "partner_tags" not in msg["payload"]
 
@@ -573,6 +605,17 @@ class TestServerBuilders:
         )
         assert msg["payload"]["partner_display_name"] == "Sara"
         assert msg["payload"]["partner_tags"] == ["ai", "music"]
+
+    def test_server_pairing_role_is_boolean(self):
+        msg = build_server_pairing(
+            round_number=1,
+            room_id="room-42",
+            partner_id="p-2",
+            round_start_ts=5_000,
+            round_end_ts=10_000,
+            is_offerer=True,
+        )
+        assert msg["payload"]["is_offerer"] is True
 
     def test_server_pairing_invalid_round(self):
         with pytest.raises(ProtocolError):
@@ -755,7 +798,7 @@ class TestValidatePayload:
 
     def test_invalid_payload_raises(self):
         with pytest.raises(ProtocolError) as exc_info:
-            validate_payload(MessageType.CLIENT_HELLO, {"client_ts": 1_000})
+            validate_payload(MessageType.CLIENT_HELLO, {})
         assert exc_info.value.code == ErrorCode.ERR_INVALID_MESSAGE
 
     def test_unknown_type_raises(self):
