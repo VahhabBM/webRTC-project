@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import timedelta
 from uuid import uuid4
 
@@ -91,6 +92,10 @@ class Participant(models.Model):
         default=ParticipantStatus.WAITING,
     )
     join_token_hash = models.CharField(max_length=256)
+    join_token_digest = models.CharField(
+        max_length=64, blank=True, default="", db_index=True
+    )
+    join_token_expires_at = models.DateTimeField(null=True, blank=True)
     joined_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -116,9 +121,18 @@ class Participant(models.Model):
         if not raw_token:
             raise ValueError("Join token must not be empty")
         self.join_token_hash = make_password(raw_token)
+        self.join_token_digest = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
 
     def verify_join_token(self, raw_token: str) -> bool:
         return bool(raw_token) and check_password(raw_token, self.join_token_hash)
+
+    def token_is_expired(self, now=None) -> bool:
+        from django.utils import timezone
+
+        return bool(
+            self.join_token_expires_at
+            and self.join_token_expires_at <= (now or timezone.now())
+        )
 
 
 class ParticipantTag(models.Model):

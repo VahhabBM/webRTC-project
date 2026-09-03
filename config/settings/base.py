@@ -138,6 +138,14 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Participant sessions are server-side Django sessions with a persistent cookie.
+PARTICIPANT_SESSION_AGE = 60 * 60 * 24 * 30
+SESSION_COOKIE_AGE = PARTICIPANT_SESSION_AGE
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SECURE = env_bool("DJANGO_SESSION_COOKIE_SECURE", default=False)
+PARTICIPANT_JOIN_BASE_URL = os.environ.get("PARTICIPANT_JOIN_BASE_URL", "")
 
 # --- پیکربندی سرویس ایمیل (تسک 09-T) ---
 EMAIL_BACKEND = os.environ.get(
