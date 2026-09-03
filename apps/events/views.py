@@ -1,4 +1,5 @@
 from django.http import JsonResponse
+from django.shortcuts import render
 from django.views.decorators.http import require_GET
 
 from .auth import (
@@ -70,3 +71,10 @@ def current_participant(request):
             },
         }
     )
+
+
+@require_GET
+def clock_sync_page(request):
+    if resolve_participant_from_session(request.session) is None:
+        return JsonResponse({"error": {"code": "not_authenticated"}}, status=401)
+    return render(request, "events/clock_sync.html")

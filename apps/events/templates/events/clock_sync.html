@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>T-15 Clock Synchronization</title>
+<style>body{font:16px system-ui;max-width:36rem;margin:2rem auto}dt{font-weight:600}dd{margin:0 0 .7rem}</style>
+<h1>T-15 clock sync</h1><p id="status">Connecting…</p>
+<dl><dt>Local/client time</dt><dd id="local">—</dd><dt>Estimated server time</dt><dd id="server">—</dd><dt>Clock offset</dt><dd id="offset">—</dd><dt>RTT / latency</dt><dd id="rtt">—</dd><dt>Samples</dt><dd id="samples">—</dd></dl>
+<script>
+(() => {
+  const $=id=>document.getElementById(id), N=5, INTERVAL=30000; let ws,timer,pending=new Map(),rows=[];
+  const now=()=>Date.now(), show=ms=>new Date(ms).toISOString();
+  function render(status,offset,rtt){const local=now();$('local').textContent=`${show(local)} (${local})`;$('server').textContent=offset==null?'—':`${show(local+offset)} (${Math.round(local+offset)})`;$('offset').textContent=offset==null?'—':`${offset.toFixed(1)} ms`;$('rtt').textContent=rtt==null?'—':`${rtt.toFixed(1)} ms`;$('samples').textContent=rows.length;$('status').textContent=status;}
+  function cycle(){rows=[];pending.clear();for(let i=0;i<N;i++){const ts=now();pending.set(ts,performance.now());ws.send(JSON.stringify({type:'client.clock_sync',version:1,payload:{client_ts:ts}}));}}
+  function connect(){ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws/events/`);ws.onopen=()=>ws.send(JSON.stringify({type:'client.hello',version:1,payload:{client_ts:now()}}));ws.onmessage=e=>{const m=JSON.parse(e.data),p=m.payload||{};if(m.type==='server.hello'){cycle();timer=setInterval(cycle,INTERVAL);}if(m.type!=='server.clock_sync')return;const sent=pending.get(p.client_ts_echo);if(sent==null)return;pending.delete(p.client_ts_echo);const recv=now();rows.push({offset:p.server_ts-(p.client_ts_echo+recv)/2,rtt:performance.now()-sent});if(rows.length>=N){const by=rows.slice().sort((a,b)=>a.rtt-b.rtt), os=by.map(x=>x.offset).sort((a,b)=>a-b), rs=by.map(x=>x.rtt).sort((a,b)=>a-b);render('synchronised',os[Math.floor(os.length/2)],rs[Math.floor(rs.length/2)]);}};ws.onclose=()=>{clearInterval(timer);pending.clear();render('disconnected');setTimeout(connect,1000);};}render('connecting');connect();
+})();
+</script>
