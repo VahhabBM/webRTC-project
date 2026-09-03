@@ -21,6 +21,10 @@ def env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_int(name: str, default: int) -> int:
+    return int(os.environ.get(name, default))
+
+
 def env_list(name: str, default: str = "") -> list[str]:
     raw = os.environ.get(name, default)
     return [item.strip() for item in raw.split(",") if item.strip()]
@@ -31,6 +35,7 @@ DEBUG = env_bool("DJANGO_DEBUG", default=False)
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1")
 
 INSTALLED_APPS = [
+    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -93,6 +98,13 @@ CACHES = {
 }
 REDIS_URL = env("REDIS_URL", default="redis://127.0.0.1:6379/0")
 
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {"hosts": [REDIS_URL]},
+    }
+}
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -150,7 +162,14 @@ PARTICIPANT_JOIN_BASE_URL = os.environ.get("PARTICIPANT_JOIN_BASE_URL", "")
 # WebSocket protocol policy defaults. T-14 may override these per deployment
 # or event; protocol constants expose the same documented defaults.
 PROTOCOL_RECONNECT_WINDOW_SECONDS = 300
-PROTOCOL_RATE_LIMIT_MESSAGES_PER_MINUTE = 60
+PROTOCOL_RATE_LIMIT_MESSAGES_PER_MINUTE = env_int(
+    "PROTOCOL_RATE_LIMIT_MESSAGES_PER_MINUTE", 60
+)
+WEBSOCKET_HEARTBEAT_INTERVAL_SECONDS = env_int(
+    "WEBSOCKET_HEARTBEAT_INTERVAL_SECONDS", 30
+)
+WEBSOCKET_HEARTBEAT_TIMEOUT_SECONDS = env_int("WEBSOCKET_HEARTBEAT_TIMEOUT_SECONDS", 90)
+WEBSOCKET_MAX_MESSAGE_BYTES = env_int("WEBSOCKET_MAX_MESSAGE_BYTES", 64 * 1024)
 
 # --- پیکربندی سرویس ایمیل (تسک 09-T) ---
 EMAIL_BACKEND = os.environ.get(
