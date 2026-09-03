@@ -1,8 +1,8 @@
 # WebRTC Event Platform — WebSocket Protocol Specification
 
 **Version:** 1  
-**Status:** Draft — awaiting review by Ali  
-**Last updated:** 2026-09-01
+**Status:** Finalized T-13 contract (implementation-ready for T-14)
+**Last updated:** 2026-09-03
 
 ---
 
@@ -28,7 +28,7 @@
 10. [Validation rules](#10-validation-rules)
 11. [Extensibility](#11-extensibility)
 12. [Developer guide](#12-developer-guide)
-13. [Open questions for Ali](#13-open-questions-for-ali)
+13. [Finalized protocol decisions](#13-finalized-protocol-decisions)
 
 ---
 
@@ -63,7 +63,7 @@ object sent as one WebSocket text frame.
 | Encoding | UTF-8 text frames only |
 | Max frame size | 64 KiB (server MUST close with 1009 if exceeded) |
 | Keepalive | Application-level `client.ping` / `server.pong` (see §7.2). WebSocket ping frames MAY also be used at the transport level. |
-| Authentication | Participant token supplied in `client.hello` (see §7.1) |
+| Authentication | T-08 persistent Django session; Participant is resolved server-side (see §7.1) |
 | TLS | Required in staging and production |
 
 ---
@@ -111,7 +111,7 @@ top-level keys are ignored for forward compatibility but SHOULD NOT be sent.
      supports in `supported_versions`.
    - If **not** supported → server replies with `server.error`
      (code `ERR_VERSION_MISMATCH`) and closes the connection with WebSocket
-     close code 4000.
+     close code 4002.
 4. All subsequent messages from the client MUST use the same version sent in
    `client.hello`. The server MAY reject messages with a different version with
    `ERR_VERSION_MISMATCH`.
@@ -162,7 +162,7 @@ Client                                          Server
   |<- server.pairing ------------------------------|
   |<- server.turn_credentials --------------------|  (may follow immediately)
   |                                               |
-  |-- client.ready -------------------------------->|
+|-- client.ready -------------------------------->|  (state signal; scheduler does not wait)
   |                                               |
   |<- server.round_start --------------------------|
   |                                               |
@@ -221,7 +221,6 @@ Sent: Immediately after the WebSocket connection opens. MUST be the first messag
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `participant_token` | string | yes | Opaque authentication token (JWT or signed session token). Non-empty. |
 | `client_ts` | integer | yes | Client Unix timestamp in ms at the moment of sending. Used for initial clock offset estimation. Must be > 0. |
 
 ```json
@@ -229,15 +228,14 @@ Sent: Immediately after the WebSocket connection opens. MUST be the first messag
   "type": "client.hello",
   "version": 1,
   "payload": {
-    "participant_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "client_ts": 1700000000000
   }
 }
 ```
 
 **Validation errors:**
-- `ERR_INVALID_MESSAGE` — `participant_token` is blank or missing; `client_ts` is missing, non-integer, or ≤ 0.
-- `ERR_NOT_AUTHENTICATED` — token is invalid / expired (server-side check, not schema).
+- `ERR_INVALID_MESSAGE` — `client_ts` is missing, non-integer, or ≤ 0.
+- `ERR_NOT_AUTHENTICATED` — the T-08 Django session is missing, invalid, or expired.
 - `ERR_ALREADY_CONNECTED` — same participant already connected.
 
 ---
@@ -254,6 +252,8 @@ Sent: In response to a valid `client.hello`.
 | `client_ts_echo` | integer | yes | Echo of `client_ts` from `client.hello`, for clock offset computation. Must be > 0. |
 | `event_id` | string | yes | Unique identifier for the current event. Non-empty. |
 | `supported_versions` | integer[] | yes | Non-empty list of protocol versions the server supports. |
+| `capacity` | object | no | Event/deployment capacity advertised to the client. |
+| `capacity.max_participants` | integer | conditional | Maximum accepted participants; at least 2. |
 
 ```json
 {
@@ -264,7 +264,8 @@ Sent: In response to a valid `client.hello`.
     "server_ts": 1700000001000,
     "client_ts_echo": 1700000000000,
     "event_id": "evt-xyz987",
-    "supported_versions": [1]
+    "supported_versions": [1],
+    "capacity": { "max_participants": 900 }
   }
 }
 ```
@@ -366,6 +367,7 @@ Sent: Before each round, when the server has computed the pairings.
 | `round_number` | integer | yes | Current round number. Range: 1–6. |
 | `room_id` | string | yes | Unique opaque identifier for this room / pairing. Non-empty. |
 | `partner_id` | string | yes | The partner's `participant_id`. Non-empty. |
+| `is_offerer` | boolean | yes | Server-authoritative initial WebRTC role; exactly one peer is `true`. |
 | `round_start_ts` | integer | yes | Server Unix ms timestamp when the round will start. Must be > 0. |
 | `round_end_ts` | integer | yes | Server Unix ms timestamp when the round will end. Must be > 0. |
 | `partner_display_name` | string | no | Partner's display name. May be absent if not available. |
@@ -392,7 +394,9 @@ Sent: Before each round, when the server has computed the pairings.
 #### `client.ready`
 
 Direction: **Client → Server**  
-Sent: After the client has received `server.pairing` and is ready to start the round.
+Sent after `server.pairing` when client-side preparation for that round is
+complete. It may be repeated; the server treats repeats idempotently. Missing
+ready never moves the authoritative scheduler or round timer.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -406,7 +410,9 @@ Sent: After the client has received `server.pairing` and is ready to start the r
 }
 ```
 
-**Validation errors:** `ERR_INVALID_STATE` if `round_number` does not match the server's current pairing.
+**Validation errors:** `ERR_INVALID_STATE` if sent before pairing or if
+`round_number` does not match the current pairing. The server may record the
+participant as not-ready, but does not delay `server.round_start`.
 
 ---
 
@@ -491,9 +497,9 @@ The server acts as a **signalling relay**: it forwards WebRTC messages between
 the two peers in a room without interpreting their content. The server does NOT
 participate in the WebRTC peer connection itself.
 
-**Offerer determination:** The participant with the lexicographically smaller
-`participant_id` is the offerer. This is deterministic and requires no
-negotiation.
+**Offerer determination:** The server assigns `is_offerer` for each participant.
+It is an initial role only; Perfect Negotiation still permits either peer to
+create a later offer during renegotiation or ICE restart.
 
 #### `client.webrtc.offer`
 
@@ -694,17 +700,17 @@ WebSocket connection remains open unless the error is fatal (see below).
   "version": 1,
   "payload": {
     "code": "ERR_INVALID_MESSAGE",
-    "message": "Missing required field: 'participant_token'",
+    "message": "Missing required field: 'client_ts'",
     "original_type": "client.hello",
-    "detail": { "field": "participant_token" }
+    "detail": { "field": "client_ts" }
   }
 }
 ```
 
 **Fatal errors** (server closes the connection after sending `server.error`):
-- `ERR_VERSION_MISMATCH` — close code 4000
+- `ERR_VERSION_MISMATCH` — close code 4002
 - `ERR_NOT_AUTHENTICATED` — close code 4001
-- `ERR_ALREADY_CONNECTED` — close code 4002
+- `ERR_ALREADY_CONNECTED` — close code 4001
 
 **Non-fatal errors** (connection remains open):
 - All others: `ERR_INVALID_JSON`, `ERR_INVALID_MESSAGE`, `ERR_UNKNOWN_TYPE`,
@@ -726,12 +732,12 @@ codes in `apps/protocol/constants.py` — never hard-code strings in handlers.
 | `ERR_INVALID_JSON` | Raw message is not valid JSON | No |
 | `ERR_INVALID_MESSAGE` | Valid JSON but schema violation (missing field, wrong type) | No |
 | `ERR_UNKNOWN_TYPE` | Unrecognised `"type"` value | No |
-| `ERR_VERSION_MISMATCH` | Protocol version not supported | **Yes** — close 4000 |
+| `ERR_VERSION_MISMATCH` | Protocol version not supported | **Yes** — close 4002 |
 | `ERR_NOT_AUTHENTICATED` | Token invalid or expired | **Yes** — close 4001 |
-| `ERR_ALREADY_CONNECTED` | Participant already has an active WebSocket | **Yes** — close 4002 |
+| `ERR_ALREADY_CONNECTED` | Participant already has an active WebSocket | **Yes** — close 4001 |
 | `ERR_INVALID_STATE` | Message not valid in current session state | No |
 | `ERR_WRONG_ROOM` | `room_id` does not match participant's room | No |
-| `ERR_RATE_LIMITED` | Too many messages from this client | No |
+| `ERR_RATE_LIMITED` | More than 60 inbound protocol messages per rolling minute per connection | **Yes** — close 4003 |
 | `ERR_INTERNAL` | Unexpected internal server error | No |
 
 ---
@@ -865,7 +871,7 @@ except ProtocolError as exc:
         ErrorCode.ERR_NOT_AUTHENTICATED,
         ErrorCode.ERR_ALREADY_CONNECTED,
     ):
-        await ws.close(4000)  # use appropriate code per §7.8
+        await ws.close(4002)  # select the code defined for exc.code
     return
 ```
 
@@ -876,44 +882,72 @@ spec. Never use a bare string.
 
 ---
 
-## 13. Open questions for Ali
+## 13. Finalized protocol decisions
 
-The following decisions are unresolved and require Ali's review before
-implementation:
+1. **Authentication:** T-08 is the sole authentication mechanism. The ASGI
+   route must install Django session middleware and call
+   `apps.events.auth.resolve_participant_from_scope(scope)`. The returned
+   database Participant is authoritative; client-supplied participant IDs and
+   tokens are never trusted. Missing, expired, or invalid sessions receive
+   `ERR_NOT_AUTHENTICATED` and close code 4001.
+2. **Offerer role:** `server.pairing` contains required boolean `is_offerer`.
+   Exactly one peer is initially designated by the server. This is compatible
+   with Perfect Negotiation: either peer may later renegotiate; the relay does
+   not enforce a permanent offer prohibition.
+3. **TURN:** Credentials are temporary, per participant/session, and delivered
+   proactively after pairing (lazy delivery is permitted if documented by the
+   implementation). Payload is vendor-neutral ICE-server data: `urls`,
+   `username`, `credential`, and positive `ttl` seconds. Permanent/shared
+   credentials are forbidden.
+4. **Ready:** `client.ready` is an idempotent state signal that preparation for
+   the specified current round is complete. Missing ready does not delay the
+   scheduler or `server.round_start`; the server may mark the participant
+   waiting/not-ready. Repeats are accepted and do not create transitions.
+5. **Reconnection:** The default configurable window is 300 seconds (5 minutes).
+   Identity and, where possible, the current round/pair slot are held during
+   that window. A reconnect receives `server.hello` and the current pairing/
+   state snapshot. After expiry the participant is abandoned for that round;
+   later connection waits for the next scheduler decision and cannot resume the
+   expired slot.
+6. **Capacity:** `server.hello.capacity.max_participants` is optional and
+   event/deployment-derived (the Event model has no capacity column). T-14 must
+   pass the configured value when available; `900` is only the deployment target,
+   not a protocol constant.
+7. **Rate limit:** The default is 60 inbound protocol messages per minute per
+   WebSocket connection, configurable. Every received text message counts,
+   including ping, clock sync, ready, and signalling; transport control frames
+   do not. The one-minute window is rolling. On excess, send `server.error`
+   `ERR_RATE_LIMITED` then close 4003.
+8. **Close codes:** 1000 normal; 1009 frame too large; 4001 authentication
+   failure/already-connected; 4002 version mismatch; 4003 policy/rate limit;
+   4004 internal failure. Private codes are in 4000-4999 and clients should
+   reconnect only for transient server/internal conditions or an in-window
+   participant reconnect.
+9. **Outbound validation:** Every server builder calls `validate_payload` and
+   emits the canonical envelope with the current `PROTOCOL_VERSION`. T-14 must
+   send only builder output; malformed construction raises `ProtocolError`
+   before transmission. No second validation implementation is required.
 
-1. **Token type:** What format is `participant_token`? JWT (and which
-   algorithm), signed session cookie, or opaque token? The validator currently
-   checks only that it is a non-empty string; the server-side authentication
-   check is not yet specified.
+### Lifecycle and state rules
 
-2. **Offerer selection:** This spec proposes the participant with the
-   lexicographically smaller `participant_id` is the WebRTC offerer. Is this
-   acceptable, or should the server explicitly designate the offerer (e.g. an
-   `"is_offerer"` boolean in `server.pairing`)?
+The legal sequence is: connect → session resolution → `client.hello` →
+`server.hello` → event waiting → `server.pairing` → optional
+`server.turn_credentials` → `client.ready` (repeatable) → scheduler-driven
+`server.round_start` → signalling/partner-state updates → `server.round_end` →
+next pairing or `server.event_end` → graceful close. Before `server.hello`, only
+`client.hello` is legal. Clock sync/ping are legal after authentication.
+Signalling is legal only for the authenticated participant's active Pair and
+matching `room_id`; it is relayed unchanged with an authoritative
+`from_participant_id`. Round and event messages are server-only and cannot be
+replayed by clients. On reconnect, the same rules apply and current state is
+replayed where available.
 
-3. **TURN policy:** Should `server.turn_credentials` be sent to all
-   participants unconditionally, or only when the server detects a participant
-   may need TURN? If conditional, what is the detection mechanism?
+`client.hello` must use a supported integer version. Unsupported versions
+always receive `ERR_VERSION_MISMATCH` and close 4002; subsequent messages must
+use the negotiated version. Version 1 supports additive optional fields and new
+message types, while changes to required fields/types or semantics require a
+new version.
 
-4. **`client.ready` requirement:** Is the `client.ready` message required (the
-   server waits for it before sending `server.round_start`), or is it
-   informational (the round starts at `round_start_ts` regardless)?
-
-5. **Reconnection:** If a participant disconnects mid-round and reconnects,
-   should `server.pairing` be re-sent, or should the client restore state from
-   `server.hello`? What is the reconnect window (seconds)?
-
-6. **Max participants per event:** The spec targets ~900 concurrent
-   participants. Should the protocol include an event-capacity field in
-   `server.hello` or `server.pairing`?
-
-7. **Rate limiting:** What is the allowed message rate per client? (Default
-   assumption: 60 messages/minute.)
-
-8. **WebSocket close codes:** Are the proposed close codes (4000, 4001, 4002)
-   acceptable, or should a different range be used?
-
-9. **`server.error` for server-originated messages:** Currently, only inbound
-   (client) messages are validated. Should the server also validate outbound
-   messages before sending? (Builders already call `validate_payload`, so this
-   is partially covered.)
+The server never exposes stack traces, database errors, credentials, raw
+tokens, or internal identifiers in `server.error`; details are safe,
+field-level diagnostics only.

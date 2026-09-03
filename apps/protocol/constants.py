@@ -25,6 +25,19 @@ PROTOCOL_VERSION: int = 1
 #: All versions this server accepts from clients in ``client.hello``.
 SUPPORTED_VERSIONS: frozenset[int] = frozenset({1})
 
+# T-14 configuration defaults. Handlers may override these from deployment or
+# event configuration; the protocol module only defines the contract defaults.
+DEFAULT_RECONNECT_WINDOW_SECONDS: int = 5 * 60
+DEFAULT_RATE_LIMIT_MESSAGES_PER_MINUTE: int = 60
+
+# RFC 6455 standard close codes plus private-use application codes.
+CLOSE_NORMAL = 1000
+CLOSE_MESSAGE_TOO_BIG = 1009
+CLOSE_AUTHENTICATION_FAILED = 4001
+CLOSE_VERSION_MISMATCH = 4002
+CLOSE_POLICY_VIOLATION = 4003
+CLOSE_INTERNAL_ERROR = 4004
+
 
 # ---------------------------------------------------------------------------
 # Message types
@@ -188,6 +201,15 @@ class ErrorCode(StrEnum):
     #: An unexpected internal error occurred.  The client should not retry
     #: immediately; details are logged server-side.
     ERR_INTERNAL = "ERR_INTERNAL"
+
+
+ERROR_CLOSE_CODES: dict[ErrorCode, int] = {
+    ErrorCode.ERR_VERSION_MISMATCH: CLOSE_VERSION_MISMATCH,
+    ErrorCode.ERR_NOT_AUTHENTICATED: CLOSE_AUTHENTICATION_FAILED,
+    ErrorCode.ERR_ALREADY_CONNECTED: CLOSE_AUTHENTICATION_FAILED,
+    ErrorCode.ERR_RATE_LIMITED: CLOSE_POLICY_VIOLATION,
+    ErrorCode.ERR_INTERNAL: CLOSE_INTERNAL_ERROR,
+}
 
 
 # ---------------------------------------------------------------------------
