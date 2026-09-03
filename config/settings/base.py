@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "apps.health",
     "apps.events",
+    "apps.registration",
 ]
 
 MIDDLEWARE = [
@@ -150,3 +151,17 @@ PARTICIPANT_JOIN_BASE_URL = os.environ.get("PARTICIPANT_JOIN_BASE_URL", "")
 # or event; protocol constants expose the same documented defaults.
 PROTOCOL_RECONNECT_WINDOW_SECONDS = 300
 PROTOCOL_RATE_LIMIT_MESSAGES_PER_MINUTE = 60
+
+# --- پیکربندی سرویس ایمیل (تسک 09-T) ---
+EMAIL_BACKEND = os.environ.get(
+    "DJANGO_EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend",
+)
+DEFAULT_FROM_EMAIL = os.environ.get(
+    "DEFAULT_FROM_EMAIL",
+    "رویداد همسان‌گزینی <noreply@eventmatching.ir>",
+)
+SERVER_EMAIL = DEFAULT_FROM_EMAIL
+
+# آدرس پایه برای تولید لینک‌های فعال‌سازی و ورود
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:8000")
