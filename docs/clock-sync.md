@@ -14,3 +14,27 @@ local time, estimated server time (`local + offset`), offset, RTT and sample
 count. Move the client clock several minutes and run another cycle; the
 estimate should remain close to the unchanged server time (normally within
 200 ms, but asymmetric or highly congested networks can be less accurate).
+
+## Duplicate-timestamp handling
+
+Five `client.clock_sync` requests are sent in rapid succession each cycle.
+Because `Date.now()` has millisecond resolution, all five can share the same
+`client_ts` value. The debug page maintains a per-timestamp FIFO queue of
+monotonic send times so every response is matched to the correct request even
+when all five carry identical timestamps:
+
+```js
+// send
+const q = pending.get(ts) || [];
+q.push(performance.now());
+pending.set(ts, q);
+
+// receive
+const q = pending.get(p.client_ts_echo);
+if (!q || !q.length) return;
+const sent = q.shift();
+if (!q.length) pending.delete(p.client_ts_echo);
+```
+
+No protocol change is required; the fix is entirely client-side and
+preserves the T-13 wire format unchanged.
