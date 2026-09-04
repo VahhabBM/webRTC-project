@@ -1,5 +1,9 @@
+import csv
+
 from django.contrib import admin, messages
 from django.db.models import Count
+from django.http import HttpResponse
+from django.utils import timezone
 
 from .models import Event, Pair, Participant, ParticipantTag, Round, Tag
 
@@ -108,6 +112,7 @@ class ParticipantAdmin(admin.ModelAdmin):
     list_filter = ("status", "tags", "event")
     search_fields = ("display_name", "email")
     list_per_page = 50
+    actions = ["export_as_csv"]
 
     readonly_fields = (
         "join_token_hash",
@@ -133,3 +138,44 @@ class ParticipantAdmin(admin.ModelAdmin):
     @admin.display(description="Token")
     def token_status(self, obj):
         return "Configured" if obj.join_token_digest else "Missing"
+
+    @admin.action(description="Export selected participants to CSV (Excel UTF-8)")
+    def export_as_csv(self, request, queryset):
+        optimized_qs = queryset.select_related("event").prefetch_related("tags")
+
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
+        timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")
+        response["Content-Disposition"] = (
+            f'attachment; filename="participants_{timestamp}.csv"'
+        )
+        response.write("\ufeff")
+
+        writer = csv.writer(response)
+        writer.writerow(
+            [
+                "شناسه",
+                "نام و نام خانوادگی",
+                "ایمیل",
+                "وضعیت",
+                "رویداد",
+                "تگ‌ها",
+                "تاریخ ثبت‌نام",
+            ]
+        )
+
+        for p in optimized_qs:
+            tags = ", ".join(t.name for t in p.tags.all())
+            created = p.created_at.strftime("%Y-%m-%d %H:%M:%S") if p.created_at else ""
+            writer.writerow(
+                [
+                    str(p.id),
+                    p.display_name,
+                    p.email,
+                    p.get_status_display(),
+                    p.event.name if p.event else "",
+                    tags,
+                    created,
+                ]
+            )
+
+        return response
