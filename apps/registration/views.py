@@ -5,15 +5,16 @@ import logging
 
 from django.db import transaction
 from django.http import JsonResponse
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, render
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
-from apps.events.models import Event, Participant, ParticipantTag
+from apps.events.models import Event, Participant, ParticipantTag, Tag
 from apps.registration.services.email_service import EmailService
 
-from .forms import RegistrationError, validate_registration_data
+from .forms import MAX_TAGS, MIN_TAGS, RegistrationError, validate_registration_data
 from .models import EmailVerificationToken, TermsAcceptance
 from .rate_limit import is_rate_limited, record_attempt
 
@@ -22,6 +23,20 @@ logger = logging.getLogger("registration")
 
 @method_decorator(csrf_exempt, name="dispatch")
 class RegisterView(View):
+    def get(self, request, event_id):
+        event = get_object_or_404(Event, id=event_id)
+        tags = Tag.objects.all().order_by("name")
+        return render(
+            request,
+            "registration/register.html",
+            {
+                "event": event,
+                "tags": tags,
+                "min_tags": MIN_TAGS,
+                "max_tags": MAX_TAGS,
+            },
+        )
+
     def post(self, request, event_id):
         event = get_object_or_404(Event, id=event_id)
 
@@ -66,48 +81,84 @@ class RegisterView(View):
             extra={"participant_id": str(participant.id), "event_id": str(event.id)},
         )
         return JsonResponse(
-            {"message": "ثبت‌نام شما دریافت شد. لطفاً ایمیل خود را بررسی کنید."},
+            {
+                "message": "ثبت‌نام شما با موفقیت دریافت شد. لطفاً ایمیل خود را بررسی کنید.",
+                "email": clean_data["email"],
+            },
             status=201,
         )
 
     @staticmethod
     def _send_verification_email(participant, token):
-        logger.info(
-            "verification email queued",
-            extra={"participant_id": str(participant.id), "token": token.token},
+        event_name = getattr(participant.event, "name", "رویداد همسان‌گزینی")
+        EmailService.send_verification_email(
+            recipient_email=participant.email,
+            name=participant.display_name,
+            token=token.token,
+            event_title=event_name,
         )
 
 
 class VerifyEmailView(View):
     def get(self, request, token):
         verification = EmailVerificationToken.objects.filter(token=token).first()
+        is_json_request = (
+            request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            or "application/json" in request.headers.get("Accept", "")
+            or request.GET.get("format") == "json"
+        )
 
         if verification is None:
-            return JsonResponse({"error": "لینک تأیید نامعتبر است."}, status=404)
+            if is_json_request:
+                return JsonResponse({"error": "لینک تأیید نامعتبر است."}, status=404)
+            return render(
+                request,
+                "registration/token_expired.html",
+                {
+                    "title": "پیوند نامعتبر",
+                    "message": "این پیوند در سامانه یافت نشد یا ساختار آن اشتباه است.",
+                },
+                status=404,
+            )
 
         if not verification.is_valid():
-            return JsonResponse(
-                {"error": "این لینک منقضی شده یا قبلاً استفاده شده است."},
+            if is_json_request:
+                return JsonResponse(
+                    {"error": "این لینک منقضی شده یا قبلاً استفاده شده است."},
+                    status=410,
+                )
+            return render(
+                request,
+                "registration/token_expired.html",
+                {
+                    "title": "پیوند منقضی یا استفاده‌شده",
+                    "message": "مهلت ۲۴ ساعته این پیوند به پایان رسیده یا قبلاً حساب خود را با آن فعال کرده‌اید.",
+                },
                 status=410,
             )
 
         participant = verification.participant
-        participant.joined_at = verification.used_at or None
-        from django.utils import timezone
-
         participant.joined_at = timezone.now()
         participant.save(update_fields=["joined_at"])
         verification.mark_used()
 
-        return JsonResponse({"message": "ثبت‌نام شما با موفقیت تأیید شد."}, status=200)
+        if is_json_request:
+            return JsonResponse(
+                {"message": "ثبت‌نام شما با موفقیت تأیید شد."}, status=200
+            )
+
+        return render(
+            request,
+            "registration/verify_result.html",
+            {
+                "participant": participant,
+                "event": participant.event,
+            },
+            status=200,
+        )
 
 
-@staticmethod
-def _send_verification_email(participant, token):
-    event_title = getattr(participant.event, "title", "همسان‌گزینی")
-    EmailService.send_verification_email(
-        recipient_email=participant.email,
-        name=participant.name,
-        token=token.token,
-        event_title=event_title,
-    )
+class CheckEmailView(View):
+    def get(self, request):
+        email = request.GET.get("email", "")
+        return render(request, "registration/check_email.html", {"email": email})
