@@ -1,0 +1,21 @@
+{% extends "registration/base.html" %}
+
+{% block title %}Registration Confirmed{% endblock %}
+
+{% block main_content %}
+  <div style="text-align: center; padding: 42px 24px;">
+    <div style="width: 72px; height: 72px; border-radius: 50%; background: #ecfdf5; color: #10b981; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 8px rgba(16, 185, 129, 0.1);">
+      <svg width="36" height="36" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+      </svg>
+    </div>
+    <h2 style="font-size: 1.4rem; font-weight: 800; color: var(--text-main); margin-bottom: 10px;">You are Confirmed!</h2>
+    <p style="font-size: 0.95rem; color: var(--text-muted); margin-bottom: 22px;">
+      Welcome <strong>{{ participant.display_name }}</strong>, your participation in <strong>{{ event.name }}</strong> is officially verified.
+    </p>
+
+    <div style="background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 14px; padding: 18px; font-size: 0.9rem; color: #065f46; line-height: 1.6;">
+      🎯 Your access link to the 1-on-1 networking rounds will be emailed before the event starts.
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "registration/base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block main_content %}
+  <div style="text-align: center; padding: 40px 24px;">
+    <div style="width: 70px; height: 70px; border-radius: 50%; background: var(--danger-bg); color: var(--danger); margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 8px rgba(244, 63, 94, 0.08);">
+      <svg width="34" height="34" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+      </svg>
+    </div>
+    <h2 style="font-size: 1.35rem; font-weight: 800; color: var(--text-main); margin-bottom: 10px;">{{ title }}</h2>
+    <p style="font-size: 0.92rem; color: var(--text-muted); margin-bottom: 24px; line-height: 1.6;">
+      {{ message }}
+    </p>
+
+    <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 14px; padding: 16px; font-size: 0.85rem; color: var(--text-muted);">
+      If your token has expired, please submit a new registration on the event homepage.
+    </div>
+  </div>
+{% endblock %}

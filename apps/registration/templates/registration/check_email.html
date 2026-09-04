@@ -1,0 +1,23 @@
+{% extends "registration/base.html" %}
+
+{% block title %}Check Your Inbox{% endblock %}
+
+{% block main_content %}
+  <div style="text-align: center; padding: 40px 24px;">
+    <div style="width: 68px; height: 68px; border-radius: 50%; background: #eef2ff; color: #4f46e5; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 8px rgba(79, 70, 229, 0.08);">
+      <svg width="34" height="34" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+      </svg>
+    </div>
+    <h2 style="font-size: 1.35rem; font-weight: 800; margin-bottom: 8px; color: var(--text-main);">Check Your Inbox</h2>
+    <p style="font-size: 0.92rem; color: var(--text-muted); margin-bottom: 20px;">
+      A verification link has been sent to {% if email %}<strong style="color: var(--text-main);">{{ email }}</strong>{% else %}your email address{% endif %}.
+    </p>
+
+    <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 14px; padding: 18px; text-align: left; font-size: 0.85rem; color: var(--text-muted); line-height: 1.65;">
+      <p style="font-weight: 700; margin-bottom: 6px; color: var(--text-main);">💡 Quick Note:</p>
+      <p>• The link is valid for <strong>24 hours</strong>.</p>
+      <p>• If you don't see it shortly, make sure to check your <strong>Spam or Junk</strong> folder.</p>
+    </div>
+  </div>
+{% endblock %}
