@@ -1,0 +1,466 @@
+{% extends "registration/base.html" %}
+
+{% block title %}Device Check | Setup Camera & Microphone{% endblock %}
+
+{% block extra_css %}
+<style>
+  .check-header {
+    padding: 24px 24px 16px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .check-title {
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: var(--text-main);
+    margin-bottom: 4px;
+  }
+
+  .check-subtitle {
+    font-size: 0.86rem;
+    color: var(--text-muted);
+  }
+
+  .check-body {
+    padding: 24px;
+  }
+
+  /* In-App Browser Warning Alert */
+  #iab-warning {
+    display: none;
+    background: #fffbeb;
+    border: 1.5px solid #fef3c7;
+    border-radius: var(--radius-md);
+    padding: 14px;
+    margin-bottom: 20px;
+  }
+
+  .iab-alert-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: #92400e;
+    margin-bottom: 6px;
+  }
+
+  .iab-alert-desc {
+    font-size: 0.82rem;
+    color: #b45309;
+    line-height: 1.5;
+  }
+
+  /* Insecure Context Warning (No HTTPS) */
+  #https-warning {
+    display: none;
+    background: var(--danger-bg);
+    border: 1.5px solid var(--danger-border);
+    border-radius: var(--radius-md);
+    padding: 14px;
+    margin-bottom: 20px;
+    color: var(--danger);
+    font-size: 0.84rem;
+    font-weight: 500;
+  }
+
+  /* Video Stage */
+  .preview-wrapper {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #0f172a;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #camera-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1); /* اثر آینه‌ای طبیعی */
+  }
+
+  .preview-placeholder {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #94a3b8;
+    gap: 8px;
+    font-size: 0.86rem;
+  }
+
+  /* Audio Meter Visualizer */
+  .audio-meter-box {
+    margin-bottom: 20px;
+    background: var(--surface-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 12px 16px;
+  }
+
+  .meter-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-main);
+    margin-bottom: 8px;
+  }
+
+  .meter-track {
+    height: 8px;
+    background: #e2e8f0;
+    border-radius: 9999px;
+    overflow: hidden;
+    display: flex;
+  }
+
+  #mic-level-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #10b981 0%, #3b82f6 70%, #f43f5e 100%);
+    border-radius: 9999px;
+    transition: width 0.08s ease;
+  }
+
+  /* Select Controls */
+  .device-select-group {
+    margin-bottom: 16px;
+  }
+
+  .device-select-label {
+    display: block;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+
+  .device-select {
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 12px;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    background: #ffffff;
+    font-size: 0.88rem;
+    color: var(--text-main);
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .device-select:focus {
+    border-color: var(--border-focus);
+  }
+
+  /* Permission Denied Recovery Guide */
+  #denied-guide {
+    display: none;
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-border);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    margin-bottom: 20px;
+    font-size: 0.84rem;
+    color: #9f1239;
+    line-height: 1.6;
+  }
+
+  #denied-guide strong {
+    color: #881337;
+  }
+
+  .status-tag {
+    font-size: 0.78rem;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-weight: 600;
+  }
+  .status-tag.waiting { background: #e0f2fe; color: #0369a1; }
+  .status-tag.success { background: #dcfce7; color: #15803d; }
+  .status-tag.failed { background: #fee2e2; color: #b91c1c; }
+</style>
+{% endblock %}
+
+{% block main_content %}
+  <div class="check-header">
+    <h1 class="check-title">Audio & Video Readiness</h1>
+    <p class="check-subtitle">Ensure your camera and microphone are ready for matching.</p>
+  </div>
+
+  <div class="check-body">
+    <!-- Insecure Context Notice -->
+    <div id="https-warning">
+      🔒 <strong>Secure Connection Required:</strong> WebRTC and camera access require a secure HTTPS connection (or localhost). Please switch to HTTPS.
+    </div>
+
+    <!-- In-App Browser Detection Banner -->
+    <div id="iab-warning">
+      <div class="iab-alert-title">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+        <span>Open in Native Browser</span>
+      </div>
+      <div class="iab-alert-desc">
+        You are currently viewing this inside an in-app browser (e.g. Instagram, Telegram, or LinkedIn). For camera and mic permissions to work reliably on iOS/Android, please tap <strong>•••</strong> and choose <strong>"Open in Safari"</strong> or <strong>"Open in Chrome"</strong>.
+      </div>
+    </div>
+
+    <!-- Video Preview Box (playsinline is critical for iOS Safari!) -->
+    <div class="preview-wrapper">
+      <video id="camera-video" autoplay playsinline muted></video>
+      <div class="preview-placeholder" id="video-placeholder">
+        <svg width="36" height="36" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+        </svg>
+        <span id="cam-status-text">Requesting camera access...</span>
+      </div>
+    </div>
+
+    <!-- Audio Meter Level -->
+    <div class="audio-meter-box">
+      <div class="meter-header">
+        <span>Microphone Activity</span>
+        <span id="mic-status-badge" class="status-tag waiting">Listening...</span>
+      </div>
+      <div class="meter-track">
+        <div id="mic-level-fill"></div>
+      </div>
+    </div>
+
+    <!-- Device Selectors -->
+    <div class="device-select-group">
+      <label class="device-select-label" for="video-source">Camera Source</label>
+      <select id="video-source" class="device-select">
+        <option value="">Detecting cameras...</option>
+      </select>
+    </div>
+
+    <div class="device-select-group">
+      <label class="device-select-label" for="audio-source">Microphone Source</label>
+      <select id="audio-source" class="device-select">
+        <option value="">Detecting microphones...</option>
+      </select>
+    </div>
+
+    <!-- Permission Denied Step-by-Step Recovery -->
+    <div id="denied-guide">
+      <p style="font-weight: 700; margin-bottom: 6px;">🚫 Camera or Microphone Access Denied</p>
+      <p>How to re-enable permissions on your device:</p>
+      <ul style="margin-left: 18px; margin-top: 4px;">
+        <li><strong>iOS Safari:</strong> Tap the <code>aA</code> icon on the left of the address bar ➔ Select <em>Website Settings</em> ➔ Set Camera & Microphone to <strong>Allow</strong>, then refresh.</li>
+        <li><strong>Android Chrome:</strong> Tap the lock/tune icon next to the URL ➔ Tap <em>Permissions</em> ➔ Toggle Camera & Microphone to <strong>Allowed</strong>.</li>
+      </ul>
+    </div>
+
+    <!-- Action Buttons -->
+    <button type="button" id="recheck-btn" class="btn-primary" style="margin-bottom: 10px;">
+      <span>Grant Permissions & Start Test</span>
+    </button>
+  </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function() {
+    let currentStream = null;
+    let audioContext = null;
+    let analyserNode = null;
+    let animFrameId = null;
+
+    const videoEl = document.getElementById('camera-video');
+    const placeholder = document.getElementById('video-placeholder');
+    const camStatusText = document.getElementById('cam-status-text');
+    const micStatusBadge = document.getElementById('mic-status-badge');
+    const micLevelFill = document.getElementById('mic-level-fill');
+    const videoSelect = document.getElementById('video-source');
+    const audioSelect = document.getElementById('audio-source');
+    const recheckBtn = document.getElementById('recheck-btn');
+    const deniedGuide = document.getElementById('denied-guide');
+    const iabWarning = document.getElementById('iab-warning');
+    const httpsWarning = document.getElementById('https-warning');
+
+    // ۱. بررسی Secure Context (HTTPS)
+    if (window.isSecureContext === false && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+      httpsWarning.style.display = 'block';
+    }
+
+    // ۲. تشخیص In-App Browser (Telegram, Instagram, etc.)
+    function detectInAppBrowser() {
+      const ua = navigator.userAgent || navigator.vendor || window.opera;
+      const isIAB = /FBAN|FBAV|Instagram|Telegram|LinkedInApp|MicroMessenger|musical_ly|BytedanceWebview|Line\/|Snapchat/i.test(ua) ||
+                    (/iPhone|iPod|iPad/i.test(ua) && !/Safari/i.test(ua) && !/CriOS/i.test(ua));
+      if (isIAB) {
+        iabWarning.style.display = 'block';
+      }
+      return isIAB;
+    }
+    const inAppBrowserDetected = detectInAppBrowser();
+
+    // ۳. لاگ نتیجه به سرور
+    async function reportTestResult(camOk, micOk, errType = "") {
+      const eventId = "{{ event_id|default:'' }}";
+      const reportUrl = eventId ? `/registration/${eventId}/device-check/report/` : `/registration/device-check/report/`;
+      try {
+        await fetch(reportUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            camera_working: camOk,
+            mic_working: micOk,
+            error_type: errType,
+            is_in_app_browser: inAppBrowserDetected
+          })
+        });
+      } catch (err) {
+        console.warn("Unable to send device check report:", err);
+      }
+    }
+
+    // ۴. لیست کردن دستگاه‌های متصل
+    async function populateDeviceSelectors() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        videoSelect.innerHTML = '';
+        audioSelect.innerHTML = '';
+
+        let videoCount = 0;
+        let audioCount = 0;
+
+        devices.forEach(device => {
+          const opt = document.createElement('option');
+          opt.value = device.deviceId;
+
+          if (device.kind === 'videoinput') {
+            videoCount++;
+            opt.text = device.label || `Camera ${videoCount}`;
+            videoSelect.appendChild(opt);
+          } else if (device.kind === 'audioinput') {
+            audioCount++;
+            opt.text = device.label || `Microphone ${audioCount}`;
+            audioSelect.appendChild(opt);
+          }
+        });
+
+        if (videoCount === 0) videoSelect.innerHTML = '<option value="">No Camera Found</option>';
+        if (audioCount === 0) audioSelect.innerHTML = '<option value="">No Mic Found</option>';
+      } catch (e) {
+        console.warn("Device enumeration error:", e);
+      }
+    }
+
+    // ۵. آغاز دریافت جریان وب‌کم و صوت
+    async function initMedia(videoDeviceId = null, audioDeviceId = null) {
+      deniedGuide.style.display = 'none';
+
+      if (currentStream) {
+        currentStream.getTracks().forEach(t => t.stop());
+      }
+      if (animFrameId) cancelAnimationFrame(animFrameId);
+
+      const constraints = {
+        video: videoDeviceId ? { deviceId: { exact: videoDeviceId } } : true,
+        audio: audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true
+      };
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        currentStream = stream;
+
+        // بارگذاری ویدیو
+        videoEl.srcObject = stream;
+        placeholder.style.display = 'none';
+
+        // راه‌اندازی Audio Visualizer
+        setupAudioMeter(stream);
+
+        // پر کردن منوهای دستگاه‌ها پس از کسب مجوز (Labels نمایان می‌شوند)
+        await populateDeviceSelectors();
+
+        recheckBtn.textContent = 'Everything Looks Great ✓';
+        recheckBtn.style.background = 'var(--accent-green)';
+        micStatusBadge.className = 'status-tag success';
+        micStatusBadge.textContent = 'Sound Detected';
+
+        reportTestResult(true, true);
+      } catch (err) {
+        placeholder.style.display = 'flex';
+        micStatusBadge.className = 'status-tag failed';
+        micStatusBadge.textContent = 'Failed';
+
+        let errCode = err.name || "UnknownError";
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          camStatusText.textContent = 'Permissions Blocked';
+          deniedGuide.style.display = 'block';
+          errCode = "not_allowed";
+        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+          camStatusText.textContent = 'No Camera/Mic Found';
+          errCode = "not_found";
+        } else {
+          camStatusText.textContent = 'Access Error: ' + err.message;
+        }
+
+        recheckBtn.textContent = 'Retry Permissions';
+        recheckBtn.style.background = 'var(--primary-gradient)';
+        reportTestResult(false, false, errCode);
+      }
+    }
+
+    // ۶. محاسبه و انیمیشن لول میکروفن
+    function setupAudioMeter(stream) {
+      const audioTracks = stream.getAudioTracks();
+      if (!audioTracks.length) return;
+
+      try {
+        const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+        audioContext = new AudioCtxClass();
+        analyserNode = audioContext.createAnalyser();
+        analyserNode.fftSize = 256;
+
+        const micSource = audioContext.createMediaStreamSource(stream);
+        micSource.connect(analyserNode);
+
+        const dataArray = new Uint8Array(analyserNode.frequencyBinCount);
+
+        function updateMeter() {
+          analyserNode.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i];
+          }
+          const avg = sum / dataArray.length;
+          const levelPercent = Math.min(100, Math.round((avg / 128) * 100));
+          micLevelFill.style.width = levelPercent + '%';
+
+          animFrameId = requestAnimationFrame(updateMeter);
+        }
+        updateMeter();
+      } catch (e) {
+        console.warn("Audio meter setup error:", e);
+      }
+    }
+
+    // لیسنرهای تعویض دستگاه ورودی
+    videoSelect.addEventListener('change', () => initMedia(videoSelect.value, audioSelect.value));
+    audioSelect.addEventListener('change', () => initMedia(videoSelect.value, audioSelect.value));
+    recheckBtn.addEventListener('click', () => initMedia(videoSelect.value, audioSelect.value));
+
+    // شروع اولیه بررسی به محض بارگذاری صفحه
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      initMedia();
+    } else {
+      camStatusText.textContent = 'Browser does not support camera API.';
+      reportTestResult(false, false, "unsupported_browser");
+    }
+  })();
+</script>
+{% endblock %}
