@@ -40,8 +40,7 @@ class MediaTransportConfig:
 class MediaTransport(ABC):
     @property
     @abstractmethod
-    def state(self) -> MediaTransportState:
-        ...
+    def state(self) -> MediaTransportState: ...
 
     @abstractmethod
     def preconnect(
@@ -49,12 +48,10 @@ class MediaTransport(ABC):
         room_id: str,
         partner_id: str,
         config: MediaTransportConfig | dict[str, Any] | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @abstractmethod
-    def open(self) -> None:
-        ...
+    def open(self) -> None: ...
 
     @abstractmethod
     def switch_partner(
@@ -62,28 +59,24 @@ class MediaTransport(ABC):
         new_room_id: str,
         new_partner_id: str,
         config: MediaTransportConfig | dict[str, Any] | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @abstractmethod
-    def leave(self) -> None:
-        ...
+    def leave(self) -> None: ...
 
     @abstractmethod
     def on(
         self,
         event: MediaTransportEvent | str,
         callback: Callable[..., Any],
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @abstractmethod
     def off(
         self,
         event: MediaTransportEvent | str,
         callback: Callable[..., Any],
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @abstractmethod
     def emit(
@@ -91,8 +84,7 @@ class MediaTransport(ABC):
         event: MediaTransportEvent | str,
         *args: Any,
         **kwargs: Any,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 class FakeMediaTransport(MediaTransport):

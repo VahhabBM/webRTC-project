@@ -1,4 +1,4 @@
-﻿"""Protocol contract for the WebRTC Event Platform."""
+"""Protocol contract for the WebRTC Event Platform."""
 
 from .media_transport import (
     FakeMediaTransport,
