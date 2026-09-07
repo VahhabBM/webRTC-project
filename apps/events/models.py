@@ -9,6 +9,10 @@ from django.core.validators import MinValueValidator
 from django.db import models
 
 
+def _default_scoring_weights() -> dict:
+    return {"tag_overlap": 1.0}
+
+
 class EventStatus(models.TextChoices):
     DRAFT = "draft", "Draft"
     SCHEDULED = "scheduled", "Scheduled"
@@ -56,6 +60,7 @@ class Event(models.Model):
     start_time = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    scoring_weights = models.JSONField(default=_default_scoring_weights)
 
     class Meta:
         ordering = ("-start_time",)
