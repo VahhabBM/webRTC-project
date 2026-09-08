@@ -106,7 +106,9 @@ def generate_schedule(match_input: MatchInput) -> GeneratedSchedule:
     score_mat: list[list[float]] = [[0.0] * N for _ in range(N)]
     for i in range(N):
         for j in range(i + 1, N):
-            s = compute_match_score(profiles[idx_to_pid[i]], profiles[idx_to_pid[j]], weights)
+            s = compute_match_score(
+                profiles[idx_to_pid[i]], profiles[idx_to_pid[j]], weights
+            )
             score_mat[i][j] = s
             score_mat[j][i] = s
 
@@ -140,7 +142,9 @@ def generate_schedule(match_input: MatchInput) -> GeneratedSchedule:
 
             # avail_for_bye[i] = (N-1) - len(forbidden_i[i]) because forbidden_i[i]
             # contains only distinct participants != i, so this is O(1) and correct.
-            bye_idx: int | None = max(eligible_i, key=lambda i: (N - 1 - len(forbidden_i[i]), i))
+            bye_idx: int | None = max(
+                eligible_i, key=lambda i: (N - 1 - len(forbidden_i[i]), i)
+            )
 
             unmatched_count[bye_idx] += 1
             working_set_i: set[int] = set(range(N)) - {bye_idx}
@@ -153,9 +157,7 @@ def generate_schedule(match_input: MatchInput) -> GeneratedSchedule:
         failed_idx: int | None = None
         remaining: set[int] = set(working_set_i)
         available_count_i: dict[int, int] = {
-            i: sum(
-                j != i and j not in forbidden_i[i] for j in remaining
-            )
+            i: sum(j != i and j not in forbidden_i[i] for j in remaining)
             for i in remaining
         }
 
@@ -310,7 +312,9 @@ def generate_schedule(match_input: MatchInput) -> GeneratedSchedule:
                         )
 
                         if swap2_legal:
-                            new_score = score_mat[n1[0]][n1[1]] + score_mat[n2[0]][n2[1]]
+                            new_score = (
+                                score_mat[n1[0]][n1[1]] + score_mat[n2[0]][n2[1]]
+                            )
                             if new_score > original_score + 1e-9:
                                 old1 = (ai, bi)
                                 old2 = (ci, di)
@@ -355,11 +359,13 @@ def generate_schedule(match_input: MatchInput) -> GeneratedSchedule:
             )
             for ai, bi in pairs_sorted
         )
-        improved_rounds.append(ScheduleRound(
-            number=r_idx + 1,
-            pairs=pairs_out,
-            unmatched_pid=idx_to_pid[bye_int] if bye_int is not None else None,
-        ))
+        improved_rounds.append(
+            ScheduleRound(
+                number=r_idx + 1,
+                pairs=pairs_out,
+                unmatched_pid=idx_to_pid[bye_int] if bye_int is not None else None,
+            )
+        )
 
     return GeneratedSchedule(rounds=tuple(improved_rounds))
 

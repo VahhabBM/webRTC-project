@@ -542,7 +542,9 @@ def test_generate_no_repeat_across_rounds():
     for n, r in [(4, 3), (6, 5), (8, 6), (10, 6), (12, 6)]:
         mi = _make_input(n, num_rounds=r)
         schedule = generate_schedule(mi)
-        all_keys = [_canon(sp.pid_a, sp.pid_b) for rnd in schedule.rounds for sp in rnd.pairs]
+        all_keys = [
+            _canon(sp.pid_a, sp.pid_b) for rnd in schedule.rounds for sp in rnd.pairs
+        ]
         assert len(all_keys) == len(set(all_keys)), (
             f"Repeated partner detected for N={n}, R={r}"
         )
@@ -554,7 +556,9 @@ def test_generate_no_participant_twice_per_round():
         mi = _make_input(n, num_rounds=r)
         schedule = generate_schedule(mi)
         for rnd in schedule.rounds:
-            pids_in_round = [sp.pid_a for sp in rnd.pairs] + [sp.pid_b for sp in rnd.pairs]
+            pids_in_round = [sp.pid_a for sp in rnd.pairs] + [
+                sp.pid_b for sp in rnd.pairs
+            ]
             assert len(pids_in_round) == len(set(pids_in_round)), (
                 f"Participant appears twice in round {rnd.number} for N={n}, R={r}"
             )
@@ -588,7 +592,9 @@ def test_generate_odd_bye_not_in_pairs():
         for rnd in schedule.rounds:
             if rnd.unmatched_pid is None:
                 continue
-            pids_in_round = {sp.pid_a for sp in rnd.pairs} | {sp.pid_b for sp in rnd.pairs}
+            pids_in_round = {sp.pid_a for sp in rnd.pairs} | {
+                sp.pid_b for sp in rnd.pairs
+            }
             assert rnd.unmatched_pid not in pids_in_round, (
                 f"Bye participant found in pairs for N={n}, R={r}, round {rnd.number}"
             )
@@ -613,7 +619,9 @@ def test_local_improvement_score_never_decreases():
     where local improvement has something to do (varied tag overlaps)."""
     # Give even-indexed participants tag 'x' so overlap exists for some pairs.
     mi = _make_input(
-        16, num_rounds=6, tag_fn=lambda i: frozenset({"x"}) if i % 2 == 0 else frozenset()
+        16,
+        num_rounds=6,
+        tag_fn=lambda i: frozenset({"x"}) if i % 2 == 0 else frozenset(),
     )
     schedule = generate_schedule(mi)
     pids = frozenset(p.pid for p in mi.participants)
