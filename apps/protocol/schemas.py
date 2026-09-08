@@ -1,5 +1,4 @@
-"""
-Message builder helpers.
+"""Message builder helpers.
 
 ``build_message`` constructs a valid, serialisable protocol message dict.
 All builders validate their arguments via the same validators used by the
@@ -10,8 +9,8 @@ Usage
 ::
 
     import json
-    from apps.protocol.schemas import build_message
     from apps.protocol.constants import MessageType
+    from apps.protocol.schemas import build_message
 
     msg = build_message(
         MessageType.SERVER_HELLO,
@@ -30,11 +29,16 @@ is responsible for keeping payloads clean.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from .constants import PROTOCOL_VERSION, MessageType
 from .validators import validate_payload
 
+if TYPE_CHECKING:
+    from .exceptions import ProtocolError
 
-def build_message(msg_type: MessageType | str, **payload_fields) -> dict:
+
+def build_message(msg_type: MessageType | str, **payload_fields: Any) -> dict:
     """Build and validate a protocol message envelope.
 
     Parameters
@@ -65,8 +69,7 @@ def build_message(msg_type: MessageType | str, **payload_fields) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Typed convenience builders
-# These make call-sites readable and IDE-friendly.
+# Server convenience builders
 # ---------------------------------------------------------------------------
 
 
@@ -84,7 +87,7 @@ def build_server_hello(
         from .constants import SUPPORTED_VERSIONS
 
         supported_versions = sorted(SUPPORTED_VERSIONS)
-    payload = dict(
+    payload: dict[str, Any] = dict(
         participant_id=participant_id,
         server_ts=server_ts,
         client_ts_echo=client_ts_echo,
@@ -126,7 +129,7 @@ def build_server_pairing(
     partner_tags: list[str] | None = None,
 ) -> dict:
     """Build a ``server.pairing`` message."""
-    payload: dict = dict(
+    payload: dict[str, Any] = dict(
         round_number=round_number,
         room_id=room_id,
         partner_id=partner_id,
@@ -236,7 +239,7 @@ def build_server_event_end(
     *, reason: str, server_ts: int, message: str | None = None
 ) -> dict:
     """Build a ``server.event_end`` message."""
-    payload: dict = dict(reason=reason, server_ts=server_ts)
+    payload: dict[str, Any] = dict(reason=reason, server_ts=server_ts)
     if message is not None:
         payload["message"] = message
     return build_message(MessageType.SERVER_EVENT_END, **payload)
@@ -249,12 +252,8 @@ def build_server_error(
     original_type: str | None = None,
     detail: dict | None = None,
 ) -> dict:
-    """Build a ``server.error`` message.
-
-    This is the standard way to reject an invalid client message without
-    crashing the connection.
-    """
-    payload: dict = dict(code=code, message=message)
+    """Build a ``server.error`` message."""
+    payload: dict[str, Any] = dict(code=code, message=message)
     if original_type is not None:
         payload["original_type"] = original_type
     if detail is not None:
@@ -262,10 +261,9 @@ def build_server_error(
     return build_message(MessageType.SERVER_ERROR, **payload)
 
 
-def error_from_protocol_error(exc: ProtocolError) -> dict:  # noqa: F821
-    """Convenience: turn a :class:`~apps.protocol.exceptions.ProtocolError`
-    into a ready-to-send ``server.error`` message dict."""
-    from .exceptions import ProtocolError  # local import to avoid circular
+def error_from_protocol_error(exc: ProtocolError) -> dict:
+    """Convert a ProtocolError into a ready-to-send server.error message."""
+    from .exceptions import ProtocolError
 
     if not isinstance(exc, ProtocolError):
         raise TypeError(f"Expected ProtocolError, got {type(exc).__name__}")
@@ -274,4 +272,44 @@ def error_from_protocol_error(exc: ProtocolError) -> dict:  # noqa: F821
         message=exc.message,
         original_type=exc.original_type,
         detail=exc.detail if exc.detail else None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Client convenience builders (used for client payloads and tests)
+# ---------------------------------------------------------------------------
+
+
+def build_client_webrtc_offer(*, room_id: str, sdp: str) -> dict:
+    """Build a ``client.webrtc.offer`` message."""
+    return build_message(
+        MessageType.CLIENT_WEBRTC_OFFER,
+        room_id=room_id,
+        sdp=sdp,
+    )
+
+
+def build_client_webrtc_answer(*, room_id: str, sdp: str) -> dict:
+    """Build a ``client.webrtc.answer`` message."""
+    return build_message(
+        MessageType.CLIENT_WEBRTC_ANSWER,
+        room_id=room_id,
+        sdp=sdp,
+    )
+
+
+def build_client_ice_candidate(
+    *,
+    room_id: str,
+    candidate: str,
+    sdp_mid: str,
+    sdp_mline_index: int,
+) -> dict:
+    """Build a ``client.webrtc.ice_candidate`` message."""
+    return build_message(
+        MessageType.CLIENT_WEBRTC_ICE,
+        room_id=room_id,
+        candidate=candidate,
+        sdp_mid=sdp_mid,
+        sdp_mline_index=sdp_mline_index,
     )

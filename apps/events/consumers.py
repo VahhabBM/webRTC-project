@@ -1,4 +1,4 @@
-"""Authenticated WebSocket connection layer (T-14)."""
+"""Authenticated WebSocket connection layer (T-14 & T-27)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,10 @@ from apps.protocol.schemas import (
     build_server_clock_sync,
     build_server_error,
     build_server_hello,
+    build_server_ice_candidate,
     build_server_pong,
+    build_server_webrtc_answer,
+    build_server_webrtc_offer,
     error_from_protocol_error,
 )
 from apps.protocol.validators import validate_message
@@ -45,12 +48,32 @@ def _participant_from_scope(scope):
     return resolve_participant_from_scope(scope)
 
 
-class ParticipantConsumer(AsyncWebsocketConsumer):
-    """One isolated, session-authenticated protocol connection.
+@database_sync_to_async
+def _resolve_partner_for_participant(participant, room_id: str):
+    from django.db.models import Q
 
-    Multiple sockets for the same participant are deliberately allowed.
-    Identity is resolved once from the Django session and never from payloads.
-    """
+    from apps.events.models import Pair
+
+    if not participant or not room_id:
+        return None
+
+    pair = (
+        Pair.objects.filter(room_id=room_id)
+        .filter(Q(participant_a=participant) | Q(participant_b=participant))
+        .select_related("participant_a", "participant_b")
+        .first()
+    )
+    if not pair:
+        return None
+    return (
+        pair.participant_b
+        if pair.participant_a_id == participant.pk
+        else pair.participant_a
+    )
+
+
+class ParticipantConsumer(AsyncWebsocketConsumer):
+    """One isolated, session-authenticated protocol connection."""
 
     async def connect(self):
         self.participant = None
@@ -82,6 +105,10 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 await task
             except asyncio.CancelledError:
                 pass
+        if hasattr(self, "participant_group") and self.channel_layer:
+            await self.channel_layer.group_discard(
+                self.participant_group, self.channel_name
+            )
 
     async def receive(self, text_data=None, bytes_data=None):
         self.last_activity = time.monotonic()
@@ -151,6 +178,12 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 "client.hello has already been accepted.",
                 original_type=str(msg_type),
             )
+        elif msg_type in (
+            MessageType.CLIENT_WEBRTC_OFFER,
+            MessageType.CLIENT_WEBRTC_ANSWER,
+            MessageType.CLIENT_WEBRTC_ICE,
+        ):
+            await self._handle_webrtc_signal(msg_type, payload)
         else:
             await self._send_error(
                 ErrorCode.ERR_INVALID_STATE,
@@ -160,6 +193,11 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
 
     async def _complete_handshake(self, payload):
         self.handshake_complete = True
+        if self.channel_layer:
+            self.participant_group = f"participant_{self.participant.pk}"
+            await self.channel_layer.group_add(
+                self.participant_group, self.channel_name
+            )
         await self._send(
             build_server_hello(
                 participant_id=str(self.participant.pk),
@@ -168,6 +206,53 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 event_id=str(self.participant.event_id),
             )
         )
+
+    async def _handle_webrtc_signal(self, msg_type: MessageType, payload: dict) -> None:
+        room_id = payload.get("room_id")
+        partner = await _resolve_partner_for_participant(self.participant, room_id)
+        if not partner:
+            await self._send_error(
+                ErrorCode.ERR_WRONG_ROOM,
+                f"Participant is not assigned to room {room_id}.",
+                original_type=str(msg_type),
+            )
+            return
+
+        from_id = str(self.participant.pk)
+        if msg_type == MessageType.CLIENT_WEBRTC_OFFER:
+            outbound = build_server_webrtc_offer(
+                room_id=room_id,
+                from_participant_id=from_id,
+                sdp=payload["sdp"],
+            )
+        elif msg_type == MessageType.CLIENT_WEBRTC_ANSWER:
+            outbound = build_server_webrtc_answer(
+                room_id=room_id,
+                from_participant_id=from_id,
+                sdp=payload["sdp"],
+            )
+        elif msg_type == MessageType.CLIENT_WEBRTC_ICE:
+            outbound = build_server_ice_candidate(
+                room_id=room_id,
+                from_participant_id=from_id,
+                candidate=payload["candidate"],
+                sdp_mid=payload["sdp_mid"],
+                sdp_mline_index=payload["sdp_mline_index"],
+            )
+        else:
+            return
+
+        if self.channel_layer:
+            await self.channel_layer.group_send(
+                f"participant_{partner.pk}",
+                {
+                    "type": "webrtc_relay",
+                    "message": outbound,
+                },
+            )
+
+    async def webrtc_relay(self, event: dict) -> None:
+        await self._send(event["message"])
 
     def _within_rate_limit(self) -> bool:
         now = time.monotonic()
