@@ -1,23 +1,16 @@
 from __future__ import annotations
 
-import hashlib
 import uuid
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
 
 from apps.events.matching import (
     MatchingError,
-    MatchInput,
-    MatchParticipant,
     generate_schedule,
     validate_schedule,
 )
-from apps.events.models import Event, Pair, Round
-from apps.events.scoring import (
-    build_participant_profile,
-    build_scoring_weights,
-)
+from apps.events.models import Event
+from apps.events.scheduling import build_match_input, persist_schedule
 
 
 class Command(BaseCommand):
@@ -55,110 +48,44 @@ class Command(BaseCommand):
         except Event.DoesNotExist as exc:
             raise CommandError(f"Event {event_uuid} does not exist") from exc
 
-        participants_qs = event.participants.all().prefetch_related("tags")
-        participants = list(participants_qs)
-
-        if len(participants) < 2:
-            raise CommandError(
-                f"Cannot generate schedule: event has fewer than 2 participants (got {len(participants)})."
-            )
-
         try:
-            weights = build_scoring_weights(event)
+            match_input = build_match_input(event)
         except ValueError as exc:
             raise CommandError(
                 f"Invalid scoring weights on event {event.pk}: {exc}"
             ) from exc
 
-        match_participants = tuple(
-            sorted(
-                (
-                    MatchParticipant(
-                        pid=str(p.pk),
-                        profile=build_participant_profile(p),
-                    )
-                    for p in participants
-                ),
-                key=lambda mp: mp.pid,
+        if len(match_input.participants) < 2:
+            raise CommandError(
+                f"Cannot generate schedule: event has fewer than 2 participants "
+                f"(got {len(match_input.participants)})."
             )
-        )
-
-        match_input = MatchInput(
-            participants=match_participants,
-            num_rounds=int(event.num_rounds),
-            weights=weights,
-        )
 
         try:
             schedule = generate_schedule(match_input)
         except MatchingError as exc:
             raise CommandError(str(exc)) from exc
 
-        pids = frozenset(mp.pid for mp in match_participants)
+        pids = frozenset(mp.pid for mp in match_input.participants)
         violations = validate_schedule(schedule, pids, num_rounds=event.num_rounds)
         if violations:
             detail = "\n".join(f"- {v.kind}: {v.detail}" for v in violations)
             raise CommandError(f"Generated schedule is invalid:\n{detail}")
 
         if not dry_run:
-            self._persist(event, schedule)
+            persist_schedule(event, schedule)
 
         total_pairs = sum(len(r.pairs) for r in schedule.rounds)
         prefix = "[DRY RUN] Would generate" if dry_run else "Generated"
         self.stdout.write(
-            f"{prefix} {event.num_rounds} rounds for event '{event.name}' ({event.pk}) with {total_pairs} pairs."
+            f"{prefix} {event.num_rounds} rounds for event '{event.name}' "
+            f"({event.pk}) with {total_pairs} pairs."
         )
 
         if verbose:
             for rnd in schedule.rounds:
                 total_score = sum(sp.score for sp in rnd.pairs)
                 self.stdout.write(
-                    f"Round {rnd.number}: pairs={len(rnd.pairs)} score={total_score:.6f} bye={rnd.unmatched_pid}"
+                    f"Round {rnd.number}: pairs={len(rnd.pairs)} "
+                    f"score={total_score:.6f} bye={rnd.unmatched_pid}"
                 )
-
-    @staticmethod
-    def _persist(event: Event, schedule) -> None:
-        with transaction.atomic():
-            event.rounds.all().delete()
-
-            round_objects: list[Round] = []
-            step = event.round_duration + event.break_duration
-            for rnd in schedule.rounds:
-                starts_at = event.start_time + (rnd.number - 1) * step
-                ends_at = starts_at + event.round_duration
-                round_objects.append(
-                    Round(
-                        event=event,
-                        number=rnd.number,
-                        status="scheduled",
-                        starts_at=starts_at,
-                        ends_at=ends_at,
-                    )
-                )
-
-            Round.objects.bulk_create(round_objects)
-            round_by_number = {r.number: r for r in round_objects}
-
-            pair_objects: list[Pair] = []
-            for rnd in schedule.rounds:
-                round_obj = round_by_number[rnd.number]
-                for sp in rnd.pairs:
-                    pid_a, pid_b = sp.pid_a, sp.pid_b
-                    if uuid.UUID(pid_a) > uuid.UUID(pid_b):
-                        pid_a, pid_b = pid_b, pid_a
-
-                    room_id = hashlib.sha256(
-                        f"{event.pk}:{round_obj.number}:{pid_a}:{pid_b}".encode()
-                    ).hexdigest()[:32]
-
-                    pair_objects.append(
-                        Pair(
-                            event=event,
-                            round=round_obj,
-                            participant_a_id=pid_a,
-                            participant_b_id=pid_b,
-                            room_id=room_id,
-                        )
-                    )
-
-            Pair.objects.bulk_create(pair_objects)
