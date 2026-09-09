@@ -1,12 +1,12 @@
 /**
- * WebRTC Perfect Negotiation & Media Transport (T-27)
+ * WebRTC Perfect Negotiation & Media Transport Lifecycle (T-27)
  * Enforces:
  *  - 640x360 target resolution
  *  - 500 kbps video bitrate cap via RTCRtpSender.setParameters
- *  - Muted pre-connection phase (tracks attached but disabled)
- *  - Deterministic Polite/Impolite role assignment
- *  - Canvas stream fallback for single-device multi-tab testing
- *  - Full connection lifecycle (connected, degraded, failed, stats)
+ *  - Full lifecycle transitions (idle -> preconnected -> open -> closed)
+ *  - Seamless round switching (switchPartner) reusing hardware tracks
+ *  - Deterministic W3C Perfect Negotiation with rollback
+ *  - Hardware lock detection & simulated canvas fallback for multi-tab testing
  */
 
 export const DEFAULT_MEDIA_CONSTRAINTS = {
@@ -60,6 +60,7 @@ export class PerfectNegotiator {
 
     this.isMakingOffer = false;
     this.ignoreOffer = false;
+    this.isMuted = false;
     this.state = TransportState.IDLE;
 
     this.localStream = null;
@@ -127,6 +128,7 @@ export class PerfectNegotiator {
 
     // 4. Connection State & Degradation Monitoring
     this.pc.onconnectionstatechange = () => {
+      if (!this.pc) return;
       const connState = this.pc.connectionState;
       console.log(`[WebRTC] Connection state: ${connState}`);
 
@@ -203,15 +205,14 @@ export class PerfectNegotiator {
   }
 
   _attachTracksToPC() {
-    if (!this.localStream) return;
+    if (!this.localStream || !this.pc) return;
     this.localStream.getTracks().forEach((track) => {
       this.pc.addTrack(track, this.localStream);
     });
   }
 
   /**
-   * Pre-connection: establishes ICE/SDP connection in background
-   * while keeping audio and video disabled until round opens.
+   * Pre-connection phase: attaches tracks muted in background before round start.
    */
   async preconnect(roomId, partnerParticipantId) {
     this.roomId = roomId;
@@ -223,7 +224,7 @@ export class PerfectNegotiator {
   }
 
   /**
-   * Open / Start Round: un-mutes tracks and applies bitrate limits.
+   * Open / Start Round: un-mutes tracks and enforces the 500 kbps cap.
    */
   async open() {
     this.setMediaMuted(false);
@@ -232,9 +233,10 @@ export class PerfectNegotiator {
   }
 
   /**
-   * Mutes or un-mutes tracks without destroying local hardware capture.
+   * Mutes or un-mutes tracks without stopping hardware capture devices.
    */
   setMediaMuted(isMuted) {
+    this.isMuted = isMuted;
     if (!this.localStream) return;
     this.localStream.getAudioTracks().forEach((t) => (t.enabled = !isMuted));
     this.localStream.getVideoTracks().forEach((t) => (t.enabled = !isMuted));
@@ -244,6 +246,7 @@ export class PerfectNegotiator {
    * Enforces 500 kbps maxBitrate on video sender via RTCRtpSender.setParameters.
    */
   async _applyVideoBitrateCap() {
+    if (!this.pc) return;
     const videoSender = this.pc
       .getSenders()
       .find((s) => s.track && s.track.kind === "video");
@@ -264,9 +267,10 @@ export class PerfectNegotiator {
   }
 
   /**
-   * Manual offer generation triggered by UI button.
+   * Manual offer generation triggered by UI button or round transitions.
    */
   async createManualOffer() {
+    if (!this.pc) return;
     try {
       this.isMakingOffer = true;
       const offer = await this.pc.createOffer({ offerToReceiveVideo: true, offerToReceiveAudio: true });
@@ -288,11 +292,16 @@ export class PerfectNegotiator {
   }
 
   /**
-   * Switch partner for next round while reusing local stream.
+   * Seamless round switch: teardown previous peer connection while
+   * keeping the hardware media stream active and untouched.
    */
   async switchPartner(newRoomId, newPartnerId) {
     this._stopStatsMonitor();
-    this.pc.close();
+
+    if (this.pc) {
+      this.pc.close();
+      this.pc = null;
+    }
 
     this.roomId = newRoomId;
     this.partnerId = String(newPartnerId);
@@ -305,10 +314,11 @@ export class PerfectNegotiator {
     this.state = TransportState.OPEN;
     this.setMediaMuted(false);
     await this._applyVideoBitrateCap();
+    console.log(`[WebRTC Lifecycle] Switched to room ${newRoomId} with partner ${newPartnerId}`);
   }
 
   /**
-   * Full teardown: stop hardware tracks and close peer connection.
+   * Full teardown: cleanly releases hardware camera/mic and terminates peer connection.
    */
   leave() {
     this._stopStatsMonitor();
@@ -321,9 +331,14 @@ export class PerfectNegotiator {
 
     if (this.pc) {
       this.pc.close();
+      this.pc = null;
     }
 
     this.state = TransportState.CLOSED;
+    if (this.onStateChange) {
+      this.onStateChange("closed");
+    }
+    console.log("[WebRTC Lifecycle] Session destroyed, devices released.");
   }
 
   // --- Signaling Handlers ---
@@ -346,6 +361,7 @@ export class PerfectNegotiator {
   }
 
   async _handleRemoteOffer(payload) {
+    if (!this.pc) return;
     const offerCollision = this.isMakingOffer || this.pc.signalingState !== "stable";
     this.ignoreOffer = !this.isPolite && offerCollision;
 
@@ -376,6 +392,7 @@ export class PerfectNegotiator {
   }
 
   async _handleRemoteAnswer(payload) {
+    if (!this.pc) return;
     try {
       await this.pc.setRemoteDescription({ type: "answer", sdp: payload.sdp });
       await this._applyVideoBitrateCap();
@@ -385,6 +402,7 @@ export class PerfectNegotiator {
   }
 
   async _handleRemoteIceCandidate(payload) {
+    if (!this.pc) return;
     try {
       await this.pc.addIceCandidate({
         candidate: payload.candidate,
@@ -429,7 +447,7 @@ export class PerfectNegotiator {
         this._lastBytesSent = bytesSent;
         this._lastStatsTimestamp = timestamp;
       } catch {
-        // Ignored if PC is transitioning
+        // Ignored during connection state transitions
       }
     }, 2000);
   }
