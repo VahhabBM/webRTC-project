@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>T-27 WebRTC Video Room</title>
+  <style>
+    body { font: 15px system-ui, sans-serif; max-width: 900px; margin: 2rem auto; background: #0f172a; color: #f8fafc; padding: 0 1rem; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .status-bar { display: flex; gap: 1rem; background: #1e293b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1.5rem; align-items: center; }
+    .badge { padding: 0.25rem 0.6rem; border-radius: 4px; font-weight: 600; font-size: 0.85rem; background: #475569; }
+    .badge.connected { background: #16a34a; }
+    .badge.degraded { background: #d97706; }
+    .badge.failed { background: #dc2626; }
+    .badge.open { background: #2563eb; }
+    .btn { background: #2563eb; color: #fff; border: none; padding: 0.4rem 0.9rem; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    .btn:hover { background: #1d4ed8; }
+    .videos { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .video-card { background: #1e293b; border-radius: 8px; overflow: hidden; padding: 0.5rem; text-align: center; }
+    video { width: 100%; height: auto; max-height: 360px; background: #000; border-radius: 6px; transform: scaleX(-1); }
+    #remoteVideo { transform: none; }
+    .metrics { font-family: monospace; font-size: 0.85rem; margin-top: 0.5rem; color: #94a3b8; }
+  </style>
+</head>
+<body>
+
+  <h1>T-27 Video Transport Test Harness</h1>
+  <div class="status-bar">
+    <div>State: <span id="connBadge" class="badge">DISCONNECTED</span></div>
+    <div>Transport: <span id="transBadge" class="badge">IDLE</span></div>
+    <div>Bitrate: <span id="bitrateVal">0</span> kbps (Cap: 500)</div>
+    <div>Room: <span id="roomVal">—</span></div>
+    <button id="callBtn" class="btn">Start Call</button>
+  </div>
+
+  <div class="videos">
+    <div class="video-card">
+      <h3>Local Video (You)</h3>
+      <video id="localVideo" autoplay playsinline muted></video>
+      <div id="localRes" class="metrics">Target: 640x360</div>
+    </div>
+    <div class="video-card">
+      <h3>Remote Video (Partner)</h3>
+      <video id="remoteVideo" autoplay playsinline></video>
+      <div id="remoteRes" class="metrics">Waiting for stream…</div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { PerfectNegotiator, DEFAULT_MEDIA_CONSTRAINTS } from '/static/events/js/perfect_negotiator.js';
+
+    const $ = id => document.getElementById(id);
+    let ws = null;
+    let negotiator = null;
+    let myParticipantId = null;
+
+    const initialRoomId = "{{ room_id|default:'' }}";
+    const initialPartnerId = "{{ partner_id|default:'' }}";
+
+    function setupNegotiator(roomId, partnerId) {
+      negotiator = new PerfectNegotiator({
+        myParticipantId,
+        partnerParticipantId: partnerId,
+        roomId,
+        sendSignalingMessage: (msg) => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(msg));
+          }
+        },
+        onRemoteStream: (stream) => {
+          const remoteEl = $('remoteVideo');
+          if (remoteEl.srcObject !== stream) {
+            remoteEl.srcObject = stream;
+          }
+          remoteEl.play().catch(e => console.warn("Autoplay interaction needed:", e));
+        },
+        onStateChange: (state) => {
+          $('connBadge').textContent = state.toUpperCase();
+          $('connBadge').className = `badge ${state}`;
+        },
+        onStats: ({ bitrateKbps }) => {
+          $('bitrateVal').textContent = bitrateKbps;
+        },
+        onFailure: (reason) => {
+          $('connBadge').textContent = `FAILED: ${reason}`;
+          $('connBadge').className = "badge failed";
+        }
+      });
+
+      window.negotiator = negotiator;
+    }
+
+    async function prepareLocalMedia() {
+      $('roomVal').textContent = initialRoomId;
+      setupNegotiator(initialRoomId, initialPartnerId);
+      await negotiator.acquireLocalMedia(DEFAULT_MEDIA_CONSTRAINTS);
+      $('localVideo').srcObject = negotiator.localStream;
+      await negotiator.preconnect(initialRoomId, initialPartnerId);
+      $('transBadge').textContent = "PRECONNECTED";
+    }
+
+    $('callBtn').onclick = async () => {
+      if (!negotiator) return;
+      await negotiator.open();
+      $('transBadge').textContent = "OPEN";
+      $('transBadge').className = "badge open";
+      await negotiator.createManualOffer();
+    };
+
+    async function init() {
+      // 1. Authenticate and resolve participant ID
+      const meRes = await fetch('/participant/me/');
+      if (!meRes.ok) {
+        alert("Not authenticated! Please join with a valid token first.");
+        return;
+      }
+      const meData = await meRes.json();
+      myParticipantId = meData.participant.id;
+
+      // 2. Connect WebSocket
+      const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${protocol}://${location.host}/ws/events/`);
+
+      ws.onopen = async () => {
+        $('connBadge').textContent = "WS READY";
+        $('connBadge').className = "badge connected";
+
+        ws.send(JSON.stringify({
+          type: "client.hello",
+          version: 1,
+          payload: { client_ts: Date.now() }
+        }));
+
+        if (initialRoomId && initialPartnerId) {
+          await prepareLocalMedia();
+        }
+      };
+
+      ws.onmessage = async (event) => {
+        const msg = JSON.parse(event.data);
+        const { type } = msg;
+
+        if (type.startsWith("server.webrtc.")) {
+          if (negotiator) {
+            await negotiator.handleSignalingMessage(msg);
+          }
+        }
+      };
+    }
+
+    $('localVideo').onloadedmetadata = () => {
+      $('localRes').textContent = `Resolution: ${$('localVideo').videoWidth}x${$('localVideo').videoHeight}`;
+    };
+    $('remoteVideo').onloadedmetadata = () => {
+      $('remoteRes').textContent = `Resolution: ${$('remoteVideo').videoWidth}x${$('remoteVideo').videoHeight}`;
+    };
+
+    init();
+  </script>
+</body>
+</html>
