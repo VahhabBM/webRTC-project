@@ -3,7 +3,11 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET
 
-from apps.events.auth import verify_join_token
+from apps.events.auth import (
+    ExpiredJoinToken,
+    InvalidJoinToken,
+    authenticate_join_token,
+)
 from apps.events.models import Pair, Participant
 from apps.events.turn import generate_ice_servers
 
@@ -21,12 +25,30 @@ def get_authenticated_participant(request: HttpRequest) -> Participant | None:
 
 @require_GET
 def join_participant(request: HttpRequest, token: str) -> JsonResponse:
-    """احراز هویت شرکت‌کننده از طریق Join Token و تنظیم نشست کاربر"""
-    participant = verify_join_token(token)
-    if not participant:
+    """احراز هویت شرکت‌کننده از طریق Join Token با تفکیک خطاهای 400 و 410"""
+    try:
+        participant = authenticate_join_token(token)
+    except InvalidJoinToken:
         return JsonResponse(
-            {"error": "Invalid or expired join token", "authenticated": False},
-            status=401,
+            {
+                "error": {
+                    "code": "join_token_invalid",
+                    "message": "Invalid join token",
+                },
+                "authenticated": False,
+            },
+            status=400,
+        )
+    except ExpiredJoinToken:
+        return JsonResponse(
+            {
+                "error": {
+                    "code": "join_token_expired",
+                    "message": "Join token expired",
+                },
+                "authenticated": False,
+            },
+            status=410,
         )
 
     request.session["participant_id"] = str(participant.pk)
@@ -94,7 +116,6 @@ def video_room_page(request: HttpRequest) -> HttpResponse:
             status=401,
         )
 
-    # پیدا کردن آخرین جفت فعال کاربر در رویداد
     pair = (
         Pair.objects.filter(event=participant.event)
         .filter(Q(participant_a=participant) | Q(participant_b=participant))
