@@ -7,6 +7,9 @@ import logging
 import secrets
 
 from django.conf import settings
+
+# Example if using django.core.signing:
+from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.db import transaction
 from django.utils import timezone
 
@@ -98,3 +101,12 @@ def resolve_participant_from_scope(scope) -> Participant | None:
     """T-14 hook: resolve identity from a scope containing Django session data."""
     session = scope.get("session")
     return resolve_participant_from_session(session) if session is not None else None
+
+
+def verify_join_token(token: str, max_age: int = 3600) -> dict | None:
+    signer = TimestampSigner()
+    try:
+        data = signer.unsign_object(token, max_age=max_age)
+        return data
+    except (BadSignature, SignatureExpired):
+        return None
