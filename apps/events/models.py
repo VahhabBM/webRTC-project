@@ -325,6 +325,8 @@ class LeaderLease(models.Model):
         from django.utils import timezone
 
         return self.expires_at > timezone.now()
+
+
 class OperatorActionType(models.TextChoices):
     PAUSE = "pause", "Pause"
     RESUME = "resume", "Resume"
