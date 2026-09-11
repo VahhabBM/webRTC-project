@@ -10,7 +10,7 @@ from apps.events.scheduler import EventPhase, RoundScheduler
 
 
 class PreconnectService:
-    PRECONNECT_WINDOW_SECONDS = 20
+    PRECONNECT_WINDOW_SECONDS = 25
 
     def __init__(self, event: Event):
         self.event = event
