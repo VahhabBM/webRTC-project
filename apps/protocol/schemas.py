@@ -156,6 +156,23 @@ def build_server_round_start(
     )
 
 
+def build_server_round_warning(
+    *,
+    round_number: int,
+    server_ts: int,
+    remaining_seconds: int,
+    round_end_ts: int,
+) -> dict:
+    """Build a ``server.round_warning`` (final-seconds) message."""
+    return build_message(
+        MessageType.SERVER_ROUND_WARNING,
+        round_number=round_number,
+        server_ts=server_ts,
+        remaining_seconds=remaining_seconds,
+        round_end_ts=round_end_ts,
+    )
+
+
 def build_server_round_end(*, round_number: int, server_ts: int) -> dict:
     """Build a ``server.round_end`` message."""
     return build_message(
