@@ -20,7 +20,7 @@ class TestPreconnectPhase:
             num_rounds=2,
             round_duration=timedelta(minutes=3),
             break_duration=timedelta(seconds=30),
-            start_time=now + timedelta(seconds=20),
+            start_time=now + timedelta(seconds=30),
         )
 
         p1 = Participant.objects.create(
@@ -54,44 +54,44 @@ class TestPreconnectPhase:
             "start_time": event.start_time,
         }
 
-    def test_detect_upcoming_round_in_20s_window(self, setup_data):
-        """بررسی شناسایی راند پیش‌رو دقیقاً در پنجره پیش‌اتصال ۲۰ ثانیه مانده به شروع"""
+    def test_detect_upcoming_round_in_25s_window(self, setup_data):
+        """بررسی شناسایی راند پیش‌رو در پنجره پیش‌اتصال ۲۵ ثانیه‌ای پیش از شروع"""
         service = PreconnectService(setup_data["event"])
         r1 = setup_data["r1"]
 
-        # دقیقا ۱۵ ثانیه مانده به شروع راند ۱
-        check_time = r1.starts_at - timedelta(seconds=15)
+        # دقیقا ۲۰ ثانیه مانده به شروع راند ۱ (درون پنجره ۲۵ ثانیه‌ای)
+        check_time = r1.starts_at - timedelta(seconds=20)
         upcoming = service.get_upcoming_round(check_time)
         assert upcoming is not None
         assert upcoming.number == 1
 
-        # در فاصله ۶۰ ثانیه قبل (بیرون پنجره ۲۰ ثانیه‌ای) نباید پیدا کند
+        # در فاصله ۶۰ ثانیه قبل (بیرون پنجره ۲۵ ثانیه‌ای) نباید پیدا کند
         far_time = r1.starts_at - timedelta(seconds=60)
         assert service.get_upcoming_round(far_time) is None
 
     def test_trigger_preconnect_payload_and_status(self, setup_data):
-        """بررسی تولید پی‌لود و برودکست مشخصات تبادل همتا به همتا"""
+        """بررسی تولید پی‌لود، مشخصات تبادل P2P و تنظیم شمارش معکوس ۲۵ ثانیه‌ای"""
         service = PreconnectService(setup_data["event"])
         r1 = setup_data["r1"]
-        check_time = r1.starts_at - timedelta(seconds=20)
+        check_time = r1.starts_at - timedelta(seconds=25)
 
         result = service.trigger_preconnect(target_round=r1, now=check_time)
         assert result["status"] == "preconnect_triggered"
         assert result["round_number"] == 1
         assert result["pairs_notified"] == 1
-        assert result["seconds_until_start"] == 20
+        assert result["seconds_until_start"] == 25
 
     def test_trigger_preconnect_without_pairs_raises_error(self, setup_data):
         """بررسی بروز خطای اعتبارسنجی در صورت عدم وجود زوج برای راند هدف"""
         service = PreconnectService(setup_data["event"])
         r2 = setup_data["r2"]
-        check_time = r2.starts_at - timedelta(seconds=15)
+        check_time = r2.starts_at - timedelta(seconds=20)
 
         with pytest.raises(ValidationError):
             service.trigger_preconnect(target_round=r2, now=check_time)
 
     def test_trigger_round_start_activates_media(self, setup_data):
-        """بررسی ارسال سیگنال شروع رسمی راند و فعال‌سازی استریم مدیا در ثانیه صفر"""
+        """بررسی ارسال سیگنال شروع رسمی راند و فعال‌سازی جریان مدیا در ثانیه صفر"""
         service = PreconnectService(setup_data["event"])
         r1 = setup_data["r1"]
 
