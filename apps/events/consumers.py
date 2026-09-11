@@ -1,4 +1,4 @@
-"""Authenticated WebSocket connection layer (T-14 & T-27)."""
+"""Authenticated WebSocket connection layer (T-14, T-25, T-27 & T-29)."""
 
 from __future__ import annotations
 
@@ -105,10 +105,16 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 await task
             except asyncio.CancelledError:
                 pass
-        if hasattr(self, "participant_group") and self.channel_layer:
-            await self.channel_layer.group_discard(
-                self.participant_group, self.channel_name
-            )
+
+        if self.channel_layer:
+            if hasattr(self, "participant_group"):
+                await self.channel_layer.group_discard(
+                    self.participant_group, self.channel_name
+                )
+            if hasattr(self, "event_group"):
+                await self.channel_layer.group_discard(
+                    self.event_group, self.channel_name
+                )
 
     async def receive(self, text_data=None, bytes_data=None):
         self.last_activity = time.monotonic()
@@ -163,13 +169,15 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
         if msg_type == MessageType.CLIENT_PING:
             await self._send(
                 build_server_pong(
-                    client_ts_echo=payload["client_ts"], server_ts=_timestamp_ms()
+                    client_ts_echo=payload["client_ts"],
+                    server_ts=_timestamp_ms(),
                 )
             )
         elif msg_type == MessageType.CLIENT_CLOCK_SYNC:
             await self._send(
                 build_server_clock_sync(
-                    client_ts_echo=payload["client_ts"], server_ts=_timestamp_ms()
+                    client_ts_echo=payload["client_ts"],
+                    server_ts=_timestamp_ms(),
                 )
             )
         elif msg_type == MessageType.CLIENT_HELLO:
@@ -198,6 +206,11 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_add(
                 self.participant_group, self.channel_name
             )
+
+            # عضویت در گروه عمومی رویداد جهت دریافت اکشن‌های اپراتور
+            self.event_group = f"event_{self.participant.event_id}"
+            await self.channel_layer.group_add(self.event_group, self.channel_name)
+
         await self._send(
             build_server_hello(
                 participant_id=str(self.participant.pk),
@@ -254,6 +267,38 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
     async def webrtc_relay(self, event: dict) -> None:
         await self._send(event["message"])
 
+    # ----------------------------------------------------------------------
+    # هندلرهای دریافت پیام از Channel Layer (T-25 & T-29)
+    # ----------------------------------------------------------------------
+
+    async def round_preconnect(self, event: dict) -> None:
+        """ارسال اعلان فاز پیش‌اتصال ۲۰ ثانیه‌ای به کلاینت جهت تبادل سایلنت سیگنالینگ"""
+        await self._send(
+            {
+                "type": "round.preconnect",
+                "payload": event.get("payload", {}),
+            }
+        )
+
+    async def round_start(self, event: dict) -> None:
+        """ارسال اعلان شروع رسمی راند و فعال‌سازی تصویر/صدا در ثانیه صفر"""
+        await self._send(
+            {
+                "type": "round.start",
+                "payload": event.get("payload", {}),
+            }
+        )
+
+    async def operator_action(self, event: dict) -> None:
+        """ارسال اکشن‌های کنترلی اپراتور (Pause, Resume, Extend) به سوکت کلاینت"""
+        action = event.get("action", "")
+        await self._send(
+            {
+                "type": f"operator.{action}" if action else "operator.action",
+                "payload": event.get("payload", {}),
+            }
+        )
+
     def _within_rate_limit(self) -> bool:
         now = time.monotonic()
         limit = getattr(settings, "PROTOCOL_RATE_LIMIT_MESSAGES_PER_MINUTE", 60)
@@ -280,7 +325,7 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 "Heartbeat failure for participant %s", self.participant.pk
             )
 
-    async def _send(self, message):
+    async def _send(self, message: dict):
         await self.send(text_data=json.dumps(message))
 
     async def _send_error(self, code, message, *, original_type=None, detail=None):
