@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import uuid
 from datetime import timedelta
 from uuid import uuid4
 
 from django.contrib.auth.hashers import check_password, make_password
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.utils.timezone import now as django_now
 
 
 def _default_scoring_weights() -> dict:
@@ -242,3 +244,32 @@ class Pair(models.Model):
                 self.participant_a_id,
             )
         super().save(*args, **kwargs)
+
+
+class OperatorActionType(models.TextChoices):
+    PAUSE = "pause", "Pause"
+    RESUME = "resume", "Resume"
+    EXTEND = "extend", "Extend"
+
+
+class OperatorActionLog(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event = models.ForeignKey(
+        Event, on_delete=models.CASCADE, related_name="operator_logs"
+    )
+    round = models.ForeignKey(
+        Round,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="operator_logs",
+    )
+    action = models.CharField(max_length=16, choices=OperatorActionType.choices)
+    details = models.JSONField(default=dict, blank=True)
+    performed_at = models.DateTimeField(default=django_now)
+
+    class Meta:
+        ordering = ["-performed_at"]
+
+    def __str__(self) -> str:
+        return f"{self.action} on event {self.event_id} at {self.performed_at}"
