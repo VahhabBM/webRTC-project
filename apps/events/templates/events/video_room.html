@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>T-27 WebRTC Video Room</title>
+  <style>
+    body { font: 15px system-ui, sans-serif; max-width: 950px; margin: 2rem auto; background: #0f172a; color: #f8fafc; padding: 0 1rem; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .status-bar { display: flex; flex-wrap: wrap; gap: 0.75rem; background: #1e293b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1.5rem; align-items: center; }
+    .badge { padding: 0.25rem 0.6rem; border-radius: 4px; font-weight: 600; font-size: 0.85rem; background: #475569; }
+    .badge.connected { background: #16a34a; }
+    .badge.degraded { background: #d97706; }
+    .badge.failed { background: #dc2626; }
+    .badge.open { background: #2563eb; }
+    .badge.closed { background: #64748b; }
+    .btn-group { display: flex; gap: 0.5rem; margin-left: auto; }
+    .btn { color: #fff; border: none; padding: 0.4rem 0.8rem; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.85rem; }
+    .btn-primary { background: #2563eb; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-success { background: #059669; }
+    .btn-success:hover { background: #047857; }
+    .btn-warning { background: #d97706; }
+    .btn-warning:hover { background: #b45309; }
+    .btn-danger { background: #dc2626; }
+    .btn-danger:hover { background: #b91c1c; }
+    .videos { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .video-card { background: #1e293b; border-radius: 8px; overflow: hidden; padding: 0.5rem; text-align: center; }
+    video { width: 100%; height: auto; max-height: 360px; background: #000; border-radius: 6px; transform: scaleX(-1); }
+    #remoteVideo { transform: none; }
+    .metrics { font-family: monospace; font-size: 0.85rem; margin-top: 0.5rem; color: #94a3b8; }
+  </style>
+</head>
+<body>
+
+  <h1>T-27 Video Transport & Lifecycle Test Harness</h1>
+  <div class="status-bar">
+    <div>State: <span id="connBadge" class="badge">DISCONNECTED</span></div>
+    <div>Transport: <span id="transBadge" class="badge">IDLE</span></div>
+    <div>Bitrate: <span id="bitrateVal">0</span> kbps (Cap: 500)</div>
+    <div>Room: <span id="roomVal">—</span></div>
+
+    <div class="btn-group">
+      <button id="callBtn" class="btn btn-primary">Start Call</button>
+      <button id="switchBtn" class="btn btn-success">Next Round (Switch)</button>
+      <button id="muteBtn" class="btn btn-warning">Mute Stream</button>
+      <button id="leaveBtn" class="btn btn-danger">Leave & Teardown</button>
+    </div>
+  </div>
+
+  <div class="videos">
+    <div class="video-card">
+      <h3>Local Video (You)</h3>
+      <video id="localVideo" autoplay playsinline muted></video>
+      <div id="localRes" class="metrics">Target: 640x360</div>
+    </div>
+    <div class="video-card">
+      <h3>Remote Video (Partner)</h3>
+      <video id="remoteVideo" autoplay playsinline></video>
+      <div id="remoteRes" class="metrics">Waiting for stream…</div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { PerfectNegotiator, DEFAULT_MEDIA_CONSTRAINTS } from '/static/events/js/perfect_negotiator.js';
+
+    const $ = id => document.getElementById(id);
+    let ws = null;
+    let negotiator = null;
+    let myParticipantId = null;
+    let isCurrentlyMuted = false;
+
+    const initialRoomId = "{{ room_id|default:'' }}";
+    const initialPartnerId = "{{ partner_id|default:'' }}";
+
+    function setupNegotiator(roomId, partnerId) {
+      negotiator = new PerfectNegotiator({
+        myParticipantId,
+        partnerParticipantId: partnerId,
+        roomId,
+        sendSignalingMessage: (msg) => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(msg));
+          }
+        },
+        onRemoteStream: (stream) => {
+          const remoteEl = $('remoteVideo');
+          if (remoteEl.srcObject !== stream) {
+            remoteEl.srcObject = stream;
+          }
+          remoteEl.play().catch(e => console.warn("Autoplay interaction needed:", e));
+        },
+        onStateChange: (state) => {
+          $('connBadge').textContent = state.toUpperCase();
+          $('connBadge').className = `badge ${state}`;
+        },
+        onStats: ({ bitrateKbps }) => {
+          $('bitrateVal').textContent = bitrateKbps;
+        },
+        onFailure: (reason) => {
+          $('connBadge').textContent = `FAILED: ${reason}`;
+          $('connBadge').className = "badge failed";
+        }
+      });
+
+      window.negotiator = negotiator;
+    }
+
+    async function prepareLocalMedia() {
+      $('roomVal').textContent = initialRoomId;
+      setupNegotiator(initialRoomId, initialPartnerId);
+      await negotiator.acquireLocalMedia(DEFAULT_MEDIA_CONSTRAINTS);
+      $('localVideo').srcObject = negotiator.localStream;
+      await negotiator.preconnect(initialRoomId, initialPartnerId);
+      $('transBadge').textContent = "PRECONNECTED";
+    }
+
+    // Controls
+    $('callBtn').onclick = async () => {
+      if (!negotiator) return;
+      await negotiator.open();
+      $('transBadge').textContent = "OPEN";
+      $('transBadge').className = "badge open";
+      await negotiator.createManualOffer();
+    };
+
+    $('switchBtn').onclick = async () => {
+      if (!negotiator) return;
+      const nextRoomId = "test-room-102";
+      const dummyNextPartnerId = "00000000-0000-0000-0000-000000000002";
+
+      console.log("[Lifecycle UI] Switching partner to:", nextRoomId);
+      $('roomVal').textContent = nextRoomId;
+
+      await negotiator.switchPartner(nextRoomId, dummyNextPartnerId);
+      $('transBadge').textContent = "SWITCHED / OPEN";
+      $('transBadge').className = "badge open";
+    };
+
+    $('muteBtn').onclick = () => {
+      if (!negotiator) return;
+      isCurrentlyMuted = !isCurrentlyMuted;
+      negotiator.setMediaMuted(isCurrentlyMuted);
+      $('muteBtn').textContent = isCurrentlyMuted ? "Unmute Stream" : "Mute Stream";
+      $('muteBtn').className = isCurrentlyMuted ? "btn btn-primary" : "btn btn-warning";
+    };
+
+    $('leaveBtn').onclick = () => {
+      if (!negotiator) return;
+      negotiator.leave();
+      $('transBadge').textContent = "CLOSED";
+      $('transBadge').className = "badge closed";
+      $('connBadge').textContent = "CLOSED";
+      $('connBadge').className = "badge closed";
+      $('localVideo').srcObject = null;
+      $('remoteVideo').srcObject = null;
+      $('bitrateVal').textContent = "0";
+    };
+
+    async function init() {
+      // 1. Authenticate and resolve participant ID
+      const meRes = await fetch('/participant/me/');
+      if (!meRes.ok) {
+        alert("Not authenticated! Please join with a valid token first.");
+        return;
+      }
+      const meData = await meRes.json();
+      myParticipantId = meData.participant.id;
+
+      // 2. Connect WebSocket
+      const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${protocol}://${location.host}/ws/events/`);
+
+      ws.onopen = async () => {
+        $('connBadge').textContent = "WS READY";
+        $('connBadge').className = "badge connected";
+
+        ws.send(JSON.stringify({
+          type: "client.hello",
+          version: 1,
+          payload: { client_ts: Date.now() }
+        }));
+
+        if (initialRoomId && initialPartnerId) {
+          await prepareLocalMedia();
+        }
+      };
+
+      ws.onmessage = async (event) => {
+        const msg = JSON.parse(event.data);
+        const { type, payload } = msg;
+
+        // Auto-handle round changes from server
+        if (type === "server.pairing") {
+          $('roomVal').textContent = payload.room_id;
+          if (negotiator) {
+            await negotiator.switchPartner(payload.room_id, payload.partner_id);
+          }
+        }
+
+        if (type === "server.round_start") {
+          if (negotiator) {
+            await negotiator.open();
+            $('transBadge').textContent = "OPEN";
+            $('transBadge').className = "badge open";
+          }
+        }
+
+        if (type.startsWith("server.webrtc.")) {
+          if (negotiator) {
+            await negotiator.handleSignalingMessage(msg);
+          }
+        }
+      };
+    }
+
+    $('localVideo').onloadedmetadata = () => {
+      $('localRes').textContent = `Resolution: ${$('localVideo').videoWidth}x${$('localVideo').videoHeight}`;
+    };
+    $('remoteVideo').onloadedmetadata = () => {
+      $('remoteRes').textContent = `Resolution: ${$('remoteVideo').videoWidth}x${$('remoteVideo').videoHeight}`;
+    };
+
+    init();
+  </script>
+</body>
+</html>

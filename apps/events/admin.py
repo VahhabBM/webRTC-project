@@ -1,14 +1,23 @@
+from __future__ import annotations
+
 import csv
 
 from django.contrib import admin, messages
 from django.db.models import Count
 from django.http import HttpResponse
+from django.template.response import TemplateResponse
+from django.urls import path, reverse
 from django.utils import timezone
 
-from .models import Event, Pair, Participant, ParticipantTag, Round, Tag
+from .models import Event, EventStatus, Pair, Participant, ParticipantTag, Round, Tag
 
 for model in (ParticipantTag, Round, Pair):
     admin.site.register(model)
+
+# States in which the matching report action is permitted.
+_MATCHING_RUNNABLE_STATES = frozenset(
+    {EventStatus.SCHEDULED, EventStatus.ACTIVE, EventStatus.COMPLETED}
+)
 
 
 @admin.register(Event)
@@ -38,6 +47,13 @@ class EventAdmin(admin.ModelAdmin):
         "break_duration",
     )
 
+    # Override the change-form template to inject the "Run Matching Report" button.
+    change_form_template = "admin/events/event/change_form.html"
+
+    # ------------------------------------------------------------------ #
+    # Queryset / display helpers                                           #
+    # ------------------------------------------------------------------ #
+
     def get_queryset(self, request):
         return (
             super()
@@ -48,6 +64,140 @@ class EventAdmin(admin.ModelAdmin):
     @admin.display(description="Participants")
     def participants_count(self, obj):
         return obj.participants_count
+
+    # ------------------------------------------------------------------ #
+    # Custom URL: matching report page                                     #
+    # ------------------------------------------------------------------ #
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom = [
+            path(
+                "<uuid:object_id>/matching-report/",
+                self.admin_site.admin_view(self.matching_report_view),
+                name="events_event_matching_report",
+            ),
+        ]
+        return custom + urls
+
+    # ------------------------------------------------------------------ #
+    # Inject matching-report URL into the change-form context              #
+    # ------------------------------------------------------------------ #
+
+    def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
+        extra_context = extra_context or {}
+        if object_id:
+            extra_context["matching_report_url"] = reverse(
+                "admin:events_event_matching_report", args=[object_id]
+            )
+        return super().changeform_view(request, object_id, form_url, extra_context)
+
+    # ------------------------------------------------------------------ #
+    # Matching report view                                                 #
+    # ------------------------------------------------------------------ #
+
+    def matching_report_view(self, request, object_id):
+        """Admin action page: generate a T-20 schedule and display a quality report.
+
+        GET  – show the run-matching form (disabled when state is wrong).
+        POST action=run  – generate in-memory, display report; require confirmation
+                           if a schedule already exists in the DB.
+        POST action=lock – generate again (deterministic) and persist to DB if
+                           violations == 0; disabled (returns error) otherwise.
+        """
+        from django.shortcuts import get_object_or_404
+
+        from apps.events.matching import (
+            MatchingError,
+            generate_schedule,
+            validate_schedule,
+        )
+        from apps.events.report import build_report
+        from apps.events.scheduling import build_match_input, persist_schedule
+
+        event = get_object_or_404(Event, pk=object_id)
+
+        can_run = event.status in _MATCHING_RUNNABLE_STATES
+        has_schedule = event.rounds.exists()
+
+        report = None
+        error_message = None
+        schedule_locked = False
+        needs_confirmation = False
+
+        if request.method == "POST":
+            action = request.POST.get("action", "")
+            confirmed = request.POST.get("confirmed") == "yes"
+
+            if action in ("run", "lock"):
+                if not can_run:
+                    error_message = (
+                        f"Matching is not available for events in "
+                        f"'{event.get_status_display()}' state. "
+                        f"The event must be Scheduled, Active, or Completed."
+                    )
+                elif has_schedule and not confirmed:
+                    # Surface the confirmation gate; do not run yet.
+                    needs_confirmation = True
+                else:
+                    try:
+                        match_input = build_match_input(event)
+
+                        if len(match_input.participants) < 2:
+                            raise MatchingError(
+                                f"Cannot run matching: event has fewer than 2 "
+                                f"participants (got {len(match_input.participants)})."
+                            )
+
+                        schedule = generate_schedule(match_input)
+                        pids = frozenset(mp.pid for mp in match_input.participants)
+                        violations = validate_schedule(
+                            schedule, pids, num_rounds=event.num_rounds
+                        )
+                        report = build_report(schedule, violations)
+
+                        if action == "lock":
+                            if report.can_lock:
+                                persist_schedule(event, schedule)
+                                schedule_locked = True
+                                has_schedule = True
+                                self.message_user(
+                                    request,
+                                    f"Schedule for '{event.name}' locked and persisted "
+                                    f"({report.total_pairs} pairs across "
+                                    f"{len(report.rounds)} rounds).",
+                                    level=messages.SUCCESS,
+                                )
+                            else:
+                                error_message = (
+                                    f"Cannot lock result: "
+                                    f"{report.violation_count} constraint violation(s) "
+                                    f"were detected. All violations must be zero before "
+                                    f"the schedule can be locked."
+                                )
+                    except MatchingError as exc:
+                        error_message = str(exc)
+                    except Exception as exc:  # noqa: BLE001
+                        error_message = f"Unexpected error during matching: {exc}"
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": f"Matching Report \u2013 {event.name}",
+            "event": event,
+            "report": report,
+            "error_message": error_message,
+            "can_run": can_run,
+            "has_schedule": has_schedule,
+            "schedule_locked": schedule_locked,
+            "needs_confirmation": needs_confirmation,
+            "opts": self.model._meta,
+            "app_label": self.model._meta.app_label,
+        }
+        return TemplateResponse(
+            request,
+            "admin/events/event/matching_report.html",
+            context,
+        )
 
 
 @admin.register(Tag)
@@ -153,13 +303,13 @@ class ParticipantAdmin(admin.ModelAdmin):
         writer = csv.writer(response)
         writer.writerow(
             [
-                "شناسه",
-                "نام و نام خانوادگی",
-                "ایمیل",
-                "وضعیت",
-                "رویداد",
-                "تگ‌ها",
-                "تاریخ ثبت‌نام",
+                "\u0634\u0646\u0627\u0633\u0647",
+                "\u0646\u0627\u0645 \u0648 \u0646\u0627\u0645 \u062e\u0627\u0646\u0648\u0627\u062f\u06af\u06cc",
+                "\u0627\u06cc\u0645\u06cc\u0644",
+                "\u0648\u0636\u0639\u06cc\u062a",
+                "\u0631\u0648\u06cc\u062f\u0627\u062f",
+                "\u062a\u06af\u200c\u0647\u0627",
+                "\u062a\u0627\u0631\u06cc\u062e \u062b\u0628\u062a\u200c\u0646\u0627\u0645",
             ]
         )
 

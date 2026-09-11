@@ -1,0 +1,9 @@
+{% extends "admin/change_form.html" %}
+{% block object-tools-items %}
+  {% if matching_report_url %}
+    <li>
+      <a href="{{ matching_report_url }}" class="historylink">Run Matching Report</a>
+    </li>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}
