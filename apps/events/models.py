@@ -16,11 +16,17 @@ def _default_scoring_weights() -> dict:
 
 
 class EventStatus(models.TextChoices):
+    # Legacy statuses (kept for backwards compatibility with existing data/code)
     DRAFT = "draft", "Draft"
     SCHEDULED = "scheduled", "Scheduled"
     ACTIVE = "active", "Active"
     COMPLETED = "completed", "Completed"
     CANCELLED = "cancelled", "Cancelled"
+    # T-22: new fine-grained lifecycle statuses
+    REGISTRATION_OPEN = "registration_open", "Registration Open"
+    LOCKED = "locked", "Locked"
+    RUNNING = "running", "Running"
+    PAUSED = "paused", "Paused"
 
 
 class ParticipantStatus(models.TextChoices):
@@ -244,6 +250,81 @@ class Pair(models.Model):
                 self.participant_a_id,
             )
         super().save(*args, **kwargs)
+
+
+class EventTransitionLog(models.Model):
+    """Audit record for every Event status transition (T-22).
+
+    The ``is_complete`` flag acts as a two-phase commit marker: it is set to
+    ``False`` at the start of a transition and flipped to ``True`` only after
+    the Event row itself has been updated successfully.  A new leader that
+    takes over can detect incomplete (interrupted) transitions by querying for
+    rows where ``is_complete=False`` and safely decide to reconcile or retry.
+    """
+
+    event = models.ForeignKey(
+        Event, on_delete=models.CASCADE, related_name="transition_logs"
+    )
+    from_status = models.CharField(max_length=30)
+    to_status = models.CharField(max_length=30)
+    transitioned_at = models.DateTimeField(auto_now_add=True)
+    leader_id = models.CharField(max_length=255)
+    details = models.JSONField(default=dict, blank=True)
+    # Two-phase flag: False = transition in-progress; True = committed.
+    is_complete = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ("transitioned_at",)
+        indexes = [
+            models.Index(fields=("event", "transitioned_at")),
+            models.Index(fields=("is_complete",)),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"Event {self.event_id}: {self.from_status} → {self.to_status}"
+            f" ({'done' if self.is_complete else 'in-progress'})"
+        )
+
+
+class LeaderLease(models.Model):
+    """Distributed leader-election lease record (T-22).
+
+    Only one row per ``lease_name`` is allowed (enforced by unique constraint).
+    A process that wants leadership must either:
+
+    * INSERT a new row (no existing lease), or
+    * UPDATE an existing row whose ``expires_at`` is in the past.
+
+    Both operations are performed inside a ``transaction.atomic()`` block so
+    concurrent callers are serialised by the DB.  The unique constraint
+    guarantees that exactly one INSERT wins when several processes race.
+    ``version`` is incremented on every successful acquisition so audit tools
+    can detect takeover events.
+    """
+
+    lease_name = models.CharField(max_length=255, unique=True)
+    leader_id = models.CharField(max_length=255)
+    acquired_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    # Monotonically increasing; incremented on every (re)acquisition.
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=("lease_name", "expires_at")),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"Lease '{self.lease_name}' → {self.leader_id} (expires {self.expires_at})"
+        )
+
+    @property
+    def is_valid(self) -> bool:
+        from django.utils import timezone
+
+        return self.expires_at > timezone.now()
 
 
 class OperatorActionType(models.TextChoices):
