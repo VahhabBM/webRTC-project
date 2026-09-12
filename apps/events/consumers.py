@@ -1,4 +1,4 @@
-"""Authenticated WebSocket connection layer (T-14, T-25, T-27 & T-29)."""
+"""Authenticated WebSocket connection layer (T-14, T-24, T-25, T-27 & T-29)."""
 
 from __future__ import annotations
 
@@ -186,6 +186,10 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 "client.hello has already been accepted.",
                 original_type=str(msg_type),
             )
+        elif msg_type == MessageType.CLIENT_READY:
+            # Idempotent T-13 state signal. Missing/repeat ready never delays
+            # the authoritative scheduler or T-24 round_start broadcast.
+            return
         elif msg_type in (
             MessageType.CLIENT_WEBRTC_OFFER,
             MessageType.CLIENT_WEBRTC_ANSWER,
@@ -266,6 +270,23 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
 
     async def webrtc_relay(self, event: dict) -> None:
         await self._send(event["message"])
+
+    async def orchestrator_message(self, event: dict) -> None:
+        """Deliver a T-13 orchestrator envelope published via the channel layer.
+
+        Send failures are swallowed so a disconnected client cannot delay
+        delivery to other members of the same group.
+        """
+        message = event.get("message")
+        if not message:
+            return
+        try:
+            await self._send(message)
+        except Exception:
+            logger.exception(
+                "Failed delivering orchestrator message to participant %s",
+                getattr(self.participant, "pk", None),
+            )
 
     # ----------------------------------------------------------------------
     # هندلرهای دریافت پیام از Channel Layer (T-25 & T-29)
