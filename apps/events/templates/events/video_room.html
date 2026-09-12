@@ -2,223 +2,207 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>T-27 WebRTC Video Room</title>
+  <title>Call Room</title>
   <style>
-    body { font: 15px system-ui, sans-serif; max-width: 950px; margin: 2rem auto; background: #0f172a; color: #f8fafc; padding: 0 1rem; }
-    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
-    .status-bar { display: flex; flex-wrap: wrap; gap: 0.75rem; background: #1e293b; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1.5rem; align-items: center; }
-    .badge { padding: 0.25rem 0.6rem; border-radius: 4px; font-weight: 600; font-size: 0.85rem; background: #475569; }
-    .badge.connected { background: #16a34a; }
-    .badge.degraded { background: #d97706; }
-    .badge.failed { background: #dc2626; }
-    .badge.open { background: #2563eb; }
-    .badge.closed { background: #64748b; }
-    .btn-group { display: flex; gap: 0.5rem; margin-left: auto; }
-    .btn { color: #fff; border: none; padding: 0.4rem 0.8rem; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.85rem; }
-    .btn-primary { background: #2563eb; }
-    .btn-primary:hover { background: #1d4ed8; }
-    .btn-success { background: #059669; }
-    .btn-success:hover { background: #047857; }
-    .btn-warning { background: #d97706; }
-    .btn-warning:hover { background: #b45309; }
-    .btn-danger { background: #dc2626; }
-    .btn-danger:hover { background: #b91c1c; }
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #2563eb;
+      --success: #16a34a;
+      --warning: #f59e0b;
+      --danger: #dc2626;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font: 15px/1.5 system-ui, sans-serif;
+      max-width: 1000px;
+      margin: 0 auto;
+      background: var(--bg);
+      color: var(--text);
+      padding: 1.5rem 1rem 2rem;
+    }
+    h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+    .top-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+      background: var(--surface);
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      margin-bottom: 1rem;
+    }
+    .badge {
+      padding: 0.25rem 0.6rem;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 0.8rem;
+      background: #475569;
+      text-transform: uppercase;
+    }
+    .badge.connected, .badge[data-phase="in_round"] { background: var(--success); }
+    .badge.degraded { background: var(--warning); }
+    .badge.failed, .badge[data-phase="disconnected"] { background: var(--danger); }
+    .badge[data-phase="preconnecting"] { background: var(--accent); }
+    .badge[data-phase="round_ending"] { background: #7c3aed; }
+    .badge[data-phase="event_ended"] { background: #64748b; }
+
+    .timer-block {
+      margin-left: auto;
+      text-align: right;
+    }
+    .timer-block[data-state="waiting"] .timer-value { color: var(--muted); }
+    .timer-block[data-state="normal"] .timer-value { color: var(--text); }
+    .timer-block[data-state="warning"] .timer-value { color: var(--warning); animation: pulse 1s ease-in-out infinite; }
+    .timer-block[data-state="expired"] .timer-value { color: var(--danger); }
+    @keyframes pulse { 50% { opacity: 0.65; } }
+    .timer-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .timer-value { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+
+    .partner-card {
+      background: var(--surface);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .partner-card h2 { margin: 0 0 0.25rem; font-size: 1.25rem; }
+    .partner-tags { color: var(--muted); font-size: 0.9rem; margin: 0; }
+    .meta-row { display: flex; gap: 1.5rem; margin-top: 0.5rem; font-size: 0.85rem; color: var(--muted); }
+
     .videos { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-    .video-card { background: #1e293b; border-radius: 8px; overflow: hidden; padding: 0.5rem; text-align: center; }
-    video { width: 100%; height: auto; max-height: 360px; background: #000; border-radius: 6px; transform: scaleX(-1); }
+    @media (max-width: 640px) { .videos { grid-template-columns: 1fr; } }
+    .video-card {
+      background: var(--surface);
+      border-radius: 10px;
+      overflow: hidden;
+      padding: 0.5rem;
+      text-align: center;
+    }
+    .video-card h3 { margin: 0.25rem 0 0.5rem; font-size: 0.9rem; color: var(--muted); }
+    video {
+      width: 100%;
+      height: auto;
+      max-height: 320px;
+      background: #000;
+      border-radius: 8px;
+      transform: scaleX(-1);
+    }
     #remoteVideo { transform: none; }
-    .metrics { font-family: monospace; font-size: 0.85rem; margin-top: 0.5rem; color: #94a3b8; }
+
+    .status-footer {
+      margin-top: 1rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+      text-align: center;
+    }
+    .event-ended-banner {
+      display: none;
+      background: #334155;
+      border-radius: 8px;
+      padding: 1rem;
+      text-align: center;
+      margin-bottom: 1rem;
+    }
+    .event-ended-banner.visible { display: block; }
   </style>
 </head>
 <body>
 
-  <h1>T-27 Video Transport & Lifecycle Test Harness</h1>
-  <div class="status-bar">
-    <div>State: <span id="connBadge" class="badge">DISCONNECTED</span></div>
-    <div>Transport: <span id="transBadge" class="badge">IDLE</span></div>
-    <div>Bitrate: <span id="bitrateVal">0</span> kbps (Cap: 500)</div>
-    <div>Room: <span id="roomVal">—</span></div>
+  <h1>Call Room</h1>
 
-    <div class="btn-group">
-      <button id="callBtn" class="btn btn-primary">Start Call</button>
-      <button id="switchBtn" class="btn btn-success">Next Round (Switch)</button>
-      <button id="muteBtn" class="btn btn-warning">Mute Stream</button>
-      <button id="leaveBtn" class="btn btn-danger">Leave & Teardown</button>
+  <div id="eventEndedBanner" class="event-ended-banner">
+    <strong>Event ended.</strong> Thank you for participating.
+  </div>
+
+  <div class="top-bar">
+    <span id="phaseBadge" class="badge" data-phase="idle">CONNECTING</span>
+    <span>Connection: <span id="connectionBadge" class="badge">—</span></span>
+    <div id="timerContainer" class="timer-block" data-state="waiting">
+      <div class="timer-label">Time remaining</div>
+      <div id="timerDisplay" class="timer-value">--:--</div>
+    </div>
+  </div>
+
+  <div class="partner-card">
+    <h2 id="partnerName">—</h2>
+    <p id="partnerTags" class="partner-tags" hidden></p>
+    <div class="meta-row">
+      <span id="roundLabel">—</span>
+      <span>Room: <span id="roomLabel">—</span></span>
     </div>
   </div>
 
   <div class="videos">
     <div class="video-card">
-      <h3>Local Video (You)</h3>
+      <h3>You</h3>
       <video id="localVideo" autoplay playsinline muted></video>
-      <div id="localRes" class="metrics">Target: 640x360</div>
     </div>
     <div class="video-card">
-      <h3>Remote Video (Partner)</h3>
+      <h3>Partner</h3>
       <video id="remoteVideo" autoplay playsinline></video>
-      <div id="remoteRes" class="metrics">Waiting for stream…</div>
     </div>
   </div>
 
+  <p id="statusFooter" class="status-footer">Connecting…</p>
+
   <script type="module">
-    import { PerfectNegotiator, DEFAULT_MEDIA_CONSTRAINTS } from '/static/events/js/perfect_negotiator.js';
+    import { CallRoomController, CallRoomPhase } from '/static/events/js/call_room.js';
 
-    const $ = id => document.getElementById(id);
-    let ws = null;
-    let negotiator = null;
-    let myParticipantId = null;
-    let isCurrentlyMuted = false;
+    const WARNING_THRESHOLD_SECONDS = {{ warning_threshold_seconds }};
 
-    const initialRoomId = "{{ room_id|default:'' }}";
-    const initialPartnerId = "{{ partner_id|default:'' }}";
-
-    function setupNegotiator(roomId, partnerId) {
-      negotiator = new PerfectNegotiator({
-        myParticipantId,
-        partnerParticipantId: partnerId,
-        roomId,
-        sendSignalingMessage: (msg) => {
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(msg));
-          }
-        },
-        onRemoteStream: (stream) => {
-          const remoteEl = $('remoteVideo');
-          if (remoteEl.srcObject !== stream) {
-            remoteEl.srcObject = stream;
-          }
-          remoteEl.play().catch(e => console.warn("Autoplay interaction needed:", e));
-        },
-        onStateChange: (state) => {
-          $('connBadge').textContent = state.toUpperCase();
-          $('connBadge').className = `badge ${state}`;
-        },
-        onStats: ({ bitrateKbps }) => {
-          $('bitrateVal').textContent = bitrateKbps;
-        },
-        onFailure: (reason) => {
-          $('connBadge').textContent = `FAILED: ${reason}`;
-          $('connBadge').className = "badge failed";
+    const controller = new CallRoomController({
+      myParticipantId: null,
+      warningThresholdSeconds: WARNING_THRESHOLD_SECONDS,
+      elements: {
+        localVideo: document.getElementById('localVideo'),
+        remoteVideo: document.getElementById('remoteVideo'),
+        timerDisplay: document.getElementById('timerDisplay'),
+        timerContainer: document.getElementById('timerContainer'),
+        partnerName: document.getElementById('partnerName'),
+        partnerTags: document.getElementById('partnerTags'),
+        roundLabel: document.getElementById('roundLabel'),
+        roomLabel: document.getElementById('roomLabel'),
+        phaseBadge: document.getElementById('phaseBadge'),
+        connectionBadge: document.getElementById('connectionBadge'),
+      },
+      fetchIceServers: async () => {
+        const res = await fetch('/api/ice-servers/');
+        if (!res.ok) throw new Error('ICE servers unavailable');
+        return res.json();
+      },
+      onPhaseChange: (phase) => {
+        const footer = document.getElementById('statusFooter');
+        const banner = document.getElementById('eventEndedBanner');
+        if (phase === CallRoomPhase.EVENT_ENDED) {
+          banner.classList.add('visible');
+          footer.textContent = 'Event has ended.';
+        } else if (phase === CallRoomPhase.DISCONNECTED) {
+          footer.textContent = 'Connection lost — reconnecting…';
+        } else if (phase === CallRoomPhase.PRECONNECTING) {
+          footer.textContent = 'Preparing next round…';
+        } else if (phase === CallRoomPhase.IN_ROUND) {
+          footer.textContent = 'Round in progress';
+        } else if (phase === CallRoomPhase.ROUND_ENDING) {
+          footer.textContent = 'Round ended — waiting for next pairing…';
+        } else {
+          footer.textContent = 'Waiting for pairing…';
         }
-      });
-
-      window.negotiator = negotiator;
-    }
-
-    async function prepareLocalMedia() {
-      $('roomVal').textContent = initialRoomId;
-      setupNegotiator(initialRoomId, initialPartnerId);
-      await negotiator.acquireLocalMedia(DEFAULT_MEDIA_CONSTRAINTS);
-      $('localVideo').srcObject = negotiator.localStream;
-      await negotiator.preconnect(initialRoomId, initialPartnerId);
-      $('transBadge').textContent = "PRECONNECTED";
-    }
-
-    // Controls
-    $('callBtn').onclick = async () => {
-      if (!negotiator) return;
-      await negotiator.open();
-      $('transBadge').textContent = "OPEN";
-      $('transBadge').className = "badge open";
-      await negotiator.createManualOffer();
-    };
-
-    $('switchBtn').onclick = async () => {
-      if (!negotiator) return;
-      const nextRoomId = "test-room-102";
-      const dummyNextPartnerId = "00000000-0000-0000-0000-000000000002";
-
-      console.log("[Lifecycle UI] Switching partner to:", nextRoomId);
-      $('roomVal').textContent = nextRoomId;
-
-      await negotiator.switchPartner(nextRoomId, dummyNextPartnerId);
-      $('transBadge').textContent = "SWITCHED / OPEN";
-      $('transBadge').className = "badge open";
-    };
-
-    $('muteBtn').onclick = () => {
-      if (!negotiator) return;
-      isCurrentlyMuted = !isCurrentlyMuted;
-      negotiator.setMediaMuted(isCurrentlyMuted);
-      $('muteBtn').textContent = isCurrentlyMuted ? "Unmute Stream" : "Mute Stream";
-      $('muteBtn').className = isCurrentlyMuted ? "btn btn-primary" : "btn btn-warning";
-    };
-
-    $('leaveBtn').onclick = () => {
-      if (!negotiator) return;
-      negotiator.leave();
-      $('transBadge').textContent = "CLOSED";
-      $('transBadge').className = "badge closed";
-      $('connBadge').textContent = "CLOSED";
-      $('connBadge').className = "badge closed";
-      $('localVideo').srcObject = null;
-      $('remoteVideo').srcObject = null;
-      $('bitrateVal').textContent = "0";
-    };
+      },
+    });
 
     async function init() {
-      // 1. Authenticate and resolve participant ID
       const meRes = await fetch('/participant/me/');
       if (!meRes.ok) {
-        alert("Not authenticated! Please join with a valid token first.");
+        document.getElementById('statusFooter').textContent =
+          'Not authenticated. Please join with a valid token first.';
         return;
       }
       const meData = await meRes.json();
-      myParticipantId = meData.participant.id;
-
-      // 2. Connect WebSocket
-      const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-      ws = new WebSocket(`${protocol}://${location.host}/ws/events/`);
-
-      ws.onopen = async () => {
-        $('connBadge').textContent = "WS READY";
-        $('connBadge').className = "badge connected";
-
-        ws.send(JSON.stringify({
-          type: "client.hello",
-          version: 1,
-          payload: { client_ts: Date.now() }
-        }));
-
-        if (initialRoomId && initialPartnerId) {
-          await prepareLocalMedia();
-        }
-      };
-
-      ws.onmessage = async (event) => {
-        const msg = JSON.parse(event.data);
-        const { type, payload } = msg;
-
-        // Auto-handle round changes from server
-        if (type === "server.pairing") {
-          $('roomVal').textContent = payload.room_id;
-          if (negotiator) {
-            await negotiator.switchPartner(payload.room_id, payload.partner_id);
-          }
-        }
-
-        if (type === "server.round_start") {
-          if (negotiator) {
-            await negotiator.open();
-            $('transBadge').textContent = "OPEN";
-            $('transBadge').className = "badge open";
-          }
-        }
-
-        if (type.startsWith("server.webrtc.")) {
-          if (negotiator) {
-            await negotiator.handleSignalingMessage(msg);
-          }
-        }
-      };
+      controller.myParticipantId = meData.participant.id;
+      controller.connect();
     }
-
-    $('localVideo').onloadedmetadata = () => {
-      $('localRes').textContent = `Resolution: ${$('localVideo').videoWidth}x${$('localVideo').videoHeight}`;
-    };
-    $('remoteVideo').onloadedmetadata = () => {
-      $('remoteRes').textContent = `Resolution: ${$('remoteVideo').videoWidth}x${$('remoteVideo').videoHeight}`;
-    };
 
     init();
   </script>
