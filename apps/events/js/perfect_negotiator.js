@@ -292,6 +292,49 @@ export class PerfectNegotiator {
   }
 
   /**
+   * Prepare for a new round during preconnect: teardown previous peer
+   * connection, re-init with new partner, but stay muted until open().
+   */
+  async prepareRound(newRoomId, newPartnerId) {
+    this._stopStatsMonitor();
+
+    if (this.pc) {
+      this.pc.close();
+      this.pc = null;
+    }
+
+    this.roomId = newRoomId;
+    this.partnerId = String(newPartnerId);
+    this.isPolite = this.myId < this.partnerId;
+    this.remoteStream = new MediaStream();
+
+    this._initPeerConnection();
+    this._attachTracksToPC();
+    await this.preconnect(newRoomId, newPartnerId);
+    console.log(
+      `[WebRTC Lifecycle] Prepared round in room ${newRoomId} with partner ${newPartnerId}`,
+    );
+  }
+
+  /**
+   * End the current round: close peer connection but keep local media
+   * capture active for the next round's preconnect.
+   */
+  async endRound() {
+    this._stopStatsMonitor();
+    this.setMediaMuted(true);
+
+    if (this.pc) {
+      this.pc.close();
+      this.pc = null;
+    }
+
+    this.remoteStream = new MediaStream();
+    this.state = TransportState.PRECONNECTED;
+    console.log("[WebRTC Lifecycle] Round ended; peer connection closed, media retained.");
+  }
+
+  /**
    * Seamless round switch: teardown previous peer connection while
    * keeping the hardware media stream active and untouched.
    */
