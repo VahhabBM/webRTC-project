@@ -4,6 +4,8 @@
  * Timer uses T-15 clock offset + absolute round_end_ts from server.pairing.
  * Handles T-24 messages: pairing, round_start, round_warning, round_end, event_end.
  * T-31: camera/mic are acquired once and reused across partner switches.
+ * T-32: brief ICE/network drops show a degraded quality state and recover
+ * on the same peer connection without ending the round or re-prompting devices.
  */
 
 import { ClockSyncClient } from "./clock_sync_client.js";
@@ -86,6 +88,8 @@ export class CallRoomController {
     onTimerTick = null,
     fetchIceServers = null,
     negotiatorFactory = null,
+    transientIceGraceMs = null,
+    iceRestartAfterDisconnectMs = null,
   }) {
     this.myParticipantId = myParticipantId;
     this.warningThresholdSeconds = warningThresholdSeconds;
@@ -94,6 +98,8 @@ export class CallRoomController {
     this.onTimerTick = onTimerTick;
     this._fetchIceServers = fetchIceServers;
     this._negotiatorFactory = negotiatorFactory;
+    this._transientIceGraceMs = transientIceGraceMs;
+    this._iceRestartAfterDisconnectMs = iceRestartAfterDisconnectMs;
 
     this.ws = null;
     this.negotiator = null;
@@ -109,6 +115,7 @@ export class CallRoomController {
     this._helloClientTs = null;
     this._sharedStream = null;
     this._mediaPromise = null;
+    this._signalingDegraded = false;
   }
 
   _liveStream(stream) {
@@ -119,7 +126,14 @@ export class CallRoomController {
 
   connect() {
     void this.ensureLocalMedia();
+    if (
+      this.ws &&
+      (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)
+    ) {
+      return;
+    }
     const protocol = location.protocol === "https:" ? "wss" : "ws";
+    if (typeof WebSocket === "undefined") return;
     this.ws = new WebSocket(`${protocol}://${location.host}/ws/events/`);
 
     this.ws.onopen = () => {
@@ -139,10 +153,7 @@ export class CallRoomController {
     };
 
     this.ws.onclose = () => {
-      this._setPhase(CallRoomPhase.DISCONNECTED);
-      this._stopTimer();
-      this.clockSync.stop();
-      this._scheduleReconnect();
+      this._onSignalingClosed();
     };
 
     this.ws.onerror = () => {
@@ -151,6 +162,7 @@ export class CallRoomController {
   }
 
   disconnect() {
+    this._signalingDegraded = false;
     this._clearReconnect();
     this._stopTimer();
     this.clockSync.stop();
@@ -208,6 +220,19 @@ export class CallRoomController {
         this.ws.send(JSON.stringify(envelope));
       }
     });
+
+    const resumeRound =
+      this._signalingDegraded &&
+      this.phase !== CallRoomPhase.DISCONNECTED &&
+      this.phase !== CallRoomPhase.IDLE &&
+      this.phase !== CallRoomPhase.EVENT_ENDED;
+    this._signalingDegraded = false;
+    if (resumeRound) {
+      this._refreshQualityFromPeer();
+      void this.ensureLocalMedia();
+      return;
+    }
+
     this._setPhase(CallRoomPhase.IDLE);
     void this.ensureLocalMedia();
   }
@@ -372,15 +397,18 @@ export class CallRoomController {
         if (state === "closed" && this.phase !== CallRoomPhase.EVENT_ENDED) {
           return;
         }
-        if (this.elements.connectionBadge) {
-          this.elements.connectionBadge.textContent = state.toUpperCase();
-          this.elements.connectionBadge.className = `badge ${state}`;
-        }
+        this._applyConnectionQuality(state);
       },
       onFailure: (reason) => {
         this._onPartnerSwitchFailure(new Error(reason), reason);
       },
     };
+    if (this._transientIceGraceMs != null) {
+      options.transientIceGraceMs = this._transientIceGraceMs;
+    }
+    if (this._iceRestartAfterDisconnectMs != null) {
+      options.iceRestartAfterDisconnectMs = this._iceRestartAfterDisconnectMs;
+    }
     if (this._negotiatorFactory) {
       return this._negotiatorFactory(options);
     }
@@ -406,6 +434,66 @@ export class CallRoomController {
         this.elements.localVideo.srcObject = stream;
       }
     }
+  }
+
+  _applyConnectionQuality(state) {
+    if (state === "connected") {
+      this._clearConnectionError();
+    }
+    if (this.elements.connectionBadge) {
+      const labels = {
+        connecting: "CONNECTING",
+        connected: "CONNECTED",
+        degraded: "QUALITY DROP",
+        failed: "FAILED",
+        closed: "CLOSED",
+      };
+      this.elements.connectionBadge.textContent =
+        labels[state] || String(state).toUpperCase();
+      this.elements.connectionBadge.className = `badge ${state}`;
+      if (!this.elements.connectionBadge.dataset) {
+        this.elements.connectionBadge.dataset = {};
+      }
+      this.elements.connectionBadge.dataset.quality = state;
+    }
+    if (this.elements.qualityBanner) {
+      const degraded = state === "degraded";
+      this.elements.qualityBanner.hidden = !degraded;
+      if (degraded) {
+        this.elements.qualityBanner.textContent =
+          "Temporary quality drop — recovering connection…";
+      }
+    }
+  }
+
+  _refreshQualityFromPeer() {
+    const conn = this.negotiator?.pc?.connectionState;
+    if (conn === "connected") {
+      this._applyConnectionQuality("connected");
+    } else if (conn === "disconnected" || conn === "failed") {
+      this._applyConnectionQuality("degraded");
+    }
+  }
+
+  _onSignalingClosed() {
+    if (this.phase === CallRoomPhase.EVENT_ENDED) return;
+
+    const keepRound =
+      this.phase === CallRoomPhase.IN_ROUND ||
+      this.phase === CallRoomPhase.PRECONNECTING ||
+      this.phase === CallRoomPhase.ROUND_ENDING;
+    if (keepRound) {
+      this._signalingDegraded = true;
+      this._applyConnectionQuality("degraded");
+      this.clockSync.stop();
+      this._scheduleReconnect();
+      return;
+    }
+
+    this._setPhase(CallRoomPhase.DISCONNECTED);
+    this._stopTimer();
+    this.clockSync.stop();
+    this._scheduleReconnect();
   }
 
   _onPartnerSwitchFailure(err, reason = "PARTNER_SWITCH_FAILED") {

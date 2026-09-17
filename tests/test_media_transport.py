@@ -111,6 +111,28 @@ class TestCallerDecoupling:
         session.terminate_session()
         assert transport.state == MediaTransportState.CLOSED
 
+    def test_transient_degraded_then_connected_recovers_without_failure(self):
+        transport = FakeMediaTransport()
+        session = RoundMediaSession(transport)
+
+        session.prepare_next_round("room-abc", "partner-xyz")
+        session.start_round()
+        assert session.is_connected is True
+
+        transport.emit(MediaTransportEvent.DEGRADED)
+        assert session.is_degraded is True
+        assert session.is_connected is True
+        assert session.last_failure is None
+        assert transport.current_room_id == "room-abc"
+        assert transport.current_partner_id == "partner-xyz"
+        assert transport.state == MediaTransportState.OPEN
+
+        transport.emit(MediaTransportEvent.CONNECTED)
+        assert session.is_degraded is False
+        assert session.is_connected is True
+        assert session.last_failure is None
+        assert transport.current_partner_id == "partner-xyz"
+
     def test_caller_swappable_with_alternative_transport(self):
         class SecondaryBackupTransport(MediaTransport):
             def __init__(self):
