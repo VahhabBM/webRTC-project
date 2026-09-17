@@ -1,12 +1,17 @@
 /**
- * T-30 Call Room controller — lifecycle, synchronized timer, round rotation.
+ * T-30/T-31 Call Room controller — lifecycle, synchronized timer, round rotation.
  *
  * Timer uses T-15 clock offset + absolute round_end_ts from server.pairing.
  * Handles T-24 messages: pairing, round_start, round_warning, round_end, event_end.
+ * T-31: camera/mic are acquired once and reused across partner switches.
  */
 
 import { ClockSyncClient } from "./clock_sync_client.js";
-import { PerfectNegotiator, DEFAULT_MEDIA_CONSTRAINTS } from "./perfect_negotiator.js";
+import {
+  PerfectNegotiator,
+  DEFAULT_MEDIA_CONSTRAINTS,
+  acquireSharedLocalMedia,
+} from "./perfect_negotiator.js";
 
 export const TimerVisualState = Object.freeze({
   WAITING: "waiting",
@@ -80,6 +85,7 @@ export class CallRoomController {
     onPhaseChange = null,
     onTimerTick = null,
     fetchIceServers = null,
+    negotiatorFactory = null,
   }) {
     this.myParticipantId = myParticipantId;
     this.warningThresholdSeconds = warningThresholdSeconds;
@@ -87,6 +93,7 @@ export class CallRoomController {
     this.onPhaseChange = onPhaseChange;
     this.onTimerTick = onTimerTick;
     this._fetchIceServers = fetchIceServers;
+    this._negotiatorFactory = negotiatorFactory;
 
     this.ws = null;
     this.negotiator = null;
@@ -100,9 +107,18 @@ export class CallRoomController {
     this._timerInterval = null;
     this._reconnectTimer = null;
     this._helloClientTs = null;
+    this._sharedStream = null;
+    this._mediaPromise = null;
+  }
+
+  _liveStream(stream) {
+    return Boolean(
+      stream && stream.getTracks().some((track) => track.readyState !== "ended"),
+    );
   }
 
   connect() {
+    void this.ensureLocalMedia();
     const protocol = location.protocol === "https:" ? "wss" : "ws";
     this.ws = new WebSocket(`${protocol}://${location.host}/ws/events/`);
 
@@ -142,6 +158,8 @@ export class CallRoomController {
       this.negotiator.leave();
       this.negotiator = null;
     }
+    this._sharedStream = null;
+    this._mediaPromise = null;
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -191,6 +209,41 @@ export class CallRoomController {
       }
     });
     this._setPhase(CallRoomPhase.IDLE);
+    void this.ensureLocalMedia();
+  }
+
+  /**
+   * Acquire camera/mic once for the whole event. Pairing and reconnect
+   * reuse this stream and never call getUserMedia again.
+   */
+  async ensureLocalMedia() {
+    const existing = this._liveStream(this._sharedStream)
+      ? this._sharedStream
+      : this._liveStream(this.negotiator?.localStream)
+        ? this.negotiator.localStream
+        : null;
+    if (existing) {
+      this._sharedStream = existing;
+      this._bindLocalPreview();
+      return existing;
+    }
+    this._sharedStream = null;
+    if (!this._mediaPromise) {
+      this._mediaPromise = acquireSharedLocalMedia(DEFAULT_MEDIA_CONSTRAINTS)
+        .then((stream) => {
+          this._sharedStream = stream;
+          this._bindLocalPreview();
+          return stream;
+        })
+        .catch((err) => {
+          this._mediaPromise = null;
+          this._showConnectionError(
+            "Could not start the camera or microphone. Check permissions and try again.",
+          );
+          throw err;
+        });
+    }
+    return this._mediaPromise;
   }
 
   async _onPairing(payload) {
@@ -198,30 +251,41 @@ export class CallRoomController {
     this.roundNumber = this.partner.roundNumber;
     this.roundEndTs = this.partner.roundEndTs;
     this.serverWarningActive = false;
+    this._clearConnectionError();
     this._updatePartnerUI();
     this._setPhase(CallRoomPhase.PRECONNECTING);
 
     const rtcConfig = await this._loadRtcConfig();
 
-    if (!this.negotiator) {
-      this.negotiator = this._createNegotiator(
-        this.partner.roomId,
-        this.partner.partnerId,
-        rtcConfig,
-      );
-      await this.negotiator.acquireLocalMedia(DEFAULT_MEDIA_CONSTRAINTS);
-      if (this.elements.localVideo) {
-        this.elements.localVideo.srcObject = this.negotiator.localStream;
+    try {
+      await this.ensureLocalMedia();
+
+      if (!this.negotiator) {
+        this.negotiator = this._createNegotiator(
+          this.partner.roomId,
+          this.partner.partnerId,
+          rtcConfig,
+        );
+        await this.negotiator.acquireLocalMedia(DEFAULT_MEDIA_CONSTRAINTS);
+        this._sharedStream = this.negotiator.localStream;
+        this._bindLocalPreview();
+        await this.negotiator.preconnect(this.partner.roomId, this.partner.partnerId);
+        if (this.partner.isOfferer) {
+          await this.negotiator.createManualOffer();
+        }
+      } else {
+        this._bindLocalPreview();
+        const sameAssignment = this._isSamePartnerAssignment();
+        if (!sameAssignment) {
+          await this.negotiator.prepareRound(this.partner.roomId, this.partner.partnerId);
+          if (this.partner.isOfferer) {
+            await this.negotiator.createManualOffer();
+          }
+        }
       }
-      await this.negotiator.preconnect(this.partner.roomId, this.partner.partnerId);
-      if (this.partner.isOfferer) {
-        await this.negotiator.createManualOffer();
-      }
-    } else {
-      await this.negotiator.prepareRound(this.partner.roomId, this.partner.partnerId);
-      if (this.partner.isOfferer) {
-        await this.negotiator.createManualOffer();
-      }
+    } catch (err) {
+      this._onPartnerSwitchFailure(err);
+      return;
     }
 
     this._startTimer();
@@ -257,6 +321,7 @@ export class CallRoomController {
     if (this.elements.remoteVideo) {
       this.elements.remoteVideo.srcObject = null;
     }
+    this._bindLocalPreview();
     this.partner = null;
     this._updatePartnerUI();
     // Next server.pairing will prepare the next round automatically.
@@ -272,6 +337,8 @@ export class CallRoomController {
       this.negotiator.leave();
       this.negotiator = null;
     }
+    this._sharedStream = null;
+    this._mediaPromise = null;
     if (this.elements.localVideo) {
       this.elements.localVideo.srcObject = null;
     }
@@ -284,11 +351,12 @@ export class CallRoomController {
   }
 
   _createNegotiator(roomId, partnerId, rtcConfig) {
-    return new PerfectNegotiator({
+    const options = {
       myParticipantId: this.myParticipantId,
       partnerParticipantId: partnerId,
       roomId,
       rtcConfig,
+      localStream: this._sharedStream || null,
       sendSignalingMessage: (signalMsg) => {
         if (this.ws?.readyState === WebSocket.OPEN) {
           this.ws.send(JSON.stringify(signalMsg));
@@ -301,18 +369,72 @@ export class CallRoomController {
         }
       },
       onStateChange: (state) => {
+        if (state === "closed" && this.phase !== CallRoomPhase.EVENT_ENDED) {
+          return;
+        }
         if (this.elements.connectionBadge) {
           this.elements.connectionBadge.textContent = state.toUpperCase();
           this.elements.connectionBadge.className = `badge ${state}`;
         }
       },
       onFailure: (reason) => {
-        if (this.elements.connectionBadge) {
-          this.elements.connectionBadge.textContent = `FAILED: ${reason}`;
-          this.elements.connectionBadge.className = "badge failed";
-        }
+        this._onPartnerSwitchFailure(new Error(reason), reason);
       },
-    });
+    };
+    if (this._negotiatorFactory) {
+      return this._negotiatorFactory(options);
+    }
+    return new PerfectNegotiator(options);
+  }
+
+  _isSamePartnerAssignment() {
+    if (!this.negotiator || !this.partner) return false;
+    const pc = this.negotiator.pc;
+    const pcUsable =
+      pc && pc.signalingState !== "closed" && pc.connectionState !== "closed";
+    return (
+      pcUsable &&
+      String(this.negotiator.roomId) === String(this.partner.roomId) &&
+      String(this.negotiator.partnerId) === String(this.partner.partnerId)
+    );
+  }
+
+  _bindLocalPreview() {
+    const stream = this.negotiator?.localStream || this._sharedStream;
+    if (this.elements.localVideo && stream) {
+      if (this.elements.localVideo.srcObject !== stream) {
+        this.elements.localVideo.srcObject = stream;
+      }
+    }
+  }
+
+  _onPartnerSwitchFailure(err, reason = "PARTNER_SWITCH_FAILED") {
+    console.error("[CallRoom] Partner switch/renegotiation failed:", err);
+    const message =
+      reason === "ICE_CONNECTION_FAILED"
+        ? "Connection to this partner failed. Your camera stays on; other rounds are not stopped."
+        : "Could not connect to the next partner. Your camera stays on and other rounds are not stopped.";
+    this._showConnectionError(message);
+    if (this.elements.connectionBadge) {
+      this.elements.connectionBadge.textContent = `FAILED: ${reason}`;
+      this.elements.connectionBadge.className = "badge failed";
+    }
+    this._bindLocalPreview();
+    // Do not leave(), stop tracks, close the WebSocket, or end the event.
+  }
+
+  _showConnectionError(message) {
+    if (this.elements.errorBanner) {
+      this.elements.errorBanner.hidden = false;
+      this.elements.errorBanner.textContent = message;
+    }
+  }
+
+  _clearConnectionError() {
+    if (this.elements.errorBanner) {
+      this.elements.errorBanner.hidden = true;
+      this.elements.errorBanner.textContent = "";
+    }
   }
 
   async _loadRtcConfig() {
