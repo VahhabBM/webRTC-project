@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.conf import settings
+from django.core.cache import cache
 
 from apps.protocol.constants import (
     CLOSE_INTERNAL_ERROR,
@@ -35,8 +36,13 @@ from apps.protocol.schemas import (
 from apps.protocol.validators import validate_message
 
 from .auth import resolve_participant_from_scope
+from .orchestrator import OrchestratorRealtime
 
 logger = logging.getLogger(__name__)
+
+
+def _hello_seen_key(participant_id) -> str:
+    return f"ws:hello-seen:{participant_id}"
 
 
 def _timestamp_ms() -> int:
@@ -223,6 +229,48 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 event_id=str(self.participant.event_id),
             )
         )
+        await self._maybe_send_reconnect_snapshot()
+
+    async def _maybe_send_reconnect_snapshot(self) -> None:
+        """Replay current pairing/round to this socket only (T-14/T-33)."""
+        if not self.participant:
+            return
+        key = _hello_seen_key(self.participant.pk)
+        ttl = getattr(settings, "PROTOCOL_RECONNECT_WINDOW_SECONDS", 300)
+        try:
+            seen = await database_sync_to_async(cache.get)(key)
+            await database_sync_to_async(cache.set)(key, True, ttl)
+        except Exception:
+            logger.exception(
+                "Reconnect window cache failed for participant %s",
+                self.participant.pk,
+            )
+            return
+        if not seen:
+            return
+        try:
+            messages = await database_sync_to_async(self._reconnect_snapshot)()
+        except Exception:
+            logger.exception(
+                "Reconnect snapshot failed for participant %s",
+                self.participant.pk,
+            )
+            return
+        for message in messages:
+            try:
+                await self._send(message)
+            except Exception:
+                logger.exception(
+                    "Failed delivering reconnect snapshot to participant %s",
+                    self.participant.pk,
+                )
+                return
+
+    def _reconnect_snapshot(self) -> list:
+        event = getattr(self.participant, "event", None)
+        if event is None:
+            return []
+        return OrchestratorRealtime(event).reconnect_snapshot_messages(self.participant)
 
     async def _handle_webrtc_signal(self, msg_type: MessageType, payload: dict) -> None:
         room_id = payload.get("room_id")

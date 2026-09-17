@@ -68,6 +68,8 @@ def test_call_room_keeps_round_on_transient_signaling_drop():
     assert "_onSignalingClosed" in src
     assert "_applyConnectionQuality" in src
     assert "QUALITY DROP" in src
+    assert "RECONNECTING" in src
+    assert "nextReconnectDelayMs" in src
     assert "navigator.mediaDevices.getUserMedia" not in src
     assert "ensureLocalMedia" in src
 

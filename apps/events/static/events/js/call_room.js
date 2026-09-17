@@ -6,6 +6,9 @@
  * T-31: camera/mic are acquired once and reused across partner switches.
  * T-32: brief ICE/network drops show a degraded quality state and recover
  * on the same peer connection without ending the round or re-prompting devices.
+ * T-33: 5–20s network loss reconnects the T-14 socket with bounded backoff
+ * to the same partner/room/round, showing RECONNECTING while the T-15 timer
+ * keeps ticking from round_end_ts.
  */
 
 import { ClockSyncClient } from "./clock_sync_client.js";
@@ -30,6 +33,32 @@ export const CallRoomPhase = Object.freeze({
   EVENT_ENDED: "event_ended",
   DISCONNECTED: "disconnected",
 });
+
+/** Initial wait before the first T-14 reconnect attempt (T-33). */
+export const RECONNECT_INITIAL_DELAY_MS = 500;
+/** Cap so restoration of a 5–20s outage still reconnects in <10s. */
+export const RECONNECT_MAX_DELAY_MS = 4000;
+/** Stop hammering a dead socket; identity hold on the server is 300s. */
+export const RECONNECT_WINDOW_MS = 45_000;
+
+/** Mirrors call_room_logic.next_reconnect_delay_ms */
+export function nextReconnectDelayMs(
+  attempt,
+  initialMs = RECONNECT_INITIAL_DELAY_MS,
+  maxMs = RECONNECT_MAX_DELAY_MS,
+) {
+  const n = Math.max(0, Number(attempt) || 0);
+  return Math.min(maxMs, initialMs * 2 ** n);
+}
+
+/** Mirrors call_room_logic.reconnect_window_exhausted */
+export function reconnectWindowExhausted(
+  startedAtMs,
+  nowMs,
+  windowMs = RECONNECT_WINDOW_MS,
+) {
+  return nowMs - startedAtMs >= windowMs;
+}
 
 /** Mirrors call_room_logic.compute_remaining_ms */
 export function computeRemainingMs(roundEndTs, offsetMs, clientNowMs) {
@@ -90,6 +119,11 @@ export class CallRoomController {
     negotiatorFactory = null,
     transientIceGraceMs = null,
     iceRestartAfterDisconnectMs = null,
+    reconnectInitialDelayMs = RECONNECT_INITIAL_DELAY_MS,
+    reconnectMaxDelayMs = RECONNECT_MAX_DELAY_MS,
+    reconnectWindowMs = RECONNECT_WINDOW_MS,
+    createWebSocket = null,
+    now = null,
   }) {
     this.myParticipantId = myParticipantId;
     this.warningThresholdSeconds = warningThresholdSeconds;
@@ -100,6 +134,11 @@ export class CallRoomController {
     this._negotiatorFactory = negotiatorFactory;
     this._transientIceGraceMs = transientIceGraceMs;
     this._iceRestartAfterDisconnectMs = iceRestartAfterDisconnectMs;
+    this._reconnectInitialDelayMs = reconnectInitialDelayMs;
+    this._reconnectMaxDelayMs = reconnectMaxDelayMs;
+    this._reconnectWindowMs = reconnectWindowMs;
+    this._createWebSocket = createWebSocket;
+    this._now = now || (() => Date.now());
 
     this.ws = null;
     this.negotiator = null;
@@ -116,6 +155,12 @@ export class CallRoomController {
     this._sharedStream = null;
     this._mediaPromise = null;
     this._signalingDegraded = false;
+    this._wsGeneration = 0;
+    this._reconnectAttempt = 0;
+    this._reconnectStartedAt = null;
+    this._reconnectGaveUp = false;
+    this._onlineHandler = null;
+    this._intentionalClose = false;
   }
 
   _liveStream(stream) {
@@ -126,20 +171,60 @@ export class CallRoomController {
 
   connect() {
     void this.ensureLocalMedia();
+    this._bindOnlineListener();
+    if (this.phase === CallRoomPhase.EVENT_ENDED || this._reconnectGaveUp) return;
+
+    const now = this._now();
     if (
-      this.ws &&
-      (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)
+      this._reconnectStartedAt != null &&
+      reconnectWindowExhausted(
+        this._reconnectStartedAt,
+        now,
+        this._reconnectWindowMs,
+      )
     ) {
+      this._giveUpReconnect();
       return;
     }
-    const protocol = location.protocol === "https:" ? "wss" : "ws";
-    if (typeof WebSocket === "undefined") return;
-    this.ws = new WebSocket(`${protocol}://${location.host}/ws/events/`);
 
-    this.ws.onopen = () => {
+    const ws = this.ws;
+    if (ws && ws.readyState === 1) return;
+
+    this._openSocket();
+
+    if (this._signalingDegraded || this.phase === CallRoomPhase.DISCONNECTED) {
+      this._scheduleReconnect();
+    }
+  }
+
+  _openSocket() {
+    this._detachSocket();
+    const generation = ++this._wsGeneration;
+    const host =
+      typeof location !== "undefined" && location.host
+        ? location.host
+        : "localhost";
+    const protocol =
+      typeof location !== "undefined" && location.protocol === "https:"
+        ? "wss"
+        : "ws";
+    const url = `${protocol}://${host}/ws/events/`;
+    const factory =
+      this._createWebSocket ||
+      (typeof WebSocket !== "undefined" ? (target) => new WebSocket(target) : null);
+    if (!factory) return;
+
+    this.ws = factory(url);
+    const socket = this.ws;
+
+    socket.onopen = () => {
+      if (generation !== this._wsGeneration || this.ws !== socket) return;
       this._clearReconnect();
-      this._helloClientTs = Date.now();
-      this.ws.send(
+      this._reconnectAttempt = 0;
+      this._reconnectStartedAt = null;
+      this._reconnectGaveUp = false;
+      this._helloClientTs = this._now();
+      socket.send(
         JSON.stringify({
           type: "client.hello",
           version: 1,
@@ -148,22 +233,47 @@ export class CallRoomController {
       );
     };
 
-    this.ws.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (generation !== this._wsGeneration || this.ws !== socket) return;
       this._handleMessage(JSON.parse(event.data));
     };
 
-    this.ws.onclose = () => {
+    socket.onclose = () => {
+      if (generation !== this._wsGeneration || this.ws !== socket) return;
       this._onSignalingClosed();
     };
 
-    this.ws.onerror = () => {
+    socket.onerror = () => {
       // onclose will handle reconnect
     };
   }
 
+  _detachSocket() {
+    const socket = this.ws;
+    if (!socket) return;
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onclose = null;
+    socket.onerror = null;
+    try {
+      if (socket.readyState === 0 || socket.readyState === 1) {
+        socket.close();
+      }
+    } catch {
+      // ignore
+    }
+    this.ws = null;
+  }
+
   disconnect() {
+    this._intentionalClose = true;
     this._signalingDegraded = false;
+    this._unbindOnlineListener();
     this._clearReconnect();
+    this._reconnectGaveUp = false;
+    this._reconnectStartedAt = null;
+    this._reconnectAttempt = 0;
+    this._wsGeneration += 1;
     this._stopTimer();
     this.clockSync.stop();
     if (this.negotiator) {
@@ -172,10 +282,8 @@ export class CallRoomController {
     }
     this._sharedStream = null;
     this._mediaPromise = null;
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    this._detachSocket();
+    this._intentionalClose = false;
   }
 
   async _handleMessage(msg) {
@@ -216,7 +324,7 @@ export class CallRoomController {
       this.clockSync.applyHelloOffset(this._helloClientTs, payload.server_ts);
     }
     this.clockSync.start((envelope) => {
-      if (this.ws?.readyState === WebSocket.OPEN) {
+      if (this.ws?.readyState === 1) {
         this.ws.send(JSON.stringify(envelope));
       }
     });
@@ -230,6 +338,7 @@ export class CallRoomController {
     if (resumeRound) {
       this._refreshQualityFromPeer();
       void this.ensureLocalMedia();
+      this.negotiator?.recoverAfterSignalingRestore?.();
       return;
     }
 
@@ -272,12 +381,30 @@ export class CallRoomController {
   }
 
   async _onPairing(payload) {
-    this.partner = parsePairingPayload(payload);
+    const next = parsePairingPayload(payload);
+    const sameAssignment =
+      Boolean(this.negotiator) &&
+      Boolean(this.partner) &&
+      String(this.partner.partnerId) === String(next.partnerId) &&
+      String(this.partner.roomId) === String(next.roomId) &&
+      Number(this.partner.roundNumber) === Number(next.roundNumber) &&
+      this._isSamePartnerAssignment();
+
+    this.partner = next;
     this.roundNumber = this.partner.roundNumber;
     this.roundEndTs = this.partner.roundEndTs;
     this.serverWarningActive = false;
     this._clearConnectionError();
     this._updatePartnerUI();
+
+    if (sameAssignment) {
+      this._bindLocalPreview();
+      if (!this._timerInterval) this._startTimer();
+      else this._tickTimer();
+      this.negotiator?.recoverAfterSignalingRestore?.();
+      return;
+    }
+
     this._setPhase(CallRoomPhase.PRECONNECTING);
 
     const rtcConfig = await this._loadRtcConfig();
@@ -353,8 +480,13 @@ export class CallRoomController {
   }
 
   async _onEventEnd(payload) {
+    this._intentionalClose = true;
     this.eventEndReason = payload.reason || "completed";
     this._setPhase(CallRoomPhase.EVENT_ENDED);
+    this._signalingDegraded = false;
+    this._unbindOnlineListener();
+    this._clearReconnect();
+    this._wsGeneration += 1;
     this._stopTimer();
     this.clockSync.stop();
 
@@ -370,9 +502,8 @@ export class CallRoomController {
     if (this.elements.remoteVideo) {
       this.elements.remoteVideo.srcObject = null;
     }
-    if (this.ws) {
-      this.ws.close();
-    }
+    this._detachSocket();
+    this._intentionalClose = false;
   }
 
   _createNegotiator(roomId, partnerId, rtcConfig) {
@@ -383,7 +514,7 @@ export class CallRoomController {
       rtcConfig,
       localStream: this._sharedStream || null,
       sendSignalingMessage: (signalMsg) => {
-        if (this.ws?.readyState === WebSocket.OPEN) {
+        if (this.ws?.readyState === 1) {
           this.ws.send(JSON.stringify(signalMsg));
         }
       },
@@ -400,6 +531,7 @@ export class CallRoomController {
         this._applyConnectionQuality(state);
       },
       onFailure: (reason) => {
+        if (this._signalingDegraded && !this._reconnectGaveUp) return;
         this._onPartnerSwitchFailure(new Error(reason), reason);
       },
     };
@@ -409,6 +541,8 @@ export class CallRoomController {
     if (this._iceRestartAfterDisconnectMs != null) {
       options.iceRestartAfterDisconnectMs = this._iceRestartAfterDisconnectMs;
     }
+    options.deferPermanentFailure = () =>
+      this._signalingDegraded && !this._reconnectGaveUp;
     if (this._negotiatorFactory) {
       return this._negotiatorFactory(options);
     }
@@ -437,6 +571,10 @@ export class CallRoomController {
   }
 
   _applyConnectionQuality(state) {
+    if (this._signalingDegraded && state !== "connected") {
+      this._showReconnecting();
+      return;
+    }
     if (state === "connected") {
       this._clearConnectionError();
     }
@@ -476,23 +614,28 @@ export class CallRoomController {
   }
 
   _onSignalingClosed() {
+    if (this._intentionalClose) return;
     if (this.phase === CallRoomPhase.EVENT_ENDED) return;
+
+    this._detachSocket();
 
     const keepRound =
       this.phase === CallRoomPhase.IN_ROUND ||
       this.phase === CallRoomPhase.PRECONNECTING ||
       this.phase === CallRoomPhase.ROUND_ENDING;
+
+    this.clockSync.stop();
+
     if (keepRound) {
       this._signalingDegraded = true;
-      this._applyConnectionQuality("degraded");
-      this.clockSync.stop();
+      this._showReconnecting();
       this._scheduleReconnect();
       return;
     }
 
     this._setPhase(CallRoomPhase.DISCONNECTED);
     this._stopTimer();
-    this.clockSync.stop();
+    this._showReconnecting();
     this._scheduleReconnect();
   }
 
@@ -614,7 +757,104 @@ export class CallRoomController {
   _scheduleReconnect() {
     if (this.phase === CallRoomPhase.EVENT_ENDED) return;
     this._clearReconnect();
-    this._reconnectTimer = setTimeout(() => this.connect(), 2000);
+    const now = this._now();
+    if (this._reconnectStartedAt == null) {
+      this._reconnectStartedAt = now;
+    }
+    if (
+      reconnectWindowExhausted(
+        this._reconnectStartedAt,
+        now,
+        this._reconnectWindowMs,
+      )
+    ) {
+      this._giveUpReconnect();
+      return;
+    }
+    const delay = nextReconnectDelayMs(
+      this._reconnectAttempt,
+      this._reconnectInitialDelayMs,
+      this._reconnectMaxDelayMs,
+    );
+    this._reconnectAttempt += 1;
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      if (
+        reconnectWindowExhausted(
+          this._reconnectStartedAt,
+          this._now(),
+          this._reconnectWindowMs,
+        )
+      ) {
+        this._giveUpReconnect();
+        return;
+      }
+      this.connect();
+    }, delay);
+  }
+
+  _giveUpReconnect() {
+    this._reconnectGaveUp = true;
+    this._clearReconnect();
+    this._detachSocket();
+    this._showConnectionError(
+      "Could not restore the connection. The round was not ended for other participants.",
+    );
+    if (this.elements.connectionBadge) {
+      this.elements.connectionBadge.textContent = "FAILED";
+      this.elements.connectionBadge.className = "badge failed";
+      if (!this.elements.connectionBadge.dataset) {
+        this.elements.connectionBadge.dataset = {};
+      }
+      this.elements.connectionBadge.dataset.quality = "failed";
+    }
+  }
+
+  _showReconnecting() {
+    if (this.elements.connectionBadge) {
+      this.elements.connectionBadge.textContent = "RECONNECTING";
+      this.elements.connectionBadge.className = "badge reconnecting";
+      if (!this.elements.connectionBadge.dataset) {
+        this.elements.connectionBadge.dataset = {};
+      }
+      this.elements.connectionBadge.dataset.quality = "reconnecting";
+    }
+    if (this.elements.qualityBanner) {
+      this.elements.qualityBanner.hidden = false;
+      this.elements.qualityBanner.textContent =
+        "RECONNECTING — restoring the same round and partner…";
+    }
+    if (this.elements.statusFooter) {
+      this.elements.statusFooter.textContent =
+        "RECONNECTING — round timer continues";
+    }
+  }
+
+  _bindOnlineListener() {
+    if (this._onlineHandler) return;
+    const target = typeof window !== "undefined" ? window : globalThis;
+    if (typeof target.addEventListener !== "function") return;
+    this._onlineHandler = () => {
+      if (this.phase === CallRoomPhase.EVENT_ENDED) return;
+      if (!this._signalingDegraded && this.phase !== CallRoomPhase.DISCONNECTED) {
+        return;
+      }
+      this._reconnectGaveUp = false;
+      this._reconnectAttempt = 0;
+      this._reconnectStartedAt = this._now();
+      this._clearReconnect();
+      this.connect();
+    };
+    target.addEventListener("online", this._onlineHandler);
+  }
+
+  _unbindOnlineListener() {
+    if (!this._onlineHandler) return;
+    const target = typeof window !== "undefined" ? window : globalThis;
+    if (typeof target.removeEventListener === "function") {
+      target.removeEventListener("online", this._onlineHandler);
+    }
+    this._onlineHandler = null;
   }
 
   _clearReconnect() {

@@ -493,7 +493,8 @@ test("signaling drop during a round keeps the timer and resumes without IDLE res
   assert.equal(controller.phase, CallRoomPhase.IN_ROUND);
   assert.ok(controller._timerInterval);
   assert.equal(controller.roundEndTs, roundEndTs);
-  assert.equal(connectionBadge.dataset.quality, "degraded");
+  assert.equal(connectionBadge.dataset.quality, "reconnecting");
+  assert.equal(connectionBadge.textContent, "RECONNECTING");
   assert.equal(qualityBanner.hidden, false);
   assert.equal(controller.negotiator.localStream, stream);
   assert.equal(getSharedGetUserMediaCallCount(), 1);

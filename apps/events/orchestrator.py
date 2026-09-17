@@ -418,6 +418,52 @@ class OrchestratorRealtime:
             for recipient in select_pairing_recipients(round_obj)
         ]
 
+    def reconnect_snapshot_messages(
+        self, participant, *, now: datetime | None = None
+    ) -> list[dict]:
+        """T-14 reconnect snapshot for one participant (never other rooms).
+
+        Replays the current pairing and, when the round is live, ``round_start``.
+        Event completion is replayed only if the event is already over. A
+        transient disconnect never synthesizes ``event_end`` or ``round_end``.
+        """
+        current = self._now(now)
+        scheduler = RoundScheduler(self.event)
+        phase, active_round, _remaining = scheduler.get_current_phase(current)
+        if phase == EventPhase.COMPLETED:
+            return [
+                build_server_event_end(
+                    reason=EventEndReason.COMPLETED,
+                    server_ts=self._server_ts_ms(current),
+                )
+            ]
+        if not active_round or phase not in (
+            EventPhase.PRECONNECT,
+            EventPhase.IN_ROUND,
+        ):
+            return []
+
+        pid = str(participant.pk)
+        recipients = [
+            recipient
+            for recipient in select_pairing_recipients(active_round)
+            if recipient.participant_id == pid
+        ]
+        if not recipients:
+            return []
+
+        recipient = recipients[0]
+        messages = [self._pairing_message(recipient, active_round)]
+        if phase == EventPhase.IN_ROUND:
+            messages.append(
+                build_server_round_start(
+                    round_number=active_round.number,
+                    room_id=recipient.room_id,
+                    server_ts=self._server_ts_ms(current),
+                )
+            )
+        return messages
+
     def round_start_jobs(
         self, round_obj: Round, *, now: datetime | None = None
     ) -> list[tuple[str, dict]]:
