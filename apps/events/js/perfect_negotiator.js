@@ -1,11 +1,12 @@
 /**
- * WebRTC Perfect Negotiation & Media Transport Lifecycle (T-27, T-31)
+ * WebRTC Perfect Negotiation & Media Transport Lifecycle (T-27, T-31, T-32)
  * Enforces:
  *  - 640x360 target resolution
  *  - 500 kbps video bitrate cap via RTCRtpSender.setParameters
  *  - Full lifecycle transitions (idle -> preconnected -> open -> closed)
  *  - Seamless round switching (switchPartner) reusing hardware tracks
  *  - getUserMedia once per session; partner switch never re-requests devices
+ *  - Transient ICE/network recovery without tearing down the room (T-32)
  *  - Deterministic W3C Perfect Negotiation with rollback
  *  - Hardware lock detection & simulated canvas fallback for multi-tab testing
  */
@@ -29,6 +30,20 @@ export const TransportState = Object.freeze({
   IDLE: "idle",
   PRECONNECTED: "preconnected",
   OPEN: "open",
+  CLOSED: "closed",
+});
+
+/** Wait this long after ICE `failed` before treating it as permanent (T-32). */
+export const TRANSIENT_ICE_GRACE_MS = 5000;
+
+/** Let brief `disconnected` blips recover before requesting ICE restart. */
+export const ICE_RESTART_AFTER_DISCONNECT_MS = 2000;
+
+export const ConnectionQuality = Object.freeze({
+  CONNECTING: "connecting",
+  CONNECTED: "connected",
+  DEGRADED: "degraded",
+  FAILED: "failed",
   CLOSED: "closed",
 });
 
@@ -163,6 +178,8 @@ export class PerfectNegotiator {
     onStats = null,
     onFailure = null,
     localStream = null,
+    transientIceGraceMs = TRANSIENT_ICE_GRACE_MS,
+    iceRestartAfterDisconnectMs = ICE_RESTART_AFTER_DISCONNECT_MS,
   }) {
     this.myId = String(myParticipantId);
     this.partnerId = String(partnerParticipantId);
@@ -183,12 +200,18 @@ export class PerfectNegotiator {
     this.ignoreOffer = false;
     this.isMuted = false;
     this.state = TransportState.IDLE;
+    this.quality = ConnectionQuality.CONNECTING;
 
     this.localStream = null;
     this.remoteStream = new MediaStream();
     this.statsInterval = null;
     this._lastBytesSent = 0;
     this._lastStatsTimestamp = 0;
+    this._transientIceGraceMs = transientIceGraceMs;
+    this._iceRestartAfterDisconnectMs = iceRestartAfterDisconnectMs;
+    this._iceRestartInFlight = false;
+    this._iceRestartTimer = null;
+    this._permanentFailureTimer = null;
 
     if (localStream) {
       this.localStream = localStream;
@@ -259,25 +282,130 @@ export class PerfectNegotiator {
       }
     };
 
-    // 4. Connection State & Degradation Monitoring
+    // 4. Connection State & Degradation Monitoring (T-32)
     pc.onconnectionstatechange = () => {
       if (this.pc !== pc) return;
-      const connState = pc.connectionState;
-      console.log(`[WebRTC] Connection state: ${connState}`);
-
-      if (connState === "connected") {
-        this._startStatsMonitor();
-        if (this.onStateChange) this.onStateChange("connected");
-      } else if (connState === "disconnected") {
-        if (this.onStateChange) this.onStateChange("degraded");
-      } else if (connState === "failed") {
-        this._stopStatsMonitor();
-        if (this.onFailure) this.onFailure("ICE_CONNECTION_FAILED");
-      } else if (connState === "closed") {
-        this._stopStatsMonitor();
-        if (this.onStateChange) this.onStateChange("closed");
-      }
+      this._onPeerConnectionState(pc.connectionState);
     };
+  }
+
+  _onPeerConnectionState(connState) {
+    console.log(`[WebRTC] Connection state: ${connState}`);
+
+    if (connState === "connected") {
+      this._clearRecoveryTimers();
+      this._iceRestartInFlight = false;
+      this._startStatsMonitor();
+      this._emitQuality(ConnectionQuality.CONNECTED);
+      void this._applyVideoBitrateCap();
+      return;
+    }
+
+    if (connState === "disconnected") {
+      this._stopStatsMonitor();
+      this._emitQuality(ConnectionQuality.DEGRADED);
+      this._scheduleIceRestart();
+      return;
+    }
+
+    if (connState === "failed") {
+      this._stopStatsMonitor();
+      this._emitQuality(ConnectionQuality.DEGRADED);
+      this._maybeRestartIce();
+      this._schedulePermanentFailure();
+      return;
+    }
+
+    if (connState === "closed") {
+      this._clearRecoveryTimers();
+      this._stopStatsMonitor();
+      this._emitQuality(ConnectionQuality.CLOSED);
+    }
+  }
+
+  _emitQuality(quality) {
+    this.quality = quality;
+    if (this.onStateChange) this.onStateChange(quality);
+  }
+
+  _scheduleIceRestart() {
+    if (this._iceRestartTimer || this._iceRestartInFlight) return;
+    this._iceRestartTimer = setTimeout(() => {
+      this._iceRestartTimer = null;
+      if (!this.pc) return;
+      if (this.pc.connectionState === "connected" || this.pc.connectionState === "closed") {
+        return;
+      }
+      this._maybeRestartIce();
+    }, this._iceRestartAfterDisconnectMs);
+  }
+
+  _maybeRestartIce() {
+    if (!this.pc || this._iceRestartInFlight) return;
+    if (this.state === TransportState.CLOSED) return;
+    const conn = this.pc.connectionState;
+    if (conn === "connected" || conn === "closed") return;
+
+    this._iceRestartInFlight = true;
+    try {
+      if (typeof this.pc.restartIce === "function") {
+        this.pc.restartIce();
+        console.log("[WebRTC] ICE restart requested for transient recovery");
+        return;
+      }
+      void this._legacyIceRestartOffer();
+    } catch (err) {
+      this._iceRestartInFlight = false;
+      console.warn("[WebRTC] ICE restart failed:", err);
+    }
+  }
+
+  async _legacyIceRestartOffer() {
+    if (!this.pc) {
+      this._iceRestartInFlight = false;
+      return;
+    }
+    try {
+      this.isMakingOffer = true;
+      const offer = await this.pc.createOffer({ iceRestart: true });
+      await this.pc.setLocalDescription(offer);
+      this.sendSignal({
+        type: "client.webrtc.offer",
+        version: 1,
+        payload: {
+          room_id: this.roomId,
+          sdp: this.pc.localDescription.sdp,
+        },
+      });
+    } catch (err) {
+      console.warn("[WebRTC] ICE restart offer failed:", err);
+      this._iceRestartInFlight = false;
+    } finally {
+      this.isMakingOffer = false;
+    }
+  }
+
+  _schedulePermanentFailure() {
+    if (this._permanentFailureTimer) return;
+    this._permanentFailureTimer = setTimeout(() => {
+      this._permanentFailureTimer = null;
+      const conn = this.pc?.connectionState;
+      if (conn !== "failed" && conn !== "disconnected") return;
+      this._stopStatsMonitor();
+      this._emitQuality(ConnectionQuality.FAILED);
+      if (this.onFailure) this.onFailure("ICE_CONNECTION_FAILED");
+    }, this._transientIceGraceMs);
+  }
+
+  _clearRecoveryTimers() {
+    if (this._iceRestartTimer) {
+      clearTimeout(this._iceRestartTimer);
+      this._iceRestartTimer = null;
+    }
+    if (this._permanentFailureTimer) {
+      clearTimeout(this._permanentFailureTimer);
+      this._permanentFailureTimer = null;
+    }
   }
 
   /**
@@ -285,6 +413,8 @@ export class PerfectNegotiator {
    * stay alive for the next round (T-31).
    */
   _teardownPeerConnection() {
+    this._clearRecoveryTimers();
+    this._iceRestartInFlight = false;
     this._stopStatsMonitor();
     const pc = this.pc;
     if (!pc) return;

@@ -43,7 +43,7 @@
       text-transform: uppercase;
     }
     .badge.connected, .badge[data-phase="in_round"] { background: var(--success); }
-    .badge.degraded { background: var(--warning); }
+    .badge.degraded, .badge[data-quality="degraded"] { background: var(--warning); color: #1e293b; }
     .badge.failed, .badge[data-phase="disconnected"] { background: var(--danger); }
     .badge[data-phase="preconnecting"] { background: var(--accent); }
     .badge[data-phase="round_ending"] { background: #7c3aed; }
@@ -113,6 +113,15 @@
       padding: 0.85rem 1rem;
       margin-bottom: 1rem;
     }
+    .quality-banner {
+      background: var(--warning);
+      color: #1e293b;
+      font-weight: 600;
+      font-size: 0.85rem;
+      padding: 0.4rem 0.6rem;
+      border-radius: 6px;
+      margin-bottom: 0.5rem;
+    }
   </style>
 </head>
 <body>
@@ -127,7 +136,7 @@
 
   <div class="top-bar">
     <span id="phaseBadge" class="badge" data-phase="idle">CONNECTING</span>
-    <span>Connection: <span id="connectionBadge" class="badge">—</span></span>
+    <span>Quality: <span id="connectionBadge" class="badge">—</span></span>
     <div id="timerContainer" class="timer-block" data-state="waiting">
       <div class="timer-label">Time remaining</div>
       <div id="timerDisplay" class="timer-value">--:--</div>
@@ -150,6 +159,7 @@
     </div>
     <div class="video-card">
       <h3>Partner</h3>
+      <div id="qualityBanner" class="quality-banner" hidden></div>
       <video id="remoteVideo" autoplay playsinline></video>
     </div>
   </div>
@@ -175,6 +185,7 @@
         roomLabel: document.getElementById('roomLabel'),
         phaseBadge: document.getElementById('phaseBadge'),
         connectionBadge: document.getElementById('connectionBadge'),
+        qualityBanner: document.getElementById('qualityBanner'),
         errorBanner: document.getElementById('mediaErrorBanner'),
       },
       fetchIceServers: async () => {
