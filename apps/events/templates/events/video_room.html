@@ -106,6 +106,13 @@
       margin-bottom: 1rem;
     }
     .event-ended-banner.visible { display: block; }
+    .error-banner {
+      background: #7f1d1d;
+      color: #fecaca;
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+      margin-bottom: 1rem;
+    }
   </style>
 </head>
 <body>
@@ -115,6 +122,8 @@
   <div id="eventEndedBanner" class="event-ended-banner">
     <strong>Event ended.</strong> Thank you for participating.
   </div>
+
+  <div id="mediaErrorBanner" class="error-banner" hidden></div>
 
   <div class="top-bar">
     <span id="phaseBadge" class="badge" data-phase="idle">CONNECTING</span>
@@ -166,6 +175,7 @@
         roomLabel: document.getElementById('roomLabel'),
         phaseBadge: document.getElementById('phaseBadge'),
         connectionBadge: document.getElementById('connectionBadge'),
+        errorBanner: document.getElementById('mediaErrorBanner'),
       },
       fetchIceServers: async () => {
         const res = await fetch('/api/ice-servers/');
