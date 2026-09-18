@@ -40,6 +40,10 @@ export const RECONNECT_INITIAL_DELAY_MS = 500;
 export const RECONNECT_MAX_DELAY_MS = 4000;
 /** Stop hammering a dead socket; identity hold on the server is 300s. */
 export const RECONNECT_WINDOW_MS = 45_000;
+/** Longer than T-33 5–20s recovery so a brief drop is not "partner left". */
+export const PARTNER_ABSENCE_GRACE_MS = 25_000;
+export const PARTNER_GONE_FOOTER =
+  "Your partner left. The round timer continues — no replacement will be assigned.";
 
 /** Mirrors call_room_logic.next_reconnect_delay_ms */
 export function nextReconnectDelayMs(
@@ -58,6 +62,22 @@ export function reconnectWindowExhausted(
   windowMs = RECONNECT_WINDOW_MS,
 ) {
   return nowMs - startedAtMs >= windowMs;
+}
+
+/** Mirrors call_room_logic.partner_left_banner */
+export function partnerLeftBanner(displayName) {
+  const name =
+    typeof displayName === "string" && displayName.trim()
+      ? displayName.trim()
+      : "Your partner";
+  return `${name} left. Waiting for them to return — the round continues.`;
+}
+
+/** Mirrors call_room_logic.partner_presence_from_protocol */
+export function partnerPresenceFromProtocol(state) {
+  if (state === "connected") return "connected";
+  if (state === "reconnecting") return "reconnecting";
+  return "gone";
 }
 
 /** Mirrors call_room_logic.compute_remaining_ms */
@@ -149,6 +169,7 @@ export class CallRoomController {
     this.serverWarningActive = false;
     this.partner = null;
     this.eventEndReason = null;
+    this.partnerPresence = null;
     this._timerInterval = null;
     this._reconnectTimer = null;
     this._helloClientTs = null;
@@ -311,6 +332,12 @@ export class CallRoomController {
       case "server.event_end":
         await this._onEventEnd(payload);
         break;
+      case "server.partner_state":
+        this._onPartnerState(payload);
+        break;
+      case "server.error":
+        this._onServerError(payload);
+        break;
       default:
         if (type.startsWith("server.webrtc.") && this.negotiator) {
           await this.negotiator.handleSignalingMessage(msg);
@@ -394,7 +421,9 @@ export class CallRoomController {
     this.roundNumber = this.partner.roundNumber;
     this.roundEndTs = this.partner.roundEndTs;
     this.serverWarningActive = false;
+    this.partnerPresence = "connected";
     this._clearConnectionError();
+    this._clearPartnerGone();
     this._updatePartnerUI();
 
     if (sameAssignment) {
@@ -475,6 +504,8 @@ export class CallRoomController {
     }
     this._bindLocalPreview();
     this.partner = null;
+    this.partnerPresence = null;
+    this._clearPartnerGone();
     this._updatePartnerUI();
     // Next server.pairing will prepare the next round automatically.
   }
@@ -504,6 +535,126 @@ export class CallRoomController {
     }
     this._detachSocket();
     this._intentionalClose = false;
+  }
+
+  _onPartnerState(payload) {
+    if (!payload) return;
+    if (
+      this.partner &&
+      String(payload.partner_id) !== String(this.partner.partnerId)
+    ) {
+      return;
+    }
+    const presence = partnerPresenceFromProtocol(payload.state);
+    this.partnerPresence = presence;
+    if (presence === "gone") {
+      this._showPartnerGone();
+      return;
+    }
+    if (presence === "reconnecting") {
+      this._showPartnerReconnecting();
+      return;
+    }
+    this._clearPartnerGone();
+    this.negotiator?.recoverAfterSignalingRestore?.();
+  }
+
+  _onServerError(payload) {
+    if (payload?.code !== "ERR_ALREADY_CONNECTED") return;
+    this._intentionalClose = true;
+    this._signalingDegraded = false;
+    this._unbindOnlineListener();
+    this._clearReconnect();
+    this._wsGeneration += 1;
+    this._detachSocket();
+    this._intentionalClose = false;
+    if (this.elements.errorBanner) {
+      this.elements.errorBanner.hidden = false;
+      this.elements.errorBanner.textContent =
+        "You joined from another window. This session is no longer active.";
+    }
+    if (this.elements.statusFooter) {
+      this.elements.statusFooter.textContent =
+        "You joined from another window. This session is no longer active.";
+    }
+    if (this.elements.connectionBadge) {
+      this.elements.connectionBadge.textContent = "SESSION REPLACED";
+      this.elements.connectionBadge.className = "badge failed";
+      if (!this.elements.connectionBadge.dataset) {
+        this.elements.connectionBadge.dataset = {};
+      }
+      this.elements.connectionBadge.dataset.quality = "session-replaced";
+    }
+  }
+
+  _showPartnerGone() {
+    if (this.elements.remoteVideo) {
+      this.elements.remoteVideo.srcObject = null;
+    }
+    const bannerText = partnerLeftBanner(this.partner?.displayName);
+    if (this.elements.partnerGoneBanner) {
+      this.elements.partnerGoneBanner.hidden = false;
+      this.elements.partnerGoneBanner.textContent = bannerText;
+    }
+    if (this.elements.qualityBanner) {
+      this.elements.qualityBanner.hidden = false;
+      this.elements.qualityBanner.textContent = bannerText;
+    }
+    if (this.elements.connectionBadge) {
+      this.elements.connectionBadge.textContent = "PARTNER LEFT";
+      this.elements.connectionBadge.className = "badge partner-gone";
+      if (!this.elements.connectionBadge.dataset) {
+        this.elements.connectionBadge.dataset = {};
+      }
+      this.elements.connectionBadge.dataset.quality = "partner-gone";
+    }
+    if (this.elements.statusFooter) {
+      this.elements.statusFooter.textContent = PARTNER_GONE_FOOTER;
+    }
+    this._updatePartnerUI();
+  }
+
+  _showPartnerReconnecting() {
+    if (this.elements.partnerGoneBanner) {
+      this.elements.partnerGoneBanner.hidden = false;
+      this.elements.partnerGoneBanner.textContent =
+        "Your partner is reconnecting…";
+    }
+    if (this.elements.qualityBanner) {
+      this.elements.qualityBanner.hidden = false;
+      this.elements.qualityBanner.textContent =
+        "Your partner is reconnecting…";
+    }
+    if (this.elements.connectionBadge) {
+      this.elements.connectionBadge.textContent = "PARTNER RECONNECTING";
+      this.elements.connectionBadge.className = "badge reconnecting";
+      if (!this.elements.connectionBadge.dataset) {
+        this.elements.connectionBadge.dataset = {};
+      }
+      this.elements.connectionBadge.dataset.quality = "partner-reconnecting";
+    }
+    if (this.elements.statusFooter) {
+      this.elements.statusFooter.textContent =
+        "Your partner is reconnecting. The round timer continues.";
+    }
+  }
+
+  _clearPartnerGone() {
+    if (this.partnerPresence === "gone" || this.partnerPresence === "reconnecting") {
+      this.partnerPresence = "connected";
+    }
+    if (this.elements.partnerGoneBanner) {
+      this.elements.partnerGoneBanner.hidden = true;
+      this.elements.partnerGoneBanner.textContent = "";
+    }
+    if (this.elements.qualityBanner) {
+      this.elements.qualityBanner.hidden = true;
+      this.elements.qualityBanner.textContent = "";
+    }
+    if (this.elements.statusFooter && this.phase === CallRoomPhase.IN_ROUND) {
+      this.elements.statusFooter.textContent = "Round in progress";
+    }
+    this._refreshQualityFromPeer();
   }
 
   _createNegotiator(roomId, partnerId, rtcConfig) {
@@ -571,6 +722,14 @@ export class CallRoomController {
   }
 
   _applyConnectionQuality(state) {
+    if (this.partnerPresence === "gone") {
+      this._showPartnerGone();
+      return;
+    }
+    if (this.partnerPresence === "reconnecting") {
+      this._showPartnerReconnecting();
+      return;
+    }
     if (this._signalingDegraded && state !== "connected") {
       this._showReconnecting();
       return;

@@ -50,6 +50,9 @@
       animation: pulse 1s ease-in-out infinite;
     }
     .badge.failed, .badge[data-phase="disconnected"] { background: var(--danger); }
+    .badge.partner-gone, .badge[data-quality="partner-gone"] {
+      background: #64748b;
+    }
     .badge[data-phase="preconnecting"] { background: var(--accent); }
     .badge[data-phase="round_ending"] { background: #7c3aed; }
     .badge[data-phase="event_ended"] { background: #64748b; }
@@ -127,6 +130,15 @@
       border-radius: 6px;
       margin-bottom: 0.5rem;
     }
+    .partner-gone-banner {
+      background: #334155;
+      color: #f8fafc;
+      font-weight: 600;
+      font-size: 0.9rem;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
   </style>
 </head>
 <body>
@@ -138,6 +150,7 @@
   </div>
 
   <div id="mediaErrorBanner" class="error-banner" hidden></div>
+  <div id="partnerGoneBanner" class="partner-gone-banner" hidden></div>
 
   <div class="top-bar">
     <span id="phaseBadge" class="badge" data-phase="idle">CONNECTING</span>
@@ -192,6 +205,7 @@
         connectionBadge: document.getElementById('connectionBadge'),
         qualityBanner: document.getElementById('qualityBanner'),
         errorBanner: document.getElementById('mediaErrorBanner'),
+        partnerGoneBanner: document.getElementById('partnerGoneBanner'),
         statusFooter: document.getElementById('statusFooter'),
       },
       fetchIceServers: async () => {

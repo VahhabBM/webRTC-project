@@ -23,14 +23,16 @@ from channels.db import database_sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
 from django.core.cache import cache
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.events.models import Event, Pair, Round
 from apps.events.scheduler import EventPhase, RoundScheduler
-from apps.protocol.constants import EventEndReason, MessageType
+from apps.protocol.constants import EventEndReason, MessageType, PartnerState
 from apps.protocol.schemas import (
     build_server_event_end,
     build_server_pairing,
+    build_server_partner_state,
     build_server_round_end,
     build_server_round_start,
     build_server_round_warning,
@@ -54,6 +56,62 @@ def participant_channel_group(participant_id) -> str:
 def event_channel_group(event_id) -> str:
     """Event-wide group used by T-14/T-25 after handshake."""
     return f"event_{event_id}"
+
+
+def connection_channel_key(participant_id) -> str:
+    """Cache key for the live T-14 channel owning this participant."""
+    return f"ws:channel:{participant_id}"
+
+
+def absence_generation_key(participant_id) -> str:
+    """Cache key for the in-flight long-absence generation (T-34)."""
+    return f"ws:absent:{participant_id}"
+
+
+def current_pair_for_participant(
+    event: Event, participant, *, now: datetime | None = None
+) -> Pair | None:
+    """Stored Pair for *participant* in the active round only.
+
+    Never allocates a replacement. Break/completed phases have no live pair
+    for presence updates so an absence cannot advance T-22/T-24.
+    """
+    current = now if now is not None else timezone.now()
+    if timezone.is_naive(current):
+        current = timezone.make_aware(current, UTC)
+    phase, active_round, _remaining = RoundScheduler(event).get_current_phase(current)
+    if not active_round or phase not in (EventPhase.PRECONNECT, EventPhase.IN_ROUND):
+        return None
+    return (
+        Pair.objects.filter(event_id=event.pk, round_id=active_round.pk)
+        .filter(Q(participant_a=participant) | Q(participant_b=participant))
+        .select_related("participant_a", "participant_b", "round")
+        .first()
+    )
+
+
+def partner_on_pair(pair: Pair, participant):
+    if pair.participant_a_id == participant.pk:
+        return pair.participant_b
+    return pair.participant_a
+
+
+def invalidate_participant_sockets(participant_id) -> None:
+    """T-08/T-34: drop live sockets after a newer session claims the identity."""
+    cache.delete(connection_channel_key(participant_id))
+    cache.delete(absence_generation_key(participant_id))
+    layer = get_channel_layer()
+    if not layer:
+        return
+    try:
+        async_to_sync(layer.group_send)(
+            participant_channel_group(participant_id),
+            {"type": "session.replaced"},
+        )
+    except Exception:
+        logger.exception(
+            "Failed invalidating sockets for participant %s", participant_id
+        )
 
 
 def datetime_to_unix_ms(dt: datetime) -> int:
@@ -463,6 +521,29 @@ class OrchestratorRealtime:
                 )
             )
         return messages
+
+    def partner_presence_jobs(
+        self, participant, state: str, *, now: datetime | None = None
+    ) -> list[tuple[str, dict]]:
+        """``server.partner_state`` for the current-round partner only."""
+        pair = current_pair_for_participant(self.event, participant, now=now)
+        if not pair:
+            return []
+        partner = partner_on_pair(pair, participant)
+        message = build_server_partner_state(
+            partner_id=str(participant.pk),
+            state=str(state or PartnerState.DISCONNECTED),
+            server_ts=self._server_ts_ms(now),
+        )
+        return [(participant_channel_group(partner.pk), message)]
+
+    async def anotify_partner_presence(
+        self, participant, state: str, *, now: datetime | None = None
+    ) -> int:
+        jobs = await database_sync_to_async(self.partner_presence_jobs)(
+            participant, state, now=now
+        )
+        return await self.abroadcast_prepared(jobs)
 
     def round_start_jobs(
         self, round_obj: Round, *, now: datetime | None = None

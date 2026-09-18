@@ -8,20 +8,17 @@ from apps.events.auth import (
     ExpiredJoinToken,
     InvalidJoinToken,
     authenticate_join_token,
+    establish_participant_session,
+    resolve_participant_from_session,
 )
 from apps.events.models import Pair, Participant
+from apps.events.orchestrator import invalidate_participant_sockets
 from apps.events.turn import generate_ice_servers
 
 
 def get_authenticated_participant(request: HttpRequest) -> Participant | None:
     """دریافت شرکت‌کننده احراز هویت شده از روی سشن"""
-    participant_id = request.session.get("participant_id")
-    if not participant_id:
-        return None
-    try:
-        return Participant.objects.select_related("event").get(pk=participant_id)
-    except Participant.DoesNotExist:
-        return None
+    return resolve_participant_from_session(request.session)
 
 
 @require_GET
@@ -52,7 +49,8 @@ def join_participant(request: HttpRequest, token: str) -> JsonResponse:
             status=410,
         )
 
-    request.session["participant_id"] = str(participant.pk)
+    establish_participant_session(request, participant)
+    invalidate_participant_sockets(participant.pk)
     return JsonResponse(
         {
             "authenticated": True,
