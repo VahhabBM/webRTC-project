@@ -1,8 +1,15 @@
+from __future__ import annotations
+
 from django.conf import settings
 from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.events.auth import (
     ExpiredJoinToken,
@@ -10,7 +17,7 @@ from apps.events.auth import (
     authenticate_join_token,
 )
 from apps.events.models import Pair, Participant
-from apps.events.turn import generate_ice_servers
+from apps.events.turn import TurnCredentialService, generate_ice_servers
 
 
 def get_authenticated_participant(request: HttpRequest) -> Participant | None:
@@ -171,3 +178,18 @@ def ice_servers_view(request: HttpRequest) -> JsonResponse:
 
     data = generate_ice_servers(participant_id=str(participant.pk), ttl=ttl)
     return JsonResponse(data)
+
+
+class TurnCredentialsAPIView(APIView):
+    """بازگرداندن اعتبارنامه‌های منقضاشونده اتصال به سرور کمکی TURN."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        participant = getattr(request.user, "participant_profile", None)
+        participant_id = str(participant.id) if participant else str(request.user.id)
+
+        service = TurnCredentialService()
+        data = service.generate_credentials(participant_id=participant_id)
+
+        return Response(data, status=status.HTTP_200_OK)

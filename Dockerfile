@@ -11,9 +11,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
-RUN pip install --upgrade pip \
-    && pip install -r /app/requirements.txt
 
+RUN pip install --no-cache-dir --default-timeout=100 -i https://mirror-pypi.runflare.com/simple -r /app/requirements.txt
 COPY . /app
 
 RUN chmod +x /app/docker/entrypoint.sh
@@ -22,3 +21,6 @@ EXPOSE 8000
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
 CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+
+
+
