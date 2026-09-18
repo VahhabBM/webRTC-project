@@ -15,3 +15,18 @@ services:
     command:
       - -c
       - /etc/coturn/turnserver.conf
+
+  coturn-region2:
+    image: coturn/coturn:4.6-alpine
+    container_name: coturn-staging-region2
+    restart: always
+    network_mode: host
+    volumes:
+      - ./coturn/turnserver-region2.conf:/etc/coturn/turnserver.conf:ro
+      - /etc/letsencrypt/live/staging-turn-r2.yourdomain.com/fullchain.pem:/etc/coturn/certs/fullchain.pem:ro
+      - /etc/letsencrypt/live/staging-turn-r2.yourdomain.com/privkey.pem:/etc/coturn/certs/privkey.pem:ro
+    environment:
+      - DETECT_EXTERNAL_IP=yes
+    command:
+      - -c
+      - /etc/coturn/turnserver.conf
