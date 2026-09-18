@@ -1,9 +1,9 @@
-from datetime import timedelta
 import json
+from datetime import timedelta
 
+import pytest
 from django.test import Client
 from django.utils import timezone
-import pytest
 
 from apps.events.models import ConnectionType, Event, Pair, Participant, Round
 

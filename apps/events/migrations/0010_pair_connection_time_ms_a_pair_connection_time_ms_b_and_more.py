@@ -4,35 +4,62 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('events', '0009_merge_state_machine_and_operatoractionlog'),
+        ("events", "0009_merge_state_machine_and_operatoractionlog"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='pair',
-            name='connection_time_ms_a',
-            field=models.PositiveIntegerField(blank=True, help_text='Time taken to establish connection for Participant A in ms', null=True),
+            model_name="pair",
+            name="connection_time_ms_a",
+            field=models.PositiveIntegerField(
+                blank=True,
+                help_text="Time taken to establish connection for Participant A in ms",
+                null=True,
+            ),
         ),
         migrations.AddField(
-            model_name='pair',
-            name='connection_time_ms_b',
-            field=models.PositiveIntegerField(blank=True, help_text='Time taken to establish connection for Participant B in ms', null=True),
+            model_name="pair",
+            name="connection_time_ms_b",
+            field=models.PositiveIntegerField(
+                blank=True,
+                help_text="Time taken to establish connection for Participant B in ms",
+                null=True,
+            ),
         ),
         migrations.AddField(
-            model_name='pair',
-            name='connection_type_a',
-            field=models.CharField(blank=True, choices=[('direct', 'Direct'), ('relay', 'Relay')], help_text='Final ICE connection type for Participant A (direct/relay)', max_length=10, null=True),
+            model_name="pair",
+            name="connection_type_a",
+            field=models.CharField(
+                blank=True,
+                choices=[("direct", "Direct"), ("relay", "Relay")],
+                help_text="Final ICE connection type for Participant A (direct/relay)",
+                max_length=10,
+                null=True,
+            ),
         ),
         migrations.AddField(
-            model_name='pair',
-            name='connection_type_b',
-            field=models.CharField(blank=True, choices=[('direct', 'Direct'), ('relay', 'Relay')], help_text='Final ICE connection type for Participant B (direct/relay)', max_length=10, null=True),
+            model_name="pair",
+            name="connection_type_b",
+            field=models.CharField(
+                blank=True,
+                choices=[("direct", "Direct"), ("relay", "Relay")],
+                help_text="Final ICE connection type for Participant B (direct/relay)",
+                max_length=10,
+                null=True,
+            ),
         ),
         migrations.AlterField(
-            model_name='operatoractionlog',
-            name='action',
-            field=models.CharField(choices=[('pause', 'Pause'), ('resume', 'Resume'), ('extend', 'Extend'), ('recalculate', 'Recalculate')], max_length=16),
+            model_name="operatoractionlog",
+            name="action",
+            field=models.CharField(
+                choices=[
+                    ("pause", "Pause"),
+                    ("resume", "Resume"),
+                    ("extend", "Extend"),
+                    ("recalculate", "Recalculate"),
+                ],
+                max_length=16,
+            ),
         ),
     ]
