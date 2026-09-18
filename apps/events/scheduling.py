@@ -10,10 +10,24 @@ from __future__ import annotations
 import hashlib
 import uuid
 
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 
-from apps.events.matching import MatchInput, MatchParticipant
-from apps.events.models import Event, Pair, Round
+from apps.events.matching import (
+    MatchingError,
+    MatchInput,
+    MatchParticipant,
+    generate_schedule,
+    validate_schedule,
+)
+from apps.events.models import (
+    Event,
+    EventStatus,
+    OperatorActionLog,
+    OperatorActionType,
+    Pair,
+    Round,
+)
 from apps.events.scoring import build_participant_profile, build_scoring_weights
 
 
@@ -110,3 +124,86 @@ def persist_schedule(event: Event, schedule) -> None:
                 )
 
         Pair.objects.bulk_create(pair_objects)
+
+
+def recalculate_pairs_pre_start(
+    event: Event,
+    *,
+    operator_confirmed: bool = False,
+    absent_participant_ids: list[str | uuid.UUID] | set[str | uuid.UUID] | None = None,
+    operator_details: dict | None = None,
+):
+    """حذف غایبان و بازتولید اتمیک جدول جفت‌ها پیش از شروع رویداد (T-42).
+
+    قیدها:
+    - فقط قبل از شروع مجاز است (در وضعیت RUNNING یا COMPLETED خطا پرتاب می‌شود).
+    - اپراتور باید صریحاً تأیید کند (operator_confirmed=True).
+    - قفل T-21 اعمال می‌شود: باید نقض قید دقیقاً صفر باشد.
+    - لاگ تأیید اپراتور در OperatorActionLog ثبت می‌شود.
+    """
+    if not operator_confirmed:
+        raise PermissionDenied(
+            "Operator explicit confirmation is required to recalculate pairings."
+        )
+
+    forbidden_statuses = {
+        EventStatus.RUNNING,
+        EventStatus.PAUSED,
+        EventStatus.COMPLETED,
+        EventStatus.CANCELLED,
+        "active",
+    }
+    if event.status in forbidden_statuses:
+        raise ValidationError(
+            f"Recalculation is only allowed before the event starts. Current status: '{event.status}'."
+        )
+
+    with transaction.atomic():
+        locked_event = Event.objects.select_for_update().get(pk=event.pk)
+        if locked_event.status in forbidden_statuses:
+            raise ValidationError(
+                f"Recalculation is only allowed before the event starts. Current status: '{locked_event.status}'."
+            )
+
+        absent_count = 0
+        if absent_participant_ids:
+            absent_ids = [str(pid) for pid in absent_participant_ids]
+            absent_count = locked_event.participants.filter(id__in=absent_ids).delete()[
+                0
+            ]
+
+        match_input = build_match_input(locked_event)
+        if len(match_input.participants) < 2:
+            raise MatchingError(
+                f"Cannot generate schedule: event has fewer than 2 active participants (got {len(match_input.participants)})."
+            )
+
+        new_schedule = generate_schedule(match_input)
+
+        pids = frozenset(mp.pid for mp in match_input.participants)
+        violations = validate_schedule(
+            new_schedule, pids, num_rounds=int(locked_event.num_rounds)
+        )
+        if len(violations) > 0:
+            raise MatchingError(
+                f"Cannot lock schedule: {len(violations)} constraint violation(s) detected. "
+                "Zero violations required (T-21 lock)."
+            )
+
+        persist_schedule(locked_event, new_schedule)
+
+        OperatorActionLog.objects.create(
+            event=locked_event,
+            round=None,
+            action=OperatorActionType.RECALCULATE,
+            details={
+                "confirmed": True,
+                "absent_removed_count": absent_count,
+                "active_participants": len(match_input.participants),
+                "total_rounds": len(new_schedule.rounds),
+                "violation_count": 0,
+                **(operator_details or {}),
+            },
+        )
+
+    return new_schedule

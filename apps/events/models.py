@@ -354,3 +354,10 @@ class OperatorActionLog(models.Model):
 
     def __str__(self) -> str:
         return f"{self.action} on event {self.event_id} at {self.performed_at}"
+
+
+class OperatorActionType(models.TextChoices):
+    PAUSE = "pause", "Pause"
+    RESUME = "resume", "Resume"
+    EXTEND = "extend", "Extend"
+    RECALCULATE = "recalculate", "Recalculate"
