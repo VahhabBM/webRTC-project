@@ -51,6 +51,11 @@ class PairStatus(models.TextChoices):
     CANCELLED = "cancelled", "Cancelled"
 
 
+class ConnectionType(models.TextChoices):
+    DIRECT = "direct", "Direct"
+    RELAY = "relay", "Relay"
+
+
 class Event(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     name = models.CharField(max_length=200)
@@ -212,6 +217,32 @@ class Pair(models.Model):
     room_id = models.CharField(max_length=100, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # T-37: Connection Path Telemetry
+    connection_type_a = models.CharField(
+        max_length=10,
+        choices=ConnectionType.choices,
+        null=True,
+        blank=True,
+        help_text="Final ICE connection type for Participant A (direct/relay)",
+    )
+    connection_time_ms_a = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Time taken to establish connection for Participant A in ms",
+    )
+    connection_type_b = models.CharField(
+        max_length=10,
+        choices=ConnectionType.choices,
+        null=True,
+        blank=True,
+        help_text="Final ICE connection type for Participant B (direct/relay)",
+    )
+    connection_time_ms_b = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Time taken to establish connection for Participant B in ms",
+    )
+
     class Meta:
         constraints = [
             models.CheckConstraint(
@@ -250,6 +281,11 @@ class Pair(models.Model):
                 self.participant_a_id,
             )
         super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return (
+            f"Pair({self.room_id}: {self.participant_a_id} - {self.participant_b_id})"
+        )
 
 
 class EventTransitionLog(models.Model):
@@ -331,6 +367,7 @@ class OperatorActionType(models.TextChoices):
     PAUSE = "pause", "Pause"
     RESUME = "resume", "Resume"
     EXTEND = "extend", "Extend"
+    RECALCULATE = "recalculate", "Recalculate"
 
 
 class OperatorActionLog(models.Model):
@@ -354,10 +391,3 @@ class OperatorActionLog(models.Model):
 
     def __str__(self) -> str:
         return f"{self.action} on event {self.event_id} at {self.performed_at}"
-
-
-class OperatorActionType(models.TextChoices):
-    PAUSE = "pause", "Pause"
-    RESUME = "resume", "Resume"
-    EXTEND = "extend", "Extend"
-    RECALCULATE = "recalculate", "Recalculate"
