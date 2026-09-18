@@ -1,4 +1,4 @@
-"""STUN/TURN temporary credential generation service (T-28 & T-35)."""
+"""STUN/TURN temporary credential generation service (T-28, T-35 & T-36)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from django.core.exceptions import ImproperlyConfigured
 
 
 class TurnCredentialService:
-    """تولید اطلاعات اتصال موقت به سرور رله منطقه اول (Region 1 Coturn)."""
+    """تولید اطلاعات اتصال موقت به سرورهای رله چندمنطقه‌ای (Region 1 & Region 2 Coturn)."""
 
     def __init__(self, ttl: int | None = None):
         self.domain = getattr(
@@ -21,9 +21,21 @@ class TurnCredentialService:
         )
         self.port = getattr(settings, "COTURN_PORT", 3478)
         self.tls_port = getattr(settings, "COTURN_TLS_PORT", 5349)
+
+        # Region 2 (T-36 Multi-Region Failover)
+        self.region2_domain = getattr(settings, "COTURN_REGION2_DOMAIN", None)
+        self.region2_port = getattr(settings, "COTURN_REGION2_PORT", self.port)
+        self.region2_tls_port = getattr(
+            settings, "COTURN_REGION2_TLS_PORT", self.tls_port
+        )
+
         self.shared_secret = getattr(settings, "COTURN_SHARED_SECRET", "") or getattr(
             settings, "TURN_SHARED_SECRET", ""
         )
+        self.region2_shared_secret = (
+            getattr(settings, "COTURN_REGION2_SHARED_SECRET", "") or self.shared_secret
+        )
+
         self.ttl = (
             ttl
             if ttl is not None
@@ -42,41 +54,72 @@ class TurnCredentialService:
         expiry_timestamp = int(time.time()) + effective_ttl
         username = f"{expiry_timestamp}:{participant_id}"
 
-        digester = hmac.new(
+        # Region 1 Credentials
+        digester_r1 = hmac.new(
             key=self.shared_secret.encode("utf-8"),
             msg=username.encode("utf-8"),
             digestmod=hashlib.sha1,
         )
-        password = base64.b64encode(digester.digest()).decode("utf-8")
+        password_r1 = base64.b64encode(digester_r1.digest()).decode("utf-8")
 
-        ice_servers = [
-            {
-                "urls": [
-                    f"stun:{self.domain}:{self.port}",
-                ]
-            },
+        ice_servers: list[dict[str, Any]] = [
+            {"urls": [f"stun:{self.domain}:{self.port}"]},
             {
                 "urls": [
                     f"turn:{self.domain}:{self.port}?transport=udp",
                     f"turn:{self.domain}:{self.port}?transport=tcp",
                 ],
                 "username": username,
-                "credential": password,
+                "credential": password_r1,
             },
             {
-                "urls": [
-                    f"turns:{self.domain}:{self.tls_port}?transport=tcp",
-                ],
+                "urls": [f"turns:{self.domain}:{self.tls_port}?transport=tcp"],
                 "username": username,
-                "credential": password,
+                "credential": password_r1,
             },
         ]
 
+        # Region 2 Credentials (T-36: Concurrent list for seamless failover)
+        if self.region2_domain:
+            digester_r2 = hmac.new(
+                key=self.region2_shared_secret.encode("utf-8"),
+                msg=username.encode("utf-8"),
+                digestmod=hashlib.sha1,
+            )
+            password_r2 = base64.b64encode(digester_r2.digest()).decode("utf-8")
+
+            ice_servers.extend(
+                [
+                    {"urls": [f"stun:{self.region2_domain}:{self.region2_port}"]},
+                    {
+                        "urls": [
+                            f"turn:{self.region2_domain}:{self.region2_port}?transport=udp",
+                            f"turn:{self.region2_domain}:{self.region2_port}?transport=tcp",
+                        ],
+                        "username": username,
+                        "credential": password_r2,
+                    },
+                    {
+                        "urls": [
+                            f"turns:{self.region2_domain}:{self.region2_tls_port}?transport=tcp"
+                        ],
+                        "username": username,
+                        "credential": password_r2,
+                    },
+                ]
+            )
+
+        regions = ["region-1-staging"]
+        if self.region2_domain:
+            regions.append("region-2-staging")
+
         return {
             "ice_servers": ice_servers,
+            "iceServers": ice_servers,
             "ttl": effective_ttl,
             "expires_at": expiry_timestamp,
-            "region": "region-1-staging",
+            "region": "multi-region" if self.region2_domain else "region-1-staging",
+            "regions": regions,
             "fallback_only": False,
         }
 
@@ -87,7 +130,6 @@ def generate_ice_servers(
     turn_secret: str | None = None,
     turn_urls: list[str] | None = None,
 ) -> dict[str, Any]:
-    """تابع کمکی جهت تولید ساختار ice_servers با پشتیبانی از Fallback و Staging."""
     secret = (
         turn_secret
         if turn_secret is not None
@@ -99,8 +141,10 @@ def generate_ice_servers(
 
     if not secret:
         stun_url = getattr(settings, "STUN_SERVER_URL", "stun:stun.l.google.com:19302")
+        servers = [{"urls": [stun_url]}]
         return {
-            "ice_servers": [{"urls": [stun_url]}],
+            "ice_servers": servers,
+            "iceServers": servers,
             "fallback_only": True,
             "expires_at": None,
             "ttl": ttl or 0,
@@ -122,7 +166,7 @@ def generate_ice_servers(
         password = base64.b64encode(digester.digest()).decode("utf-8")
 
         stun_url = getattr(settings, "STUN_SERVER_URL", "stun:stun.l.google.com:19302")
-        ice_servers = [
+        servers = [
             {"urls": [stun_url]},
             {
                 "urls": effective_turn_urls,
@@ -131,7 +175,8 @@ def generate_ice_servers(
             },
         ]
         return {
-            "ice_servers": ice_servers,
+            "ice_servers": servers,
+            "iceServers": servers,
             "fallback_only": False,
             "expires_at": expiry_timestamp,
             "ttl": effective_ttl,
