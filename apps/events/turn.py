@@ -21,9 +21,8 @@ class TurnCredentialService:
         )
         self.port = getattr(settings, "COTURN_PORT", 3478)
         self.tls_port = getattr(settings, "COTURN_TLS_PORT", 5349)
-        self.shared_secret = (
-            getattr(settings, "COTURN_SHARED_SECRET", "")
-            or getattr(settings, "TURN_SHARED_SECRET", "")
+        self.shared_secret = getattr(settings, "COTURN_SHARED_SECRET", "") or getattr(
+            settings, "TURN_SHARED_SECRET", ""
         )
         self.ttl = (
             ttl
@@ -108,9 +107,7 @@ def generate_ice_servers(
         }
 
     effective_turn_urls = (
-        turn_urls
-        if turn_urls is not None
-        else getattr(settings, "TURN_URLS", None)
+        turn_urls if turn_urls is not None else getattr(settings, "TURN_URLS", None)
     )
 
     if effective_turn_urls:

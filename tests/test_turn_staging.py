@@ -49,9 +49,7 @@ class TestTurnStagingCredentials:
 
         # ۳. سرور TURNS امن (TLS)
         turns_server = ice_servers[2]
-        assert (
-            f"turns:{FAKE_DOMAIN}:5349?transport=tcp" in turns_server["urls"]
-        )
+        assert f"turns:{FAKE_DOMAIN}:5349?transport=tcp" in turns_server["urls"]
 
     def test_shared_secret_never_leaks(self):
         """اطمینان از اینکه رمز مشترک هرگز در خروجی به کلاینت نشت نمی‌کند"""

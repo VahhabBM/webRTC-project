@@ -180,7 +180,6 @@ def ice_servers_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse(data)
 
 
-
 class TurnCredentialsAPIView(APIView):
     """بازگرداندن اعتبارنامه‌های منقضاشونده اتصال به سرور کمکی TURN."""
 
@@ -188,9 +187,7 @@ class TurnCredentialsAPIView(APIView):
 
     def get(self, request: Request) -> Response:
         participant = getattr(request.user, "participant_profile", None)
-        participant_id = (
-            str(participant.id) if participant else str(request.user.id)
-        )
+        participant_id = str(participant.id) if participant else str(request.user.id)
 
         service = TurnCredentialService()
         data = service.generate_credentials(participant_id=participant_id)
