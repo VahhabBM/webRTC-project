@@ -27,6 +27,42 @@ class CallRoomPhase(StrEnum):
     DISCONNECTED = "disconnected"
 
 
+# Client reconnect policy for 5–20s network loss (T-33). Identity hold on the
+# server remains PROTOCOL_RECONNECT_WINDOW_SECONDS (300s).
+RECONNECT_INITIAL_DELAY_MS = 500
+RECONNECT_MAX_DELAY_MS = 4000
+RECONNECT_WINDOW_MS = 45_000
+
+_KEEP_ROUND_ON_TRANSIENT_DISCONNECT = frozenset(
+    {
+        CallRoomPhase.PRECONNECTING,
+        CallRoomPhase.IN_ROUND,
+        CallRoomPhase.ROUND_ENDING,
+    }
+)
+
+
+def next_reconnect_delay_ms(
+    attempt: int,
+    *,
+    initial_ms: int = RECONNECT_INITIAL_DELAY_MS,
+    max_ms: int = RECONNECT_MAX_DELAY_MS,
+) -> int:
+    """Bounded exponential backoff: 500ms, 1s, 2s, 4s, 4s, …"""
+    n = max(0, int(attempt))
+    return min(max_ms, initial_ms * (2**n))
+
+
+def reconnect_window_exhausted(
+    started_at_ms: int,
+    now_ms: int,
+    *,
+    window_ms: int = RECONNECT_WINDOW_MS,
+) -> bool:
+    """True once the client should stop retrying the unresponsive socket."""
+    return int(now_ms) - int(started_at_ms) >= int(window_ms)
+
+
 def compute_remaining_ms(
     round_end_ts: int,
     offset_ms: float,
@@ -166,3 +202,16 @@ class CallRoomState:
             partner=self.partner,
             event_end_reason=self.event_end_reason,
         )
+
+    def on_transient_disconnect(self) -> CallRoomState:
+        """Keep the current round/partner/timer when the socket drops briefly."""
+        if self.phase in _KEEP_ROUND_ON_TRANSIENT_DISCONNECT:
+            return CallRoomState(
+                phase=self.phase,
+                round_number=self.round_number,
+                round_end_ts=self.round_end_ts,
+                server_warning_active=self.server_warning_active,
+                partner=self.partner,
+                event_end_reason=self.event_end_reason,
+            )
+        return self.on_disconnect()

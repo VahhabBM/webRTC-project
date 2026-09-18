@@ -180,6 +180,7 @@ export class PerfectNegotiator {
     localStream = null,
     transientIceGraceMs = TRANSIENT_ICE_GRACE_MS,
     iceRestartAfterDisconnectMs = ICE_RESTART_AFTER_DISCONNECT_MS,
+    deferPermanentFailure = null,
   }) {
     this.myId = String(myParticipantId);
     this.partnerId = String(partnerParticipantId);
@@ -212,6 +213,7 @@ export class PerfectNegotiator {
     this._iceRestartInFlight = false;
     this._iceRestartTimer = null;
     this._permanentFailureTimer = null;
+    this._deferPermanentFailure = deferPermanentFailure;
 
     if (localStream) {
       this.localStream = localStream;
@@ -389,12 +391,38 @@ export class PerfectNegotiator {
     if (this._permanentFailureTimer) return;
     this._permanentFailureTimer = setTimeout(() => {
       this._permanentFailureTimer = null;
+      if (
+        typeof this._deferPermanentFailure === "function" &&
+        this._deferPermanentFailure()
+      ) {
+        this._schedulePermanentFailure();
+        return;
+      }
       const conn = this.pc?.connectionState;
       if (conn !== "failed" && conn !== "disconnected") return;
       this._stopStatsMonitor();
       this._emitQuality(ConnectionQuality.FAILED);
       if (this.onFailure) this.onFailure("ICE_CONNECTION_FAILED");
     }, this._transientIceGraceMs);
+  }
+
+  /**
+   * After T-14 signaling returns, reuse T-32 ICE restart on the same PC.
+   * Does not create a peer connection or call getUserMedia.
+   */
+  recoverAfterSignalingRestore() {
+    if (!this.pc || this.state === TransportState.CLOSED) return;
+    const conn = this.pc.connectionState;
+    if (conn === "connected") {
+      this._clearRecoveryTimers();
+      this._iceRestartInFlight = false;
+      this._emitQuality(ConnectionQuality.CONNECTED);
+      return;
+    }
+    if (conn === "closed") return;
+    this._iceRestartInFlight = false;
+    this._emitQuality(ConnectionQuality.DEGRADED);
+    this._maybeRestartIce();
   }
 
   _clearRecoveryTimers() {

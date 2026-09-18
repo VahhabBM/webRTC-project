@@ -44,6 +44,11 @@
     }
     .badge.connected, .badge[data-phase="in_round"] { background: var(--success); }
     .badge.degraded, .badge[data-quality="degraded"] { background: var(--warning); color: #1e293b; }
+    .badge.reconnecting, .badge[data-quality="reconnecting"] {
+      background: var(--warning);
+      color: #1e293b;
+      animation: pulse 1s ease-in-out infinite;
+    }
     .badge.failed, .badge[data-phase="disconnected"] { background: var(--danger); }
     .badge[data-phase="preconnecting"] { background: var(--accent); }
     .badge[data-phase="round_ending"] { background: #7c3aed; }
@@ -187,6 +192,7 @@
         connectionBadge: document.getElementById('connectionBadge'),
         qualityBanner: document.getElementById('qualityBanner'),
         errorBanner: document.getElementById('mediaErrorBanner'),
+        statusFooter: document.getElementById('statusFooter'),
       },
       fetchIceServers: async () => {
         const res = await fetch('/api/ice-servers/');
@@ -200,7 +206,7 @@
           banner.classList.add('visible');
           footer.textContent = 'Event has ended.';
         } else if (phase === CallRoomPhase.DISCONNECTED) {
-          footer.textContent = 'Connection lost — reconnecting…';
+          footer.textContent = 'RECONNECTING — connection lost';
         } else if (phase === CallRoomPhase.PRECONNECTING) {
           footer.textContent = 'Preparing next round…';
         } else if (phase === CallRoomPhase.IN_ROUND) {
