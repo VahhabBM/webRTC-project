@@ -1,4 +1,4 @@
-"""Authenticated WebSocket connection layer (T-14, T-25, T-27 & T-29)."""
+"""Authenticated WebSocket connection layer (T-14, T-24, T-25, T-27 & T-29)."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.conf import settings
+from django.core.cache import cache
 
 from apps.protocol.constants import (
     CLOSE_INTERNAL_ERROR,
@@ -35,8 +36,13 @@ from apps.protocol.schemas import (
 from apps.protocol.validators import validate_message
 
 from .auth import resolve_participant_from_scope
+from .orchestrator import OrchestratorRealtime
 
 logger = logging.getLogger(__name__)
+
+
+def _hello_seen_key(participant_id) -> str:
+    return f"ws:hello-seen:{participant_id}"
 
 
 def _timestamp_ms() -> int:
@@ -186,6 +192,10 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 "client.hello has already been accepted.",
                 original_type=str(msg_type),
             )
+        elif msg_type == MessageType.CLIENT_READY:
+            # Idempotent T-13 state signal. Missing/repeat ready never delays
+            # the authoritative scheduler or T-24 round_start broadcast.
+            return
         elif msg_type in (
             MessageType.CLIENT_WEBRTC_OFFER,
             MessageType.CLIENT_WEBRTC_ANSWER,
@@ -219,6 +229,48 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 event_id=str(self.participant.event_id),
             )
         )
+        await self._maybe_send_reconnect_snapshot()
+
+    async def _maybe_send_reconnect_snapshot(self) -> None:
+        """Replay current pairing/round to this socket only (T-14/T-33)."""
+        if not self.participant:
+            return
+        key = _hello_seen_key(self.participant.pk)
+        ttl = getattr(settings, "PROTOCOL_RECONNECT_WINDOW_SECONDS", 300)
+        try:
+            seen = await database_sync_to_async(cache.get)(key)
+            await database_sync_to_async(cache.set)(key, True, ttl)
+        except Exception:
+            logger.exception(
+                "Reconnect window cache failed for participant %s",
+                self.participant.pk,
+            )
+            return
+        if not seen:
+            return
+        try:
+            messages = await database_sync_to_async(self._reconnect_snapshot)()
+        except Exception:
+            logger.exception(
+                "Reconnect snapshot failed for participant %s",
+                self.participant.pk,
+            )
+            return
+        for message in messages:
+            try:
+                await self._send(message)
+            except Exception:
+                logger.exception(
+                    "Failed delivering reconnect snapshot to participant %s",
+                    self.participant.pk,
+                )
+                return
+
+    def _reconnect_snapshot(self) -> list:
+        event = getattr(self.participant, "event", None)
+        if event is None:
+            return []
+        return OrchestratorRealtime(event).reconnect_snapshot_messages(self.participant)
 
     async def _handle_webrtc_signal(self, msg_type: MessageType, payload: dict) -> None:
         room_id = payload.get("room_id")
@@ -266,6 +318,23 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
 
     async def webrtc_relay(self, event: dict) -> None:
         await self._send(event["message"])
+
+    async def orchestrator_message(self, event: dict) -> None:
+        """Deliver a T-13 orchestrator envelope published via the channel layer.
+
+        Send failures are swallowed so a disconnected client cannot delay
+        delivery to other members of the same group.
+        """
+        message = event.get("message")
+        if not message:
+            return
+        try:
+            await self._send(message)
+        except Exception:
+            logger.exception(
+                "Failed delivering orchestrator message to participant %s",
+                getattr(self.participant, "pk", None),
+            )
 
     # ----------------------------------------------------------------------
     # هندلرهای دریافت پیام از Channel Layer (T-25 & T-29)

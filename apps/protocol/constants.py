@@ -97,6 +97,9 @@ class MessageType(StrEnum):
     #: Server → Client.  Authoritative signal that a round has started.
     SERVER_ROUND_START = "server.round_start"
 
+    #: Server → Client.  Final-seconds warning before the authoritative round end.
+    SERVER_ROUND_WARNING = "server.round_warning"
+
     #: Server → Client.  Authoritative signal that a round has ended.
     SERVER_ROUND_END = "server.round_end"
 

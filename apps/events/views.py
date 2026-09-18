@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.conf import settings
 from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
@@ -148,6 +149,9 @@ def video_room_page(request: HttpRequest) -> HttpResponse:
         {
             "room_id": room_id,
             "partner_id": partner_id,
+            "warning_threshold_seconds": getattr(
+                settings, "ORCHESTRATOR_FINAL_SECONDS", 30
+            ),
         },
     )
 

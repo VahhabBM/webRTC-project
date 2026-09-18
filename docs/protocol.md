@@ -167,6 +167,7 @@ Client                                          Server
   |<- server.round_start --------------------------|
   |                                               |
   |   [WebRTC negotiation — both peers in room]   |
+  |<- server.round_warning ------------------------|  (final seconds; remaining from Round.ends_at)
   |-- client.webrtc.offer ------------------------->|
   |   (server forwards to partner)                |
   |<- server.webrtc.offer -------------------------|  (received by partner)
@@ -177,7 +178,7 @@ Client                                          Server
   |   [7-minute round elapses]                    |
   |<- server.round_end ----------------------------|
   |                                               |
-  |   [Repeat server.pairing → round_start → round_end for rounds 2–6]
+  |   [Repeat pairing → round_start → round_warning → round_end for rounds 2–6]
   |                                               |
   |<- server.event_end ----------------------------|
   |   [Client closes WebSocket]                   |
@@ -435,6 +436,38 @@ Sent: At the moment the round begins (may be slightly after `round_start_ts` in 
     "round_number": 1,
     "room_id": "room-0042",
     "server_ts": 1700000120000
+  }
+}
+```
+
+---
+
+#### `server.round_warning`
+
+Direction: **Server → Client**  
+Sent: During an active round, when remaining time until the authoritative
+`Round.ends_at` is at or below the configured final-seconds threshold
+(deployment default 30 s). This is an additive T-24 message; it does **not**
+bump the protocol version. Remaining time and `round_end_ts` are derived from
+the stored round schedule (T-15/T-23). Clients MUST NOT start a parallel timer
+from a hardcoded duration.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `round_number` | integer | yes | Round number. Range: 1–6. |
+| `server_ts` | integer | yes | Server Unix timestamp in ms when the warning was sent. Must be > 0. |
+| `remaining_seconds` | integer | yes | Whole seconds remaining until `Round.ends_at`. Must be ≥ 0. |
+| `round_end_ts` | integer | yes | Authoritative server Unix ms timestamp when the round will end. Must be > 0. |
+
+```json
+{
+  "type": "server.round_warning",
+  "version": 1,
+  "payload": {
+    "round_number": 1,
+    "server_ts": 1700000510000,
+    "remaining_seconds": 30,
+    "round_end_ts": 1700000540000
   }
 }
 ```
@@ -841,6 +874,7 @@ async def handle_message(ws, raw_text: str) -> None:
 from apps.protocol.schemas import (
     build_server_hello,
     build_server_pairing,
+    build_server_round_warning,
     build_server_error,
 )
 
@@ -933,8 +967,9 @@ spec. Never use a bare string.
 The legal sequence is: connect → session resolution → `client.hello` →
 `server.hello` → event waiting → `server.pairing` → optional
 `server.turn_credentials` → `client.ready` (repeatable) → scheduler-driven
-`server.round_start` → signalling/partner-state updates → `server.round_end` →
-next pairing or `server.event_end` → graceful close. Before `server.hello`, only
+`server.round_start` → signalling/partner-state updates → optional
+`server.round_warning` → `server.round_end` → next pairing or
+`server.event_end` → graceful close. Before `server.hello`, only
 `client.hello` is legal. Clock sync/ping are legal after authentication.
 Signalling is legal only for the authenticated participant's active Pair and
 matching `room_id`; it is relayed unchanged with an authoritative

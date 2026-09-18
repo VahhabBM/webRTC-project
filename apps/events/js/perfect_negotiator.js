@@ -1,10 +1,12 @@
 /**
- * WebRTC Perfect Negotiation & Media Transport Lifecycle (T-27)
+ * WebRTC Perfect Negotiation & Media Transport Lifecycle (T-27, T-31, T-32)
  * Enforces:
  *  - 640x360 target resolution
  *  - 500 kbps video bitrate cap via RTCRtpSender.setParameters
  *  - Full lifecycle transitions (idle -> preconnected -> open -> closed)
  *  - Seamless round switching (switchPartner) reusing hardware tracks
+ *  - getUserMedia once per session; partner switch never re-requests devices
+ *  - Transient ICE/network recovery without tearing down the room (T-32)
  *  - Deterministic W3C Perfect Negotiation with rollback
  *  - Hardware lock detection & simulated canvas fallback for multi-tab testing
  */
@@ -31,6 +33,139 @@ export const TransportState = Object.freeze({
   CLOSED: "closed",
 });
 
+/** Wait this long after ICE `failed` before treating it as permanent (T-32). */
+export const TRANSIENT_ICE_GRACE_MS = 5000;
+
+/** Let brief `disconnected` blips recover before requesting ICE restart. */
+export const ICE_RESTART_AFTER_DISCONNECT_MS = 2000;
+
+export const ConnectionQuality = Object.freeze({
+  CONNECTING: "connecting",
+  CONNECTED: "connected",
+  DEGRADED: "degraded",
+  FAILED: "failed",
+  CLOSED: "closed",
+});
+
+let sharedLocalStream = null;
+let sharedAcquirePromise = null;
+let sharedGetUserMediaCalls = 0;
+let simulatedTimerId = null;
+let simulatedAudioCtx = null;
+
+function streamHasLiveTracks(stream) {
+  return Boolean(
+    stream && stream.getTracks().some((track) => track.readyState !== "ended"),
+  );
+}
+
+function createSimulatedStream(label = "local") {
+  const canvas = document.createElement("canvas");
+  canvas.width = 640;
+  canvas.height = 360;
+  const ctx = canvas.getContext("2d");
+  let angle = 0;
+
+  if (simulatedTimerId != null) {
+    clearInterval(simulatedTimerId);
+  }
+  simulatedTimerId = setInterval(() => {
+    ctx.fillStyle = "#1e293b";
+    ctx.fillRect(0, 0, 640, 360);
+    ctx.fillStyle = "#38bdf8";
+    ctx.beginPath();
+    ctx.arc(320 + Math.cos(angle) * 160, 180 + Math.sin(angle) * 80, 26, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "20px monospace";
+    ctx.fillText(`ID: ${String(label).slice(0, 8)}`, 20, 40);
+    angle += 0.05;
+  }, 1000 / 30);
+
+  const stream = canvas.captureStream(30);
+
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const dst = audioCtx.createMediaStreamDestination();
+    osc.connect(dst);
+    osc.start();
+    dst.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+    simulatedAudioCtx = audioCtx;
+  } catch {
+    // AudioContext fallback ignored
+  }
+
+  return stream;
+}
+
+export function getSharedGetUserMediaCallCount() {
+  return sharedGetUserMediaCalls;
+}
+
+export function releaseSharedLocalMedia() {
+  if (simulatedTimerId != null) {
+    clearInterval(simulatedTimerId);
+    simulatedTimerId = null;
+  }
+  if (simulatedAudioCtx) {
+    try {
+      simulatedAudioCtx.close();
+    } catch {
+      // ignore
+    }
+    simulatedAudioCtx = null;
+  }
+  if (sharedLocalStream) {
+    sharedLocalStream.getTracks().forEach((track) => {
+      try {
+        track.stop();
+      } catch {
+        // ignore
+      }
+    });
+  }
+  sharedLocalStream = null;
+  sharedAcquirePromise = null;
+}
+
+export function resetSharedLocalMediaForTests() {
+  releaseSharedLocalMedia();
+  sharedGetUserMediaCalls = 0;
+}
+
+/**
+ * Acquire camera/mic once and reuse the same MediaStream for every round.
+ * Subsequent callers receive the live stream without calling getUserMedia.
+ */
+export async function acquireSharedLocalMedia(
+  constraints = DEFAULT_MEDIA_CONSTRAINTS,
+) {
+  if (streamHasLiveTracks(sharedLocalStream)) {
+    return sharedLocalStream;
+  }
+  if (!sharedAcquirePromise) {
+    sharedAcquirePromise = (async () => {
+      sharedGetUserMediaCalls += 1;
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        const videoTrack = stream.getVideoTracks()[0];
+        const settings = videoTrack?.getSettings?.() || {};
+        if (settings.width <= 2 && settings.height <= 2) {
+          throw new Error("Webcam exclusive lock detected (2x2 frame)");
+        }
+        sharedLocalStream = stream;
+        return sharedLocalStream;
+      } catch (err) {
+        console.warn("[WebRTC] Hardware camera locked/unavailable. Using test stream:", err);
+        sharedLocalStream = createSimulatedStream("local");
+        return sharedLocalStream;
+      }
+    })();
+  }
+  return sharedAcquirePromise;
+}
+
 export class PerfectNegotiator {
   constructor({
     myParticipantId,
@@ -42,6 +177,10 @@ export class PerfectNegotiator {
     onStateChange = null,
     onStats = null,
     onFailure = null,
+    localStream = null,
+    transientIceGraceMs = TRANSIENT_ICE_GRACE_MS,
+    iceRestartAfterDisconnectMs = ICE_RESTART_AFTER_DISCONNECT_MS,
+    deferPermanentFailure = null,
   }) {
     this.myId = String(myParticipantId);
     this.partnerId = String(partnerParticipantId);
@@ -62,12 +201,26 @@ export class PerfectNegotiator {
     this.ignoreOffer = false;
     this.isMuted = false;
     this.state = TransportState.IDLE;
+    this.quality = ConnectionQuality.CONNECTING;
 
     this.localStream = null;
     this.remoteStream = new MediaStream();
     this.statsInterval = null;
     this._lastBytesSent = 0;
     this._lastStatsTimestamp = 0;
+    this._transientIceGraceMs = transientIceGraceMs;
+    this._iceRestartAfterDisconnectMs = iceRestartAfterDisconnectMs;
+    this._iceRestartInFlight = false;
+    this._iceRestartTimer = null;
+    this._permanentFailureTimer = null;
+    this._deferPermanentFailure = deferPermanentFailure;
+
+    if (localStream) {
+      this.localStream = localStream;
+      if (!streamHasLiveTracks(sharedLocalStream)) {
+        sharedLocalStream = localStream;
+      }
+    }
 
     this._initPeerConnection();
   }
@@ -78,17 +231,20 @@ export class PerfectNegotiator {
   }
 
   _setupPeerEvents() {
+    const pc = this.pc;
+
     // 1. Perfect Negotiation Offer Generation
-    this.pc.onnegotiationneeded = async () => {
+    pc.onnegotiationneeded = async () => {
+      if (this.pc !== pc) return;
       try {
         this.isMakingOffer = true;
-        await this.pc.setLocalDescription();
+        await pc.setLocalDescription();
         this.sendSignal({
           type: "client.webrtc.offer",
           version: 1,
           payload: {
             room_id: this.roomId,
-            sdp: this.pc.localDescription.sdp,
+            sdp: pc.localDescription.sdp,
           },
         });
       } catch (err) {
@@ -99,7 +255,8 @@ export class PerfectNegotiator {
     };
 
     // 2. Trickle ICE
-    this.pc.onicecandidate = ({ candidate }) => {
+    pc.onicecandidate = ({ candidate }) => {
+      if (this.pc !== pc) return;
       if (candidate && candidate.candidate) {
         this.sendSignal({
           type: "client.webrtc.ice_candidate",
@@ -115,7 +272,8 @@ export class PerfectNegotiator {
     };
 
     // 3. Remote Tracks
-    this.pc.ontrack = (event) => {
+    pc.ontrack = (event) => {
+      if (this.pc !== pc) return;
       if (event.streams && event.streams[0]) {
         this.remoteStream = event.streams[0];
       } else if (event.track) {
@@ -126,88 +284,220 @@ export class PerfectNegotiator {
       }
     };
 
-    // 4. Connection State & Degradation Monitoring
-    this.pc.onconnectionstatechange = () => {
-      if (!this.pc) return;
-      const connState = this.pc.connectionState;
-      console.log(`[WebRTC] Connection state: ${connState}`);
-
-      if (connState === "connected") {
-        this._startStatsMonitor();
-        if (this.onStateChange) this.onStateChange("connected");
-      } else if (connState === "disconnected") {
-        if (this.onStateChange) this.onStateChange("degraded");
-      } else if (connState === "failed") {
-        this._stopStatsMonitor();
-        if (this.onFailure) this.onFailure("ICE_CONNECTION_FAILED");
-      } else if (connState === "closed") {
-        this._stopStatsMonitor();
-        if (this.onStateChange) this.onStateChange("closed");
-      }
+    // 4. Connection State & Degradation Monitoring (T-32)
+    pc.onconnectionstatechange = () => {
+      if (this.pc !== pc) return;
+      this._onPeerConnectionState(pc.connectionState);
     };
+  }
+
+  _onPeerConnectionState(connState) {
+    console.log(`[WebRTC] Connection state: ${connState}`);
+
+    if (connState === "connected") {
+      this._clearRecoveryTimers();
+      this._iceRestartInFlight = false;
+      this._startStatsMonitor();
+      this._emitQuality(ConnectionQuality.CONNECTED);
+      void this._applyVideoBitrateCap();
+      return;
+    }
+
+    if (connState === "disconnected") {
+      this._stopStatsMonitor();
+      this._emitQuality(ConnectionQuality.DEGRADED);
+      this._scheduleIceRestart();
+      return;
+    }
+
+    if (connState === "failed") {
+      this._stopStatsMonitor();
+      this._emitQuality(ConnectionQuality.DEGRADED);
+      this._maybeRestartIce();
+      this._schedulePermanentFailure();
+      return;
+    }
+
+    if (connState === "closed") {
+      this._clearRecoveryTimers();
+      this._stopStatsMonitor();
+      this._emitQuality(ConnectionQuality.CLOSED);
+    }
+  }
+
+  _emitQuality(quality) {
+    this.quality = quality;
+    if (this.onStateChange) this.onStateChange(quality);
+  }
+
+  _scheduleIceRestart() {
+    if (this._iceRestartTimer || this._iceRestartInFlight) return;
+    this._iceRestartTimer = setTimeout(() => {
+      this._iceRestartTimer = null;
+      if (!this.pc) return;
+      if (this.pc.connectionState === "connected" || this.pc.connectionState === "closed") {
+        return;
+      }
+      this._maybeRestartIce();
+    }, this._iceRestartAfterDisconnectMs);
+  }
+
+  _maybeRestartIce() {
+    if (!this.pc || this._iceRestartInFlight) return;
+    if (this.state === TransportState.CLOSED) return;
+    const conn = this.pc.connectionState;
+    if (conn === "connected" || conn === "closed") return;
+
+    this._iceRestartInFlight = true;
+    try {
+      if (typeof this.pc.restartIce === "function") {
+        this.pc.restartIce();
+        console.log("[WebRTC] ICE restart requested for transient recovery");
+        return;
+      }
+      void this._legacyIceRestartOffer();
+    } catch (err) {
+      this._iceRestartInFlight = false;
+      console.warn("[WebRTC] ICE restart failed:", err);
+    }
+  }
+
+  async _legacyIceRestartOffer() {
+    if (!this.pc) {
+      this._iceRestartInFlight = false;
+      return;
+    }
+    try {
+      this.isMakingOffer = true;
+      const offer = await this.pc.createOffer({ iceRestart: true });
+      await this.pc.setLocalDescription(offer);
+      this.sendSignal({
+        type: "client.webrtc.offer",
+        version: 1,
+        payload: {
+          room_id: this.roomId,
+          sdp: this.pc.localDescription.sdp,
+        },
+      });
+    } catch (err) {
+      console.warn("[WebRTC] ICE restart offer failed:", err);
+      this._iceRestartInFlight = false;
+    } finally {
+      this.isMakingOffer = false;
+    }
+  }
+
+  _schedulePermanentFailure() {
+    if (this._permanentFailureTimer) return;
+    this._permanentFailureTimer = setTimeout(() => {
+      this._permanentFailureTimer = null;
+      if (
+        typeof this._deferPermanentFailure === "function" &&
+        this._deferPermanentFailure()
+      ) {
+        this._schedulePermanentFailure();
+        return;
+      }
+      const conn = this.pc?.connectionState;
+      if (conn !== "failed" && conn !== "disconnected") return;
+      this._stopStatsMonitor();
+      this._emitQuality(ConnectionQuality.FAILED);
+      if (this.onFailure) this.onFailure("ICE_CONNECTION_FAILED");
+    }, this._transientIceGraceMs);
+  }
+
+  /**
+   * After T-14 signaling returns, reuse T-32 ICE restart on the same PC.
+   * Does not create a peer connection or call getUserMedia.
+   */
+  recoverAfterSignalingRestore() {
+    if (!this.pc || this.state === TransportState.CLOSED) return;
+    const conn = this.pc.connectionState;
+    if (conn === "connected") {
+      this._clearRecoveryTimers();
+      this._iceRestartInFlight = false;
+      this._emitQuality(ConnectionQuality.CONNECTED);
+      return;
+    }
+    if (conn === "closed") return;
+    this._iceRestartInFlight = false;
+    this._emitQuality(ConnectionQuality.DEGRADED);
+    this._maybeRestartIce();
+  }
+
+  _clearRecoveryTimers() {
+    if (this._iceRestartTimer) {
+      clearTimeout(this._iceRestartTimer);
+      this._iceRestartTimer = null;
+    }
+    if (this._permanentFailureTimer) {
+      clearTimeout(this._permanentFailureTimer);
+      this._permanentFailureTimer = null;
+    }
+  }
+
+  /**
+   * Close the current RTCPeerConnection only. Local MediaStream/tracks
+   * stay alive for the next round (T-31).
+   */
+  _teardownPeerConnection() {
+    this._clearRecoveryTimers();
+    this._iceRestartInFlight = false;
+    this._stopStatsMonitor();
+    const pc = this.pc;
+    if (!pc) return;
+
+    pc.onnegotiationneeded = null;
+    pc.onicecandidate = null;
+    pc.ontrack = null;
+    pc.onconnectionstatechange = null;
+
+    try {
+      pc.getSenders().forEach((sender) => {
+        try {
+          pc.removeTrack(sender);
+        } catch {
+          // ignore
+        }
+      });
+    } catch {
+      // ignore
+    }
+
+    try {
+      pc.close();
+    } catch {
+      // ignore
+    }
+    this.pc = null;
   }
 
   /**
    * Acquire local hardware media. Fallback to synthetic canvas
    * if physical webcam is exclusively locked by another process/tab.
+   * Never re-prompts when a live shared stream already exists (T-31).
    */
   async acquireLocalMedia(constraints = DEFAULT_MEDIA_CONSTRAINTS) {
-    if (!this.localStream) {
-      try {
-        this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
-        const videoTrack = this.localStream.getVideoTracks()[0];
-        const settings = videoTrack?.getSettings() || {};
-        if (settings.width <= 2 && settings.height <= 2) {
-          throw new Error("Webcam exclusive lock detected (2x2 frame)");
-        }
-      } catch (err) {
-        console.warn("[WebRTC] Hardware camera locked/unavailable. Using test stream:", err);
-        this.localStream = this._createSimulatedStream();
-      }
+    if (!streamHasLiveTracks(this.localStream)) {
+      this.localStream = await acquireSharedLocalMedia(constraints);
     }
     this._attachTracksToPC();
+    return this.localStream;
   }
 
   _createSimulatedStream() {
-    const canvas = document.createElement("canvas");
-    canvas.width = 640;
-    canvas.height = 360;
-    const ctx = canvas.getContext("2d");
-    let angle = 0;
-
-    setInterval(() => {
-      ctx.fillStyle = "#1e293b";
-      ctx.fillRect(0, 0, 640, 360);
-      ctx.fillStyle = "#38bdf8";
-      ctx.beginPath();
-      ctx.arc(320 + Math.cos(angle) * 160, 180 + Math.sin(angle) * 80, 26, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "20px monospace";
-      ctx.fillText(`ID: ${this.myId.slice(0, 8)} | Polite: ${this.isPolite}`, 20, 40);
-      angle += 0.05;
-    }, 1000 / 30);
-
-    const stream = canvas.captureStream(30);
-
-    try {
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = audioCtx.createOscillator();
-      const dst = audioCtx.createMediaStreamDestination();
-      osc.connect(dst);
-      osc.start();
-      dst.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
-    } catch {
-      // AudioContext fallback ignored
-    }
-
-    return stream;
+    return createSimulatedStream(this.myId);
   }
 
   _attachTracksToPC() {
     if (!this.localStream || !this.pc) return;
+    const attached = new Set(
+      this.pc.getSenders().map((sender) => sender.track).filter(Boolean),
+    );
     this.localStream.getTracks().forEach((track) => {
-      this.pc.addTrack(track, this.localStream);
+      if (attached.has(track)) return;
+      const sender = this.pc.addTrack(track, this.localStream);
+      if (sender) sender._trackKind = track.kind;
     });
   }
 
@@ -219,27 +509,56 @@ export class PerfectNegotiator {
     this.partnerId = String(partnerParticipantId);
     this.isPolite = this.myId < this.partnerId;
 
-    this.setMediaMuted(true);
+    this.isMuted = true;
     this.state = TransportState.PRECONNECTED;
+    await this._applySenderMuteState();
   }
 
   /**
    * Open / Start Round: un-mutes tracks and enforces the 500 kbps cap.
    */
   async open() {
-    this.setMediaMuted(false);
+    this.isMuted = false;
     this.state = TransportState.OPEN;
+    await this._applySenderMuteState();
     await this._applyVideoBitrateCap();
   }
 
   /**
-   * Mutes or un-mutes tracks without stopping hardware capture devices.
+   * Mutes or un-mutes sending without stopping hardware capture devices.
+   * Source tracks stay enabled so the local preview remains visible (T-31).
    */
   setMediaMuted(isMuted) {
     this.isMuted = isMuted;
-    if (!this.localStream) return;
-    this.localStream.getAudioTracks().forEach((t) => (t.enabled = !isMuted));
-    this.localStream.getVideoTracks().forEach((t) => (t.enabled = !isMuted));
+    void this._applySenderMuteState();
+  }
+
+  async _applySenderMuteState() {
+    if (!this.pc || typeof this.pc.getSenders !== "function") return;
+
+    const sourceByKind = {};
+    if (this.localStream) {
+      this.localStream.getTracks().forEach((track) => {
+        sourceByKind[track.kind] = track;
+      });
+    }
+
+    for (const sender of this.pc.getSenders()) {
+      const kind = sender.track?.kind || sender._trackKind;
+      if (!kind) continue;
+      sender._trackKind = kind;
+      const source = sourceByKind[kind];
+      if (typeof sender.replaceTrack !== "function") continue;
+      try {
+        if (this.isMuted) {
+          if (sender.track) await sender.replaceTrack(null);
+        } else if (source && sender.track !== source) {
+          await sender.replaceTrack(source);
+        }
+      } catch (err) {
+        console.warn("[WebRTC] Sender mute/unmute failed:", err);
+      }
+    }
   }
 
   /**
@@ -292,29 +611,81 @@ export class PerfectNegotiator {
   }
 
   /**
+   * Prepare for a new round during preconnect: teardown previous peer
+   * connection, re-init with new partner, but stay muted until open().
+   * Reuses the existing local MediaStream; never calls getUserMedia.
+   */
+  async prepareRound(newRoomId, newPartnerId) {
+    try {
+      this._teardownPeerConnection();
+
+      this.roomId = newRoomId;
+      this.partnerId = String(newPartnerId);
+      this.isPolite = this.myId < this.partnerId;
+      this.remoteStream = new MediaStream();
+      this.isMakingOffer = false;
+      this.ignoreOffer = false;
+      this._lastBytesSent = 0;
+      this._lastStatsTimestamp = 0;
+
+      this._initPeerConnection();
+      this._attachTracksToPC();
+      await this.preconnect(newRoomId, newPartnerId);
+      console.log(
+        `[WebRTC Lifecycle] Prepared round in room ${newRoomId} with partner ${newPartnerId}`,
+      );
+    } catch (err) {
+      console.error("[WebRTC] prepareRound failed:", err);
+      this._teardownPeerConnection();
+      if (this.onFailure) this.onFailure("PARTNER_SWITCH_FAILED");
+      throw err;
+    }
+  }
+
+  /**
+   * End the current round: close peer connection but keep local media
+   * capture active for the next round's preconnect.
+   */
+  async endRound() {
+    this._stopStatsMonitor();
+    this.isMuted = true;
+    this._teardownPeerConnection();
+    this.remoteStream = new MediaStream();
+    this.state = TransportState.PRECONNECTED;
+    console.log("[WebRTC Lifecycle] Round ended; peer connection closed, media retained.");
+  }
+
+  /**
    * Seamless round switch: teardown previous peer connection while
    * keeping the hardware media stream active and untouched.
    */
   async switchPartner(newRoomId, newPartnerId) {
-    this._stopStatsMonitor();
+    try {
+      this._teardownPeerConnection();
 
-    if (this.pc) {
-      this.pc.close();
-      this.pc = null;
+      this.roomId = newRoomId;
+      this.partnerId = String(newPartnerId);
+      this.isPolite = this.myId < this.partnerId;
+      this.remoteStream = new MediaStream();
+      this.isMakingOffer = false;
+      this.ignoreOffer = false;
+      this._lastBytesSent = 0;
+      this._lastStatsTimestamp = 0;
+
+      this._initPeerConnection();
+      this._attachTracksToPC();
+
+      this.isMuted = false;
+      this.state = TransportState.OPEN;
+      await this._applySenderMuteState();
+      await this._applyVideoBitrateCap();
+      console.log(`[WebRTC Lifecycle] Switched to room ${newRoomId} with partner ${newPartnerId}`);
+    } catch (err) {
+      console.error("[WebRTC] Partner switch failed:", err);
+      this._teardownPeerConnection();
+      if (this.onFailure) this.onFailure("PARTNER_SWITCH_FAILED");
+      throw err;
     }
-
-    this.roomId = newRoomId;
-    this.partnerId = String(newPartnerId);
-    this.isPolite = this.myId < this.partnerId;
-    this.remoteStream = new MediaStream();
-
-    this._initPeerConnection();
-    this._attachTracksToPC();
-
-    this.state = TransportState.OPEN;
-    this.setMediaMuted(false);
-    await this._applyVideoBitrateCap();
-    console.log(`[WebRTC Lifecycle] Switched to room ${newRoomId} with partner ${newPartnerId}`);
   }
 
   /**
@@ -322,18 +693,10 @@ export class PerfectNegotiator {
    */
   leave() {
     this._stopStatsMonitor();
-    this.setMediaMuted(true);
-
-    if (this.localStream) {
-      this.localStream.getTracks().forEach((track) => track.stop());
-      this.localStream = null;
-    }
-
-    if (this.pc) {
-      this.pc.close();
-      this.pc = null;
-    }
-
+    this.isMuted = true;
+    this._teardownPeerConnection();
+    releaseSharedLocalMedia();
+    this.localStream = null;
     this.state = TransportState.CLOSED;
     if (this.onStateChange) {
       this.onStateChange("closed");
@@ -388,6 +751,7 @@ export class PerfectNegotiator {
       });
     } catch (err) {
       console.error("[WebRTC] Error handling remote offer:", err);
+      if (this.onFailure) this.onFailure("RENEGOTIATION_FAILED");
     }
   }
 
@@ -398,6 +762,7 @@ export class PerfectNegotiator {
       await this._applyVideoBitrateCap();
     } catch (err) {
       console.error("[WebRTC] Error handling remote answer:", err);
+      if (this.onFailure) this.onFailure("RENEGOTIATION_FAILED");
     }
   }
 

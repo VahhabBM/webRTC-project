@@ -173,6 +173,9 @@ WEBSOCKET_MAX_MESSAGE_BYTES = env_int("WEBSOCKET_MAX_MESSAGE_BYTES", 64 * 1024)
 CLOCK_SYNC_SAMPLE_COUNT = env_int("CLOCK_SYNC_SAMPLE_COUNT", 5)
 CLOCK_SYNC_INTERVAL_SECONDS = env_int("CLOCK_SYNC_INTERVAL_SECONDS", 30)
 CLOCK_SYNC_MAX_RTT_MS = env_int("CLOCK_SYNC_MAX_RTT_MS", 2000)
+# Seconds before Round.ends_at at which T-24 sends server.round_warning.
+# Remaining time is derived from the stored round, not a hardcoded duration.
+ORCHESTRATOR_FINAL_SECONDS = env_int("ORCHESTRATOR_FINAL_SECONDS", 30)
 
 # --- پیکربندی سرویس ایمیل (تسک 09-T) ---
 EMAIL_BACKEND = os.environ.get(
