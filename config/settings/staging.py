@@ -10,8 +10,12 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
-COTURN_REGION1_DOMAIN = os.environ.get("COTURN_REGION1_DOMAIN", "staging-turn.yourdomain.com")
-COTURN_REGION2_DOMAIN = os.environ.get("COTURN_REGION2_DOMAIN", "staging-turn-r2.yourdomain.com")
+COTURN_REGION1_DOMAIN = os.environ.get(
+    "COTURN_REGION1_DOMAIN", "staging-turn.yourdomain.com"
+)
+COTURN_REGION2_DOMAIN = os.environ.get(
+    "COTURN_REGION2_DOMAIN", "staging-turn-r2.yourdomain.com"
+)
 COTURN_PORT = env_int("COTURN_PORT", 3478)
 COTURN_TLS_PORT = env_int("COTURN_TLS_PORT", 5349)
 COTURN_REGION2_PORT = env_int("COTURN_REGION2_PORT", 3478)

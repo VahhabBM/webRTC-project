@@ -25,7 +25,9 @@ class TurnCredentialService:
         # Region 2 (T-36 Multi-Region Failover)
         self.region2_domain = getattr(settings, "COTURN_REGION2_DOMAIN", None)
         self.region2_port = getattr(settings, "COTURN_REGION2_PORT", self.port)
-        self.region2_tls_port = getattr(settings, "COTURN_REGION2_TLS_PORT", self.tls_port)
+        self.region2_tls_port = getattr(
+            settings, "COTURN_REGION2_TLS_PORT", self.tls_port
+        )
 
         self.shared_secret = getattr(settings, "COTURN_SHARED_SECRET", "") or getattr(
             settings, "TURN_SHARED_SECRET", ""

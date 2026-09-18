@@ -99,7 +99,9 @@ class TestMultiRegionTurnFailover:
         # اتصال موفقیت‌آمیز از طریق منطقه دوم
         transport.emit(MediaTransportEvent.CONNECTED)
 
-        assert t_elapsed < 10.0, f"Failover took {t_elapsed}s, which exceeds 10s DoD ceiling"
+        assert t_elapsed < 10.0, (
+            f"Failover took {t_elapsed}s, which exceeds 10s DoD ceiling"
+        )
         assert session.is_connected is True
         assert session.is_degraded is False
         assert transport.state == MediaTransportState.OPEN
