@@ -1,8 +1,10 @@
 /**
- * T-30/T-31 Call Room controller — lifecycle, synchronized timer, round rotation.
+ * T-30/T-31/T-40 Call Room controller — lifecycle, synchronized timer, round rotation,
+ * and operator live controls (pause, resume, extend).
  *
  * Timer uses T-15 clock offset + absolute round_end_ts from server.pairing.
  * Handles T-24 messages: pairing, round_start, round_warning, round_end, event_end.
+ * Handles T-40 messages: operator.pause, operator.resume, operator.extend.
  * T-31: camera/mic are acquired once and reused across partner switches.
  * T-32: brief ICE/network drops show a degraded quality state and recover
  * on the same peer connection without ending the round or re-prompting devices.
@@ -23,6 +25,7 @@ export const TimerVisualState = Object.freeze({
   NORMAL: "normal",
   WARNING: "warning",
   EXPIRED: "expired",
+  PAUSED: "paused",
 });
 
 export const CallRoomPhase = Object.freeze({
@@ -75,7 +78,13 @@ export function formatTimerDisplay(remainingMs) {
 }
 
 /** Mirrors call_room_logic.timer_visual_state */
-export function timerVisualState(remainingMs, warningThresholdSeconds, serverWarningActive = false) {
+export function timerVisualState(
+  remainingMs,
+  warningThresholdSeconds,
+  serverWarningActive = false,
+  isPaused = false,
+) {
+  if (isPaused) return TimerVisualState.PAUSED;
   if (remainingMs <= 0) return TimerVisualState.EXPIRED;
   if (serverWarningActive || remainingMs <= warningThresholdSeconds * 1000) {
     return TimerVisualState.WARNING;
@@ -147,6 +156,7 @@ export class CallRoomController {
     this.roundEndTs = null;
     this.roundNumber = null;
     this.serverWarningActive = false;
+    this.isPaused = false;
     this.partner = null;
     this.eventEndReason = null;
     this._timerInterval = null;
@@ -268,6 +278,7 @@ export class CallRoomController {
   disconnect() {
     this._intentionalClose = true;
     this._signalingDegraded = false;
+    this.isPaused = false;
     this._unbindOnlineListener();
     this._clearReconnect();
     this._reconnectGaveUp = false;
@@ -310,6 +321,15 @@ export class CallRoomController {
         break;
       case "server.event_end":
         await this._onEventEnd(payload);
+        break;
+      case "operator.pause":
+        this._onOperatorPause(payload);
+        break;
+      case "operator.resume":
+        this._onOperatorResume(payload);
+        break;
+      case "operator.extend":
+        this._onOperatorExtend(payload);
         break;
       default:
         if (type.startsWith("server.webrtc.") && this.negotiator) {
@@ -394,6 +414,7 @@ export class CallRoomController {
     this.roundNumber = this.partner.roundNumber;
     this.roundEndTs = this.partner.roundEndTs;
     this.serverWarningActive = false;
+    this.isPaused = false;
     this._clearConnectionError();
     this._updatePartnerUI();
 
@@ -447,6 +468,7 @@ export class CallRoomController {
     this.roundNumber = Number(payload.round_number ?? this.roundNumber);
     this._setPhase(CallRoomPhase.IN_ROUND);
     this.serverWarningActive = false;
+    this.isPaused = false;
 
     if (this.negotiator) {
       await this.negotiator.open();
@@ -459,13 +481,16 @@ export class CallRoomController {
     if (payload.round_end_ts) {
       this.roundEndTs = Number(payload.round_end_ts);
     }
-    this._tickTimer();
+    if (!this.isPaused) {
+      this._tickTimer();
+    }
   }
 
   async _onRoundEnd(payload) {
     this.roundNumber = Number(payload.round_number ?? this.roundNumber);
     this._setPhase(CallRoomPhase.ROUND_ENDING);
     this.serverWarningActive = false;
+    this.isPaused = false;
 
     if (this.negotiator) {
       await this.negotiator.endRound();
@@ -476,7 +501,6 @@ export class CallRoomController {
     this._bindLocalPreview();
     this.partner = null;
     this._updatePartnerUI();
-    // Next server.pairing will prepare the next round automatically.
   }
 
   async _onEventEnd(payload) {
@@ -484,6 +508,7 @@ export class CallRoomController {
     this.eventEndReason = payload.reason || "completed";
     this._setPhase(CallRoomPhase.EVENT_ENDED);
     this._signalingDegraded = false;
+    this.isPaused = false;
     this._unbindOnlineListener();
     this._clearReconnect();
     this._wsGeneration += 1;
@@ -504,6 +529,62 @@ export class CallRoomController {
     }
     this._detachSocket();
     this._intentionalClose = false;
+  }
+
+  _onOperatorPause(payload) {
+    this.isPaused = true;
+    this._stopTimer();
+
+    const remainingSeconds = Number(payload.remaining_seconds ?? 0);
+    const remainingMs = remainingSeconds * 1000;
+    const display = formatTimerDisplay(remainingMs);
+    this._renderTimer(display, TimerVisualState.PAUSED);
+
+    if (this.elements.qualityBanner) {
+      this.elements.qualityBanner.hidden = false;
+      this.elements.qualityBanner.textContent =
+        "Round temporarily paused by operator.";
+    }
+
+    if (this.onTimerTick) {
+      this.onTimerTick({
+        remainingMs,
+        display,
+        visual: TimerVisualState.PAUSED,
+      });
+    }
+  }
+
+  _onOperatorResume(payload) {
+    this.isPaused = false;
+    if (payload.ends_at) {
+      this.roundEndTs =
+        typeof payload.ends_at === "number"
+          ? payload.ends_at
+          : Date.parse(payload.ends_at);
+    }
+
+    if (this.elements.qualityBanner) {
+      this.elements.qualityBanner.hidden = true;
+      this.elements.qualityBanner.textContent = "";
+    }
+
+    this._startTimer();
+  }
+
+  _onOperatorExtend(payload) {
+    if (payload.ends_at) {
+      this.roundEndTs =
+        typeof payload.ends_at === "number"
+          ? payload.ends_at
+          : Date.parse(payload.ends_at);
+    } else if (payload.extended_by_seconds && this.roundEndTs) {
+      this.roundEndTs += Number(payload.extended_by_seconds) * 1000;
+    }
+
+    if (!this.isPaused) {
+      this._tickTimer();
+    }
   }
 
   _createNegotiator(roomId, partnerId, rtcConfig) {
@@ -651,7 +732,6 @@ export class CallRoomController {
       this.elements.connectionBadge.className = "badge failed";
     }
     this._bindLocalPreview();
-    // Do not leave(), stop tracks, close the WebSocket, or end the event.
   }
 
   _showConnectionError(message) {
@@ -692,6 +772,7 @@ export class CallRoomController {
   }
 
   _tickTimer() {
+    if (this.isPaused) return;
     if (!this.roundEndTs || !this.clockSync.isSynchronised) {
       this._renderTimer("--:--", TimerVisualState.WAITING);
       return;
@@ -706,6 +787,7 @@ export class CallRoomController {
       remainingMs,
       this.warningThresholdSeconds,
       this.serverWarningActive,
+      this.isPaused,
     );
     const display = formatTimerDisplay(remainingMs);
     this._renderTimer(display, visual);

@@ -8,6 +8,7 @@ apps.events.clock_sync.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 
 
@@ -16,6 +17,7 @@ class TimerVisualState(StrEnum):
     NORMAL = "normal"
     WARNING = "warning"
     EXPIRED = "expired"
+    PAUSED = "paused"
 
 
 class CallRoomPhase(StrEnum):
@@ -85,7 +87,10 @@ def timer_visual_state(
     warning_threshold_seconds: int,
     *,
     server_warning_active: bool = False,
+    is_paused: bool = False,
 ) -> TimerVisualState:
+    if is_paused:
+        return TimerVisualState.PAUSED
     if remaining_ms <= 0:
         return TimerVisualState.EXPIRED
     if server_warning_active or remaining_ms <= warning_threshold_seconds * 1000:
@@ -132,14 +137,14 @@ def parse_pairing_payload(payload: dict) -> PartnerInfo:
 
 @dataclass
 class CallRoomState:
-    """Reducer state for T-24 lifecycle message handling."""
-
     phase: CallRoomPhase = CallRoomPhase.IDLE
     round_number: int | None = None
     round_end_ts: int | None = None
     server_warning_active: bool = False
     partner: PartnerInfo | None = None
     event_end_reason: str | None = None
+    is_paused: bool = False
+    paused_remaining_ms: int | None = None
 
     def on_pairing(self, payload: dict) -> CallRoomState:
         partner = parse_pairing_payload(payload)
@@ -150,6 +155,8 @@ class CallRoomState:
             server_warning_active=False,
             partner=partner,
             event_end_reason=None,
+            is_paused=False,
+            paused_remaining_ms=None,
         )
 
     def on_round_start(self, payload: dict) -> CallRoomState:
@@ -160,6 +167,8 @@ class CallRoomState:
             server_warning_active=False,
             partner=self.partner,
             event_end_reason=None,
+            is_paused=False,
+            paused_remaining_ms=None,
         )
 
     def on_round_warning(self, payload: dict) -> CallRoomState:
@@ -171,6 +180,8 @@ class CallRoomState:
             server_warning_active=True,
             partner=self.partner,
             event_end_reason=None,
+            is_paused=self.is_paused,
+            paused_remaining_ms=self.paused_remaining_ms,
         )
 
     def on_round_end(self, payload: dict) -> CallRoomState:
@@ -181,6 +192,8 @@ class CallRoomState:
             server_warning_active=False,
             partner=None,
             event_end_reason=None,
+            is_paused=False,
+            paused_remaining_ms=None,
         )
 
     def on_event_end(self, payload: dict) -> CallRoomState:
@@ -191,6 +204,8 @@ class CallRoomState:
             server_warning_active=False,
             partner=None,
             event_end_reason=str(payload.get("reason", "completed")),
+            is_paused=False,
+            paused_remaining_ms=None,
         )
 
     def on_disconnect(self) -> CallRoomState:
@@ -201,6 +216,8 @@ class CallRoomState:
             server_warning_active=self.server_warning_active,
             partner=self.partner,
             event_end_reason=self.event_end_reason,
+            is_paused=self.is_paused,
+            paused_remaining_ms=self.paused_remaining_ms,
         )
 
     def on_transient_disconnect(self) -> CallRoomState:
@@ -213,5 +230,59 @@ class CallRoomState:
                 server_warning_active=self.server_warning_active,
                 partner=self.partner,
                 event_end_reason=self.event_end_reason,
+                is_paused=self.is_paused,
+                paused_remaining_ms=self.paused_remaining_ms,
             )
         return self.on_disconnect()
+
+    def on_operator_pause(self, payload: dict) -> CallRoomState:
+        """Freeze round timer during an operator pause action."""
+        remaining_seconds = int(payload.get("remaining_seconds", 0))
+        return CallRoomState(
+            phase=self.phase,
+            round_number=int(payload.get("round_number", self.round_number or 0)),
+            round_end_ts=self.round_end_ts,
+            server_warning_active=self.server_warning_active,
+            partner=self.partner,
+            event_end_reason=self.event_end_reason,
+            is_paused=True,
+            paused_remaining_ms=remaining_seconds * 1000,
+        )
+
+    def on_operator_resume(self, payload: dict) -> CallRoomState:
+        """Resume round timer with new ends_at timestamp from operator."""
+        ends_at_iso = payload.get("ends_at")
+        new_end_ts = self.round_end_ts
+        if ends_at_iso:
+            new_end_ts = int(datetime.fromisoformat(ends_at_iso).timestamp() * 1000)
+
+        return CallRoomState(
+            phase=self.phase,
+            round_number=int(payload.get("round_number", self.round_number or 0)),
+            round_end_ts=new_end_ts,
+            server_warning_active=False,
+            partner=self.partner,
+            event_end_reason=self.event_end_reason,
+            is_paused=False,
+            paused_remaining_ms=None,
+        )
+
+    def on_operator_extend(self, payload: dict) -> CallRoomState:
+        """Extend current round end timestamp from operator action."""
+        ends_at_iso = payload.get("ends_at")
+        new_end_ts = self.round_end_ts
+        if ends_at_iso:
+            new_end_ts = int(datetime.fromisoformat(ends_at_iso).timestamp() * 1000)
+        elif "extended_by_seconds" in payload and self.round_end_ts:
+            new_end_ts = self.round_end_ts + int(payload["extended_by_seconds"]) * 1000
+
+        return CallRoomState(
+            phase=self.phase,
+            round_number=int(payload.get("round_number", self.round_number or 0)),
+            round_end_ts=new_end_ts,
+            server_warning_active=self.server_warning_active,
+            partner=self.partner,
+            event_end_reason=self.event_end_reason,
+            is_paused=self.is_paused,
+            paused_remaining_ms=self.paused_remaining_ms,
+        )
