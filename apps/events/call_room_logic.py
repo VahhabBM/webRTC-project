@@ -1,4 +1,4 @@
-"""Pure call-room timer and lifecycle logic (T-30).
+"""Pure call-room timer, presence, and lifecycle logic (T-30, T-34, T-40).
 
 Mirrors the client-side calculations in call_room.js so they can be
 unit-tested without a browser. Uses the same T-15 offset model as
@@ -31,10 +31,8 @@ class CallRoomPhase(StrEnum):
 
 class PartnerPresence(StrEnum):
     CONNECTED = "connected"
-    DISCONNECTED = "disconnected"
-    WAITING = "waiting"
-    ONLINE = "online"
-    OFFLINE = "offline"
+    RECONNECTING = "reconnecting"
+    GONE = "gone"
 
 
 # Client reconnect policy for 5–20s network loss (T-33). Identity hold on the
@@ -42,6 +40,12 @@ class PartnerPresence(StrEnum):
 RECONNECT_INITIAL_DELAY_MS = 500
 RECONNECT_MAX_DELAY_MS = 4000
 RECONNECT_WINDOW_MS = 45_000
+
+# Longer than T-33's 5–20s recovery window so a brief drop is not "partner left" (T-34).
+PARTNER_ABSENCE_GRACE_MS = 25_000
+PARTNER_GONE_FOOTER = (
+    "Your partner left. The round timer continues — no replacement will be assigned."
+)
 
 _KEEP_ROUND_ON_TRANSIENT_DISCONNECT = frozenset(
     {
@@ -71,6 +75,71 @@ def reconnect_window_exhausted(
 ) -> bool:
     """True once the client should stop retrying the unresponsive socket."""
     return int(now_ms) - int(started_at_ms) >= int(window_ms)
+
+
+def partner_left_banner(name: str = "Partner") -> str:
+    """Banner message shown during absence grace window before partner is marked gone."""
+    return f"{name} left. Waiting for them to return — the round continues."
+
+
+def absence_grace_elapsed(
+    disconnected_at_ms: int,
+    now_ms: int,
+    *,
+    grace_ms: int = PARTNER_ABSENCE_GRACE_MS,
+) -> bool:
+    return int(now_ms) - int(disconnected_at_ms) >= int(grace_ms)
+
+
+def should_announce_partner_gone(
+    *,
+    owns_connection: bool,
+    session_replaced: bool,
+    disconnected_at_ms: int,
+    now_ms: int,
+    grace_ms: int = PARTNER_ABSENCE_GRACE_MS,
+) -> bool:
+    """Long absence only. Replaced/stale sockets never mark the partner gone."""
+    if session_replaced or not owns_connection:
+        return False
+    return absence_grace_elapsed(disconnected_at_ms, now_ms, grace_ms=grace_ms)
+
+
+def partner_presence_from_protocol(
+    payload: dict | str | PartnerPresence | None,
+) -> PartnerPresence | None:
+    """Extract and validate PartnerPresence from protocol message or payload."""
+    if payload is None:
+        return None
+    if isinstance(payload, PartnerPresence):
+        return payload
+    if isinstance(payload, dict):
+        raw = payload.get("state") or payload.get("presence") or payload.get("status")
+        if not raw and "payload" in payload and isinstance(payload["payload"], dict):
+            raw = (
+                payload["payload"].get("state")
+                or payload["payload"].get("presence")
+                or payload["payload"].get("status")
+            )
+    elif isinstance(payload, str):
+        raw = payload
+    else:
+        return None
+
+    if not raw:
+        return None
+
+    val = str(raw).lower()
+    if val in ("disconnected", "gone"):
+        return PartnerPresence.GONE
+    if val in ("reconnecting",):
+        return PartnerPresence.RECONNECTING
+    if val in ("connected",):
+        return PartnerPresence.CONNECTED
+    try:
+        return PartnerPresence(val)
+    except ValueError:
+        return None
 
 
 def compute_remaining_ms(
@@ -306,27 +375,13 @@ class CallRoomState:
             partner_presence=self.partner_presence,
         )
 
-    def on_partner_presence(
-        self, payload: dict | PartnerPresence | str
-    ) -> CallRoomState:
+    def on_partner_state(self, payload: dict | PartnerPresence | str) -> CallRoomState:
         """Update partner presence status from real-time events."""
-        presence: PartnerPresence | None
-        if isinstance(payload, PartnerPresence):
-            presence = payload
-        elif isinstance(payload, str):
-            try:
-                presence = PartnerPresence(payload)
-            except ValueError:
-                presence = None
-        elif isinstance(payload, dict):
-            raw = payload.get("presence") or payload.get("status")
-            try:
-                presence = PartnerPresence(str(raw)) if raw else None
-            except ValueError:
-                presence = None
-        else:
-            presence = None
-
+        presence = (
+            payload
+            if isinstance(payload, PartnerPresence)
+            else partner_presence_from_protocol(payload)
+        )
         return CallRoomState(
             phase=self.phase,
             round_number=self.round_number,
@@ -338,3 +393,6 @@ class CallRoomState:
             paused_remaining_ms=self.paused_remaining_ms,
             partner_presence=presence,
         )
+
+    # Alias for backward compatibility
+    on_partner_presence = on_partner_state
