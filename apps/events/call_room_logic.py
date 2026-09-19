@@ -306,7 +306,9 @@ class CallRoomState:
             partner_presence=self.partner_presence,
         )
 
-    def on_partner_presence(self, payload: dict | PartnerPresence | str) -> CallRoomState:
+    def on_partner_presence(
+        self, payload: dict | PartnerPresence | str
+    ) -> CallRoomState:
         """Update partner presence status from real-time events."""
         presence: PartnerPresence | None
         if isinstance(payload, PartnerPresence):
