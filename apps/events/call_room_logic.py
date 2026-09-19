@@ -30,9 +30,11 @@ class CallRoomPhase(StrEnum):
 
 
 class PartnerPresence(StrEnum):
+    CONNECTED = "connected"
+    DISCONNECTED = "disconnected"
+    WAITING = "waiting"
     ONLINE = "online"
     OFFLINE = "offline"
-    WAITING = "waiting"
 
 
 # Client reconnect policy for 5–20s network loss (T-33). Identity hold on the
@@ -164,7 +166,7 @@ class CallRoomState:
             event_end_reason=None,
             is_paused=False,
             paused_remaining_ms=None,
-            partner_presence=None,
+            partner_presence=PartnerPresence.CONNECTED,
         )
 
     def on_round_start(self, payload: dict) -> CallRoomState:
@@ -304,11 +306,16 @@ class CallRoomState:
             partner_presence=self.partner_presence,
         )
 
-    def on_partner_presence(self, payload: dict | PartnerPresence) -> CallRoomState:
+    def on_partner_presence(self, payload: dict | PartnerPresence | str) -> CallRoomState:
         """Update partner presence status from real-time events."""
         presence: PartnerPresence | None
         if isinstance(payload, PartnerPresence):
             presence = payload
+        elif isinstance(payload, str):
+            try:
+                presence = PartnerPresence(payload)
+            except ValueError:
+                presence = None
         elif isinstance(payload, dict):
             raw = payload.get("presence") or payload.get("status")
             try:

@@ -38,7 +38,11 @@ from apps.protocol.schemas import (
 )
 from apps.protocol.validators import validate_message
 from config.asgi import application
-from tests.test_websocket_auth import _cookie_for, _hello
+from tests.test_websocket_auth import (
+    _cookie_for,
+    _hello,
+    receive_ignoring_partner_state,
+)
 
 
 class RecordingChannelLayer:
@@ -307,8 +311,8 @@ def test_cross_instance_event_broadcast_reaches_all_connections(
         comm_b = await _connect_hello(cookie_b)
         orch = OrchestratorRealtime(event)
         await orch.abroadcast_event_end(reason=EventEndReason.COMPLETED)
-        msg_a = await comm_a.receive_json_from()
-        msg_b = await comm_b.receive_json_from()
+        msg_a = await receive_ignoring_partner_state(comm_a)
+        msg_b = await receive_ignoring_partner_state(comm_b)
         assert msg_a["type"] == MessageType.SERVER_EVENT_END
         assert msg_b["type"] == MessageType.SERVER_EVENT_END
         assert msg_a["payload"]["reason"] == "completed"
@@ -334,10 +338,10 @@ def test_pairing_and_round_start_reach_only_allocated_clients(
         orch = OrchestratorRealtime(event)
         await orch.abroadcast_pairing(setup_round["r1"])
         await orch.abroadcast_round_start(setup_round["r1"])
-        pairing_a = await comm_a.receive_json_from()
-        pairing_b = await comm_b.receive_json_from()
-        start_a = await comm_a.receive_json_from()
-        start_b = await comm_b.receive_json_from()
+        pairing_a = await receive_ignoring_partner_state(comm_a)
+        pairing_b = await receive_ignoring_partner_state(comm_b)
+        start_a = await receive_ignoring_partner_state(comm_a)
+        start_b = await receive_ignoring_partner_state(comm_b)
         assert pairing_a["type"] == MessageType.SERVER_PAIRING
         assert pairing_b["type"] == MessageType.SERVER_PAIRING
         assert start_a["type"] == MessageType.SERVER_ROUND_START
@@ -389,8 +393,8 @@ def test_disconnected_websocket_does_not_delay_others(setup_round, inmemory_chan
         orch = OrchestratorRealtime(event)
         started = time.perf_counter()
         await orch.abroadcast_event_end()
-        msg_a = await comm_a.receive_json_from(timeout=2)
-        msg_b = await comm_b.receive_json_from(timeout=2)
+        msg_a = await receive_ignoring_partner_state(comm_a, timeout=2)
+        msg_b = await receive_ignoring_partner_state(comm_b, timeout=2)
         elapsed_ms = (time.perf_counter() - started) * 1000
         assert msg_a["type"] == MessageType.SERVER_EVENT_END
         assert msg_b["type"] == MessageType.SERVER_EVENT_END
@@ -494,7 +498,7 @@ def test_local_dispatch_latency_target(setup_round, inmemory_channels):
         orch = OrchestratorRealtime(event)
         started = time.perf_counter()
         await orch.abroadcast_round_end(setup_round["r1"])
-        msg = await comm.receive_json_from(timeout=2)
+        msg = await receive_ignoring_partner_state(comm, timeout=2)
         elapsed_ms = (time.perf_counter() - started) * 1000
         assert msg["type"] == MessageType.SERVER_ROUND_END
         # Target is <250ms locally. Fail only if pathologically slow so CI

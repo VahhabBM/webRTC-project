@@ -1,16 +1,6 @@
 /**
  * T-30/T-31/T-40 Call Room controller — lifecycle, synchronized timer, round rotation,
- * and operator live controls (pause, resume, extend).
- *
- * Timer uses T-15 clock offset + absolute round_end_ts from server.pairing.
- * Handles T-24 messages: pairing, round_start, round_warning, round_end, event_end.
- * Handles T-40 messages: operator.pause, operator.resume, operator.extend.
- * T-31: camera/mic are acquired once and reused across partner switches.
- * T-32: brief ICE/network drops show a degraded quality state and recover
- * on the same peer connection without ending the round or re-prompting devices.
- * T-33: 5–20s network loss reconnects the T-14 socket with bounded backoff
- * to the same partner/room/round, showing RECONNECTING while the T-15 timer
- * keeps ticking from round_end_ts.
+ * partner presence tracking, and operator live controls (pause, resume, extend).
  */
 
 import { ClockSyncClient } from "./clock_sync_client.js";
@@ -157,10 +147,12 @@ export class CallRoomController {
     this.roundNumber = null;
     this.serverWarningActive = false;
     this.isPaused = false;
+    this.partnerPresence = null;
     this.partner = null;
     this.eventEndReason = null;
     this._timerInterval = null;
     this._reconnectTimer = null;
+    this._partnerGoneTimer = null;
     this._helloClientTs = null;
     this._sharedStream = null;
     this._mediaPromise = null;
@@ -279,6 +271,7 @@ export class CallRoomController {
     this._intentionalClose = true;
     this._signalingDegraded = false;
     this.isPaused = false;
+    this._clearPartnerGone();
     this._unbindOnlineListener();
     this._clearReconnect();
     this._reconnectGaveUp = false;
@@ -321,6 +314,9 @@ export class CallRoomController {
         break;
       case "server.event_end":
         await this._onEventEnd(payload);
+        break;
+      case "server.partner_presence":
+        this._onPartnerPresence(payload);
         break;
       case "operator.pause":
         this._onOperatorPause(payload);
@@ -415,7 +411,9 @@ export class CallRoomController {
     this.roundEndTs = this.partner.roundEndTs;
     this.serverWarningActive = false;
     this.isPaused = false;
+    this.partnerPresence = "connected";
     this._clearConnectionError();
+    this._clearPartnerGone();
     this._updatePartnerUI();
 
     if (sameAssignment) {
@@ -491,6 +489,7 @@ export class CallRoomController {
     this._setPhase(CallRoomPhase.ROUND_ENDING);
     this.serverWarningActive = false;
     this.isPaused = false;
+    this._clearPartnerGone();
 
     if (this.negotiator) {
       await this.negotiator.endRound();
@@ -509,6 +508,7 @@ export class CallRoomController {
     this._setPhase(CallRoomPhase.EVENT_ENDED);
     this._signalingDegraded = false;
     this.isPaused = false;
+    this._clearPartnerGone();
     this._unbindOnlineListener();
     this._clearReconnect();
     this._wsGeneration += 1;
@@ -529,6 +529,32 @@ export class CallRoomController {
     }
     this._detachSocket();
     this._intentionalClose = false;
+  }
+
+  _onPartnerPresence(payload) {
+    const presence = payload?.presence || payload?.status || "disconnected";
+    this.partnerPresence = presence;
+
+    if (presence === "disconnected" || presence === "offline") {
+      if (this.elements.qualityBanner) {
+        this.elements.qualityBanner.hidden = false;
+        this.elements.qualityBanner.textContent =
+          "Partner temporarily disconnected. Please wait...";
+      }
+    } else if (presence === "connected" || presence === "online") {
+      this._clearPartnerGone();
+    }
+  }
+
+  _clearPartnerGone() {
+    if (this._partnerGoneTimer) {
+      clearTimeout(this._partnerGoneTimer);
+      this._partnerGoneTimer = null;
+    }
+    if (this.elements.qualityBanner && !this._signalingDegraded && !this.isPaused) {
+      this.elements.qualityBanner.hidden = true;
+      this.elements.qualityBanner.textContent = "";
+    }
   }
 
   _onOperatorPause(payload) {
@@ -564,7 +590,7 @@ export class CallRoomController {
           : Date.parse(payload.ends_at);
     }
 
-    if (this.elements.qualityBanner) {
+    if (this.elements.qualityBanner && !this._signalingDegraded) {
       this.elements.qualityBanner.hidden = true;
       this.elements.qualityBanner.textContent = "";
     }
