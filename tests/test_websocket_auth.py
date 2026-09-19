@@ -2,6 +2,7 @@ from datetime import timedelta
 
 import pytest
 from asgiref.sync import async_to_sync
+from channels.layers import channel_layers
 from channels.testing import WebsocketCommunicator
 from django.contrib.sessions.models import Session
 from django.test import Client
@@ -34,6 +35,16 @@ def event(db):
     )
 
 
+@pytest.fixture(autouse=True)
+def inmemory_channels(settings):
+    settings.CHANNEL_LAYERS = {
+        "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
+    }
+    channel_layers.backends = {}
+    yield
+    channel_layers.backends = {}
+
+
 def _participant(event, name):
     return Participant.objects.create(
         event=event, display_name=name, join_token_hash="!"
@@ -58,6 +69,14 @@ def _hello(ts=1_700_000_000_000, **extra_payload):
 def _connect(cookie=None):
     headers = [(b"cookie", f"sessionid={cookie}".encode())] if cookie else []
     return WebsocketCommunicator(application, "/ws/events/", headers=headers)
+
+
+async def receive_ignoring_partner_state(communicator, timeout=1):
+    """Skip T-34 presence updates when a test is waiting for another message."""
+    while True:
+        message = await communicator.receive_json_from(timeout=timeout)
+        if message["type"] != MessageType.SERVER_PARTNER_STATE:
+            return message
 
 
 @pytest.mark.django_db(transaction=True)
@@ -214,23 +233,39 @@ def test_dead_connection_is_closed_after_configured_timeout(event, settings):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_two_participants_are_isolated_and_duplicate_connections_allowed(event):
+def test_two_participants_are_isolated_and_duplicate_socket_is_replaced(event):
     alice = _participant(event, "Alice")
     bob = _participant(event, "Bob")
-    one = _connect(_cookie_for(alice))
-    two = _connect(_cookie_for(bob))
-    duplicate = _connect(_cookie_for(alice))
+    cookie_alice = _cookie_for(alice)
+    cookie_bob = _cookie_for(bob)
+    one = _connect(cookie_alice)
+    two = _connect(cookie_bob)
+    duplicate = _connect(cookie_alice)
 
     async def scenario():
         for communicator in (one, two, duplicate):
             connected, _ = await communicator.connect()
             assert connected
-            await communicator.send_json_to(_hello())
-        responses = [await c.receive_json_from() for c in (one, two, duplicate)]
-        assert responses[0]["payload"]["participant_id"] == str(alice.pk)
-        assert responses[1]["payload"]["participant_id"] == str(bob.pk)
-        assert responses[2]["payload"]["participant_id"] == str(alice.pk)
-        await one.disconnect()
+
+        await one.send_json_to(_hello())
+        hello_one = await one.receive_json_from()
+        assert hello_one["type"] == MessageType.SERVER_HELLO
+        assert hello_one["payload"]["participant_id"] == str(alice.pk)
+
+        await two.send_json_to(_hello())
+        hello_two = await two.receive_json_from()
+        assert hello_two["type"] == MessageType.SERVER_HELLO
+        assert hello_two["payload"]["participant_id"] == str(bob.pk)
+
+        await duplicate.send_json_to(_hello())
+        hello_dup = await duplicate.receive_json_from()
+        assert hello_dup["type"] == MessageType.SERVER_HELLO
+        assert hello_dup["payload"]["participant_id"] == str(alice.pk)
+
+        replaced = await receive_ignoring_partner_state(one)
+        assert replaced["type"] == MessageType.SERVER_ERROR
+        assert replaced["payload"]["code"] == ErrorCode.ERR_ALREADY_CONNECTED
+
         await two.send_json_to(
             {
                 "type": MessageType.CLIENT_PING,
@@ -238,7 +273,9 @@ def test_two_participants_are_isolated_and_duplicate_connections_allowed(event):
                 "payload": {"client_ts": 1_700_000_000_001},
             }
         )
-        assert (await two.receive_json_from())["type"] == MessageType.SERVER_PONG
+        assert (await receive_ignoring_partner_state(two))["type"] == (
+            MessageType.SERVER_PONG
+        )
         await two.disconnect()
         await duplicate.disconnect()
 

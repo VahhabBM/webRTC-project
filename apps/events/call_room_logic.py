@@ -27,11 +27,24 @@ class CallRoomPhase(StrEnum):
     DISCONNECTED = "disconnected"
 
 
+class PartnerPresence(StrEnum):
+    """User-facing partner presence. ``gone`` maps from protocol ``disconnected``."""
+
+    CONNECTED = "connected"
+    RECONNECTING = "reconnecting"
+    GONE = "gone"
+
+
 # Client reconnect policy for 5–20s network loss (T-33). Identity hold on the
 # server remains PROTOCOL_RECONNECT_WINDOW_SECONDS (300s).
 RECONNECT_INITIAL_DELAY_MS = 500
 RECONNECT_MAX_DELAY_MS = 4000
 RECONNECT_WINDOW_MS = 45_000
+# Longer than T-33's 5–20s recovery window so a brief drop is not "partner left".
+PARTNER_ABSENCE_GRACE_MS = 25_000
+PARTNER_GONE_FOOTER = (
+    "Your partner left. The round timer continues — no replacement will be assigned."
+)
 
 _KEEP_ROUND_ON_TRANSIENT_DISCONNECT = frozenset(
     {
@@ -61,6 +74,44 @@ def reconnect_window_exhausted(
 ) -> bool:
     """True once the client should stop retrying the unresponsive socket."""
     return int(now_ms) - int(started_at_ms) >= int(window_ms)
+
+
+def partner_presence_from_protocol(state: str) -> PartnerPresence:
+    """Map T-13 ``server.partner_state`` onto the call-room presence UI."""
+    value = str(state or "")
+    if value == PartnerPresence.CONNECTED:
+        return PartnerPresence.CONNECTED
+    if value == PartnerPresence.RECONNECTING:
+        return PartnerPresence.RECONNECTING
+    return PartnerPresence.GONE
+
+
+def partner_left_banner(display_name: str | None) -> str:
+    name = (display_name or "").strip() or "Your partner"
+    return f"{name} left. Waiting for them to return — the round continues."
+
+
+def absence_grace_elapsed(
+    disconnected_at_ms: int,
+    now_ms: int,
+    *,
+    grace_ms: int = PARTNER_ABSENCE_GRACE_MS,
+) -> bool:
+    return int(now_ms) - int(disconnected_at_ms) >= int(grace_ms)
+
+
+def should_announce_partner_gone(
+    *,
+    owns_connection: bool,
+    session_replaced: bool,
+    disconnected_at_ms: int,
+    now_ms: int,
+    grace_ms: int = PARTNER_ABSENCE_GRACE_MS,
+) -> bool:
+    """Long absence only. Replaced/stale sockets never mark the partner gone."""
+    if session_replaced or not owns_connection:
+        return False
+    return absence_grace_elapsed(disconnected_at_ms, now_ms, grace_ms=grace_ms)
 
 
 def compute_remaining_ms(
@@ -140,6 +191,7 @@ class CallRoomState:
     server_warning_active: bool = False
     partner: PartnerInfo | None = None
     event_end_reason: str | None = None
+    partner_presence: PartnerPresence | None = None
 
     def on_pairing(self, payload: dict) -> CallRoomState:
         partner = parse_pairing_payload(payload)
@@ -150,6 +202,7 @@ class CallRoomState:
             server_warning_active=False,
             partner=partner,
             event_end_reason=None,
+            partner_presence=PartnerPresence.CONNECTED,
         )
 
     def on_round_start(self, payload: dict) -> CallRoomState:
@@ -160,6 +213,7 @@ class CallRoomState:
             server_warning_active=False,
             partner=self.partner,
             event_end_reason=None,
+            partner_presence=self.partner_presence,
         )
 
     def on_round_warning(self, payload: dict) -> CallRoomState:
@@ -171,6 +225,7 @@ class CallRoomState:
             server_warning_active=True,
             partner=self.partner,
             event_end_reason=None,
+            partner_presence=self.partner_presence,
         )
 
     def on_round_end(self, payload: dict) -> CallRoomState:
@@ -181,6 +236,7 @@ class CallRoomState:
             server_warning_active=False,
             partner=None,
             event_end_reason=None,
+            partner_presence=None,
         )
 
     def on_event_end(self, payload: dict) -> CallRoomState:
@@ -191,6 +247,21 @@ class CallRoomState:
             server_warning_active=False,
             partner=None,
             event_end_reason=str(payload.get("reason", "completed")),
+            partner_presence=None,
+        )
+
+    def on_partner_state(self, payload: dict) -> CallRoomState:
+        """Presence only: never pause, reset, or advance the round timer."""
+        return CallRoomState(
+            phase=self.phase,
+            round_number=self.round_number,
+            round_end_ts=self.round_end_ts,
+            server_warning_active=self.server_warning_active,
+            partner=self.partner,
+            event_end_reason=self.event_end_reason,
+            partner_presence=partner_presence_from_protocol(
+                str(payload.get("state", ""))
+            ),
         )
 
     def on_disconnect(self) -> CallRoomState:
@@ -201,6 +272,7 @@ class CallRoomState:
             server_warning_active=self.server_warning_active,
             partner=self.partner,
             event_end_reason=self.event_end_reason,
+            partner_presence=self.partner_presence,
         )
 
     def on_transient_disconnect(self) -> CallRoomState:
@@ -213,5 +285,6 @@ class CallRoomState:
                 server_warning_active=self.server_warning_active,
                 partner=self.partner,
                 event_end_reason=self.event_end_reason,
+                partner_presence=self.partner_presence,
             )
         return self.on_disconnect()

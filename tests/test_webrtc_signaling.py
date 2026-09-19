@@ -2,6 +2,7 @@ import asyncio
 from datetime import timedelta
 
 import pytest
+from channels.layers import channel_layers
 from channels.testing import WebsocketCommunicator
 from django.utils import timezone
 
@@ -13,7 +14,11 @@ from apps.protocol.schemas import (
     build_client_webrtc_offer,
 )
 from config.asgi import application
-from tests.test_websocket_auth import _cookie_for, _hello
+from tests.test_websocket_auth import (
+    _cookie_for,
+    _hello,
+    receive_ignoring_partner_state,
+)
 
 
 @pytest.fixture
@@ -48,8 +53,20 @@ def signaling_setup(db):
     return event, p_a, p_b, pair
 
 
+@pytest.fixture
+def inmemory_channels(settings):
+    settings.CHANNEL_LAYERS = {
+        "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
+    }
+    channel_layers.backends = {}
+    yield
+    channel_layers.backends = {}
+
+
 @pytest.mark.django_db(transaction=True)
-def test_webrtc_signaling_relay_between_paired_participants(signaling_setup):
+def test_webrtc_signaling_relay_between_paired_participants(
+    signaling_setup, inmemory_channels
+):
     _, p_a, p_b, pair = signaling_setup
 
     cookie_a = _cookie_for(p_a)
@@ -87,7 +104,7 @@ def test_webrtc_signaling_relay_between_paired_participants(signaling_setup):
         offer_msg = build_client_webrtc_offer(room_id=room_id, sdp="v=0\r\ntest-offer")
         await comm_a.send_json_to(offer_msg)
 
-        relayed_offer = await comm_b.receive_json_from()
+        relayed_offer = await receive_ignoring_partner_state(comm_b)
         assert relayed_offer["type"] == MessageType.SERVER_WEBRTC_OFFER
         assert relayed_offer["payload"]["room_id"] == room_id
         assert relayed_offer["payload"]["from_participant_id"] == p_a_id
@@ -99,7 +116,7 @@ def test_webrtc_signaling_relay_between_paired_participants(signaling_setup):
         )
         await comm_b.send_json_to(answer_msg)
 
-        relayed_answer = await comm_a.receive_json_from()
+        relayed_answer = await receive_ignoring_partner_state(comm_a)
         assert relayed_answer["type"] == MessageType.SERVER_WEBRTC_ANSWER
         assert relayed_answer["payload"]["from_participant_id"] == p_b_id
         assert relayed_answer["payload"]["sdp"] == "v=0\r\ntest-answer"
@@ -113,7 +130,7 @@ def test_webrtc_signaling_relay_between_paired_participants(signaling_setup):
         )
         await comm_a.send_json_to(ice_msg)
 
-        relayed_ice = await comm_b.receive_json_from()
+        relayed_ice = await receive_ignoring_partner_state(comm_b)
         assert relayed_ice["type"] == MessageType.SERVER_WEBRTC_ICE
         assert relayed_ice["payload"]["from_participant_id"] == p_a_id
         assert relayed_ice["payload"]["candidate"] == ice_msg["payload"]["candidate"]
@@ -125,7 +142,7 @@ def test_webrtc_signaling_relay_between_paired_participants(signaling_setup):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_webrtc_signaling_wrong_room_rejected(signaling_setup):
+def test_webrtc_signaling_wrong_room_rejected(signaling_setup, inmemory_channels):
     _, p_a, _, _ = signaling_setup
     cookie_a = _cookie_for(p_a)
 
