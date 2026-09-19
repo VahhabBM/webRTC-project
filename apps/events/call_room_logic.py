@@ -29,6 +29,12 @@ class CallRoomPhase(StrEnum):
     DISCONNECTED = "disconnected"
 
 
+class PartnerPresence(StrEnum):
+    ONLINE = "online"
+    OFFLINE = "offline"
+    WAITING = "waiting"
+
+
 # Client reconnect policy for 5–20s network loss (T-33). Identity hold on the
 # server remains PROTOCOL_RECONNECT_WINDOW_SECONDS (300s).
 RECONNECT_INITIAL_DELAY_MS = 500
@@ -145,6 +151,7 @@ class CallRoomState:
     event_end_reason: str | None = None
     is_paused: bool = False
     paused_remaining_ms: int | None = None
+    partner_presence: PartnerPresence | None = None
 
     def on_pairing(self, payload: dict) -> CallRoomState:
         partner = parse_pairing_payload(payload)
@@ -157,6 +164,7 @@ class CallRoomState:
             event_end_reason=None,
             is_paused=False,
             paused_remaining_ms=None,
+            partner_presence=None,
         )
 
     def on_round_start(self, payload: dict) -> CallRoomState:
@@ -169,6 +177,7 @@ class CallRoomState:
             event_end_reason=None,
             is_paused=False,
             paused_remaining_ms=None,
+            partner_presence=self.partner_presence,
         )
 
     def on_round_warning(self, payload: dict) -> CallRoomState:
@@ -182,6 +191,7 @@ class CallRoomState:
             event_end_reason=None,
             is_paused=self.is_paused,
             paused_remaining_ms=self.paused_remaining_ms,
+            partner_presence=self.partner_presence,
         )
 
     def on_round_end(self, payload: dict) -> CallRoomState:
@@ -194,6 +204,7 @@ class CallRoomState:
             event_end_reason=None,
             is_paused=False,
             paused_remaining_ms=None,
+            partner_presence=None,
         )
 
     def on_event_end(self, payload: dict) -> CallRoomState:
@@ -206,6 +217,7 @@ class CallRoomState:
             event_end_reason=str(payload.get("reason", "completed")),
             is_paused=False,
             paused_remaining_ms=None,
+            partner_presence=None,
         )
 
     def on_disconnect(self) -> CallRoomState:
@@ -218,6 +230,7 @@ class CallRoomState:
             event_end_reason=self.event_end_reason,
             is_paused=self.is_paused,
             paused_remaining_ms=self.paused_remaining_ms,
+            partner_presence=self.partner_presence,
         )
 
     def on_transient_disconnect(self) -> CallRoomState:
@@ -232,6 +245,7 @@ class CallRoomState:
                 event_end_reason=self.event_end_reason,
                 is_paused=self.is_paused,
                 paused_remaining_ms=self.paused_remaining_ms,
+                partner_presence=self.partner_presence,
             )
         return self.on_disconnect()
 
@@ -247,6 +261,7 @@ class CallRoomState:
             event_end_reason=self.event_end_reason,
             is_paused=True,
             paused_remaining_ms=remaining_seconds * 1000,
+            partner_presence=self.partner_presence,
         )
 
     def on_operator_resume(self, payload: dict) -> CallRoomState:
@@ -265,6 +280,7 @@ class CallRoomState:
             event_end_reason=self.event_end_reason,
             is_paused=False,
             paused_remaining_ms=None,
+            partner_presence=self.partner_presence,
         )
 
     def on_operator_extend(self, payload: dict) -> CallRoomState:
@@ -285,4 +301,31 @@ class CallRoomState:
             event_end_reason=self.event_end_reason,
             is_paused=self.is_paused,
             paused_remaining_ms=self.paused_remaining_ms,
+            partner_presence=self.partner_presence,
+        )
+
+    def on_partner_presence(self, payload: dict | PartnerPresence) -> CallRoomState:
+        """Update partner presence status from real-time events."""
+        presence: PartnerPresence | None
+        if isinstance(payload, PartnerPresence):
+            presence = payload
+        elif isinstance(payload, dict):
+            raw = payload.get("presence") or payload.get("status")
+            try:
+                presence = PartnerPresence(str(raw)) if raw else None
+            except ValueError:
+                presence = None
+        else:
+            presence = None
+
+        return CallRoomState(
+            phase=self.phase,
+            round_number=self.round_number,
+            round_end_ts=self.round_end_ts,
+            server_warning_active=self.server_warning_active,
+            partner=self.partner,
+            event_end_reason=self.event_end_reason,
+            is_paused=self.is_paused,
+            paused_remaining_ms=self.paused_remaining_ms,
+            partner_presence=presence,
         )
