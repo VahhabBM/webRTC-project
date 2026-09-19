@@ -42,6 +42,23 @@ export function partnerLeftBanner(name = "Partner") {
   return `${name} left. Waiting for them to return — the round continues.`;
 }
 
+/**
+ * Maps protocol state/presence strings or payloads to client presence strings ('connected', 'reconnecting', 'gone').
+ */
+export function partnerPresenceFromProtocol(payload) {
+  if (!payload) return null;
+  const raw =
+    typeof payload === "object" && payload !== null
+      ? payload.state || payload.presence || payload.status
+      : payload;
+  if (!raw) return null;
+  const val = String(raw).toLowerCase();
+  if (val === "disconnected" || val === "gone") return "gone";
+  if (val === "reconnecting") return "reconnecting";
+  if (val === "connected") return "connected";
+  return val;
+}
+
 /** Mirrors call_room_logic.next_reconnect_delay_ms */
 export function nextReconnectDelayMs(
   attempt,
@@ -327,6 +344,9 @@ export class CallRoomController {
       case "server.event_end":
         await this._onEventEnd(payload);
         break;
+      case "server.error":
+        this._onServerError(payload);
+        break;
       case "server.session_replaced":
         this._onSessionReplaced();
         break;
@@ -378,10 +398,6 @@ export class CallRoomController {
     void this.ensureLocalMedia();
   }
 
-  /**
-   * Acquire camera/mic once for the whole event. Pairing and reconnect
-   * reuse this stream and never call getUserMedia again.
-   */
   async ensureLocalMedia() {
     const existing = this._liveStream(this._sharedStream)
       ? this._sharedStream
@@ -484,6 +500,10 @@ export class CallRoomController {
     this.serverWarningActive = false;
     this.isPaused = false;
 
+    if (this.elements.statusFooter && !this.isPaused) {
+      this.elements.statusFooter.textContent = "Round in progress";
+    }
+
     if (this.negotiator) {
       await this.negotiator.open();
     }
@@ -547,6 +567,23 @@ export class CallRoomController {
     this._intentionalClose = false;
   }
 
+  _onServerError(payload) {
+    const code = payload?.code ? String(payload.code) : "";
+    const reason = payload?.reason ? String(payload.reason) : "";
+    const msg = payload?.message || payload?.error || "";
+    if (
+      code === "ERR_ALREADY_CONNECTED" ||
+      code === "session_replaced" ||
+      reason === "session_replaced" ||
+      code === "4001" ||
+      /another window/i.test(msg)
+    ) {
+      this._onSessionReplaced();
+      return;
+    }
+    this._showConnectionError(msg || "A connection error occurred.");
+  }
+
   _onSessionReplaced() {
     this._intentionalClose = true;
     this._clearPartnerGone();
@@ -592,9 +629,16 @@ export class CallRoomController {
   _showPartnerGone() {
     const name = this.partner?.displayName || "Partner";
     const bannerText = partnerLeftBanner(name);
+    if (this.elements.partnerGoneBanner) {
+      this.elements.partnerGoneBanner.hidden = false;
+      this.elements.partnerGoneBanner.textContent = bannerText;
+    }
     if (this.elements.qualityBanner) {
       this.elements.qualityBanner.hidden = false;
       this.elements.qualityBanner.textContent = bannerText;
+    }
+    if (this.elements.remoteVideo) {
+      this.elements.remoteVideo.srcObject = null;
     }
     if (this.elements.connectionBadge) {
       this.elements.connectionBadge.textContent = "PARTNER LEFT";
@@ -611,12 +655,22 @@ export class CallRoomController {
   }
 
   _onPartnerState(payload) {
-    const raw = payload?.state || payload?.presence || payload?.status || "disconnected";
-    this.partnerPresence = raw;
+    if (!payload) return;
+    const roomId = payload.room_id || payload.roomId;
+    if (roomId && this.partner && String(roomId) !== String(this.partner.roomId)) {
+      return;
+    }
+    const partnerId = payload.partner_id || payload.partnerId;
+    if (partnerId && this.partner && String(partnerId) !== String(this.partner.partnerId)) {
+      return;
+    }
 
-    if (raw === "disconnected" || raw === "gone") {
+    const presence = partnerPresenceFromProtocol(payload) || "gone";
+    this.partnerPresence = presence;
+
+    if (presence === "gone") {
       this._showPartnerGone();
-    } else if (raw === "reconnecting") {
+    } else if (presence === "reconnecting") {
       if (this.elements.qualityBanner) {
         this.elements.qualityBanner.hidden = false;
         this.elements.qualityBanner.textContent =
@@ -630,7 +684,7 @@ export class CallRoomController {
         }
         this.elements.connectionBadge.dataset.quality = "partner-reconnecting";
       }
-    } else if (raw === "connected") {
+    } else if (presence === "connected") {
       this._clearPartnerGone();
     }
   }
@@ -644,9 +698,16 @@ export class CallRoomController {
       clearTimeout(this._partnerGoneTimer);
       this._partnerGoneTimer = null;
     }
+    if (this.elements.partnerGoneBanner) {
+      this.elements.partnerGoneBanner.hidden = true;
+      this.elements.partnerGoneBanner.textContent = "";
+    }
     if (this.elements.qualityBanner && !this._signalingDegraded && !this.isPaused) {
       this.elements.qualityBanner.hidden = true;
       this.elements.qualityBanner.textContent = "";
+    }
+    if (this.elements.statusFooter) {
+      this.elements.statusFooter.textContent = "Round in progress";
     }
     if (
       this.elements.connectionBadge &&
