@@ -11,10 +11,9 @@ from django.utils import timezone
 
 from .models import Event, EventStatus, Pair, Participant, ParticipantTag, Round, Tag
 
-for model in (ParticipantTag, Round, Pair):
+for model in (ParticipantTag, Round):
     admin.site.register(model)
 
-# States in which the matching report action is permitted.
 _MATCHING_RUNNABLE_STATES = frozenset(
     {EventStatus.SCHEDULED, EventStatus.ACTIVE, EventStatus.COMPLETED}
 )
@@ -329,3 +328,34 @@ class ParticipantAdmin(admin.ModelAdmin):
             )
 
         return response
+
+
+@admin.register(Pair)
+class PairAdmin(admin.ModelAdmin):
+    list_display = (
+        "room_id",
+        "round",
+        "participant_a",
+        "connection_type_a",
+        "connection_time_ms_a",
+        "participant_b",
+        "connection_type_b",
+        "connection_time_ms_b",
+        "status",
+        "created_at",
+    )
+    list_filter = (
+        "status",
+        "connection_type_a",
+        "connection_type_b",
+        "round__event",
+        "round",
+    )
+    search_fields = ("room_id", "participant_a__user_id", "participant_b__user_id")
+    readonly_fields = (
+        "connection_type_a",
+        "connection_time_ms_a",
+        "connection_type_b",
+        "connection_time_ms_b",
+        "created_at",
+    )

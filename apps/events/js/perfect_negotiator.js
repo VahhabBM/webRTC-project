@@ -1,5 +1,5 @@
 /**
- * WebRTC Perfect Negotiation & Media Transport Lifecycle (T-27, T-31, T-32)
+ * WebRTC Perfect Negotiation & Media Transport Lifecycle (T-27, T-31, T-32, T-37)
  * Enforces:
  *  - 640x360 target resolution
  *  - 500 kbps video bitrate cap via RTCRtpSender.setParameters
@@ -9,6 +9,7 @@
  *  - Transient ICE/network recovery without tearing down the room (T-32)
  *  - Deterministic W3C Perfect Negotiation with rollback
  *  - Hardware lock detection & simulated canvas fallback for multi-tab testing
+ *  - Direct vs Relay connection path and establishment telemetry reporting (T-37)
  */
 
 export const DEFAULT_MEDIA_CONSTRAINTS = {
@@ -215,6 +216,10 @@ export class PerfectNegotiator {
     this._permanentFailureTimer = null;
     this._deferPermanentFailure = deferPermanentFailure;
 
+    // T-37 Telemetry Tracking
+    this._connectionStartTime = Date.now();
+    this._telemetryReported = false;
+
     if (localStream) {
       this.localStream = localStream;
       if (!streamHasLiveTracks(sharedLocalStream)) {
@@ -226,6 +231,8 @@ export class PerfectNegotiator {
   }
 
   _initPeerConnection() {
+    this._connectionStartTime = Date.now();
+    this._telemetryReported = false;
     this.pc = new RTCPeerConnection(this.rtcConfig);
     this._setupPeerEvents();
   }
@@ -284,7 +291,7 @@ export class PerfectNegotiator {
       }
     };
 
-    // 4. Connection State & Degradation Monitoring (T-32)
+    // 4. Connection State & Degradation Monitoring (T-32 & T-37)
     pc.onconnectionstatechange = () => {
       if (this.pc !== pc) return;
       this._onPeerConnectionState(pc.connectionState);
@@ -300,6 +307,12 @@ export class PerfectNegotiator {
       this._startStatsMonitor();
       this._emitQuality(ConnectionQuality.CONNECTED);
       void this._applyVideoBitrateCap();
+
+      // T-37: Report Direct vs Relay path telemetry once connection is established
+      if (!this._telemetryReported) {
+        this._telemetryReported = true;
+        void reportConnectionTelemetry(this.pc, this.roomId, this._connectionStartTime);
+      }
       return;
     }
 
@@ -444,6 +457,7 @@ export class PerfectNegotiator {
     this._clearRecoveryTimers();
     this._iceRestartInFlight = false;
     this._stopStatsMonitor();
+    this._telemetryReported = false;
     const pc = this.pc;
     if (!pc) return;
 
@@ -627,6 +641,8 @@ export class PerfectNegotiator {
       this.ignoreOffer = false;
       this._lastBytesSent = 0;
       this._lastStatsTimestamp = 0;
+      this._connectionStartTime = Date.now();
+      this._telemetryReported = false;
 
       this._initPeerConnection();
       this._attachTracksToPC();
@@ -671,6 +687,8 @@ export class PerfectNegotiator {
       this.ignoreOffer = false;
       this._lastBytesSent = 0;
       this._lastStatsTimestamp = 0;
+      this._connectionStartTime = Date.now();
+      this._telemetryReported = false;
 
       this._initPeerConnection();
       this._attachTracksToPC();
@@ -822,5 +840,81 @@ export class PerfectNegotiator {
       clearInterval(this.statsInterval);
       this.statsInterval = null;
     }
+  }
+}
+
+/**
+ * استخراج قطعی نوع کاندید برنده (Direct vs Relay) و زمان سپری‌شده (T-37).
+ */
+export async function extractConnectionTelemetry(pc, connectionStartTimeMs) {
+  if (!pc || typeof pc.getStats !== "function") return null;
+
+  try {
+    const stats = await pc.getStats();
+    let selectedPair = null;
+
+    stats.forEach((report) => {
+      if (
+        report.type === "candidate-pair" &&
+        (report.selected || report.nominated || report.state === "succeeded")
+      ) {
+        selectedPair = report;
+      }
+    });
+
+    if (!selectedPair) return null;
+
+    const getReport = (id) => {
+      if (!id) return null;
+      if (typeof stats.get === "function") return stats.get(id);
+      let found = null;
+      stats.forEach((item) => {
+        if (item.id === id) found = item;
+      });
+      return found;
+    };
+
+    const localCand = getReport(selectedPair.localCandidateId);
+    const remoteCand = getReport(selectedPair.remoteCandidateId);
+
+    const isRelay =
+      localCand?.candidateType === "relay" || remoteCand?.candidateType === "relay";
+
+    const connectionType = isRelay ? "relay" : "direct";
+    const startTime = typeof connectionStartTimeMs === "number" ? connectionStartTimeMs : Date.now();
+    const connectionTimeMs = Math.max(0, Math.round(Date.now() - startTime));
+
+    return { connectionType, connectionTimeMs };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ارسال گزارش آمار اتصال به سرور بدون نشت اطلاعات یا توکن (T-37).
+ */
+export async function reportConnectionTelemetry(pc, roomId, connectionStartTimeMs) {
+  if (!pc || !roomId) return;
+
+  try {
+    const telemetry = await extractConnectionTelemetry(pc, connectionStartTimeMs);
+    if (!telemetry) return;
+
+    const payload = {
+      room_id: roomId,
+      connection_type: telemetry.connectionType,
+      connection_time_ms: telemetry.connectionTimeMs,
+    };
+
+    await fetch("/api/telemetry/connection/", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.warn("[Telemetry] Failed to extract or submit connection stats:", err);
   }
 }

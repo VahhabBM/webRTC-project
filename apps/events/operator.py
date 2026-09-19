@@ -183,3 +183,21 @@ class OperatorService:
         }
         self._broadcast("extend", payload)
         return {"status": "extended", "log_id": str(log.pk), **payload}
+
+    def recalculate_pairs(
+        self,
+        *,
+        operator_confirmed: bool = False,
+        absent_participant_ids: list | set | None = None,
+        operator_details: dict | None = None,
+    ):
+        """بازمحاسبه جفت‌ها پیش از شروع رویداد با تأیید صریح اپراتور (T-42)."""
+        self._ensure_leader()
+        from apps.events.scheduling import recalculate_pairs_pre_start
+
+        return recalculate_pairs_pre_start(
+            event=self.event,
+            operator_confirmed=operator_confirmed,
+            absent_participant_ids=absent_participant_ids,
+            operator_details=operator_details,
+        )
