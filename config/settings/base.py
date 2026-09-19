@@ -180,6 +180,10 @@ CLOCK_SYNC_MAX_RTT_MS = env_int("CLOCK_SYNC_MAX_RTT_MS", 2000)
 # Remaining time is derived from the stored round, not a hardcoded duration.
 ORCHESTRATOR_FINAL_SECONDS = env_int("ORCHESTRATOR_FINAL_SECONDS", 30)
 
+# T-38: empty by default. Set to one Pair.room_id to allow primary→relay
+# fallback for that pair only. Never switches other rooms or the whole event.
+MEDIA_FALLBACK_ROOM_ID = os.environ.get("MEDIA_FALLBACK_ROOM_ID", "")
+
 # --- پیکربندی سرویس ایمیل (تسک 09-T) ---
 EMAIL_BACKEND = os.environ.get(
     "DJANGO_EMAIL_BACKEND",

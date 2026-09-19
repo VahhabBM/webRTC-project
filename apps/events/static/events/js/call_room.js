@@ -9,14 +9,16 @@
  * T-33: 5–20s network loss reconnects the T-14 socket with bounded backoff
  * to the same partner/room/round, showing RECONNECTING while the T-15 timer
  * keeps ticking from round_end_ts.
+ * T-38: a pair-scoped second media adapter may take over if the primary/direct
+ * path fails. Call-room code uses only the shared T-26 transport surface.
  */
 
 import { ClockSyncClient } from "./clock_sync_client.js";
 import {
-  PerfectNegotiator,
+  FailoverMediaTransport,
   DEFAULT_MEDIA_CONSTRAINTS,
   acquireSharedLocalMedia,
-} from "./perfect_negotiator.js";
+} from "./media_transport.js";
 
 export const TimerVisualState = Object.freeze({
   WAITING: "waiting",
@@ -144,6 +146,8 @@ export class CallRoomController {
     reconnectWindowMs = RECONNECT_WINDOW_MS,
     createWebSocket = null,
     now = null,
+    mediaFallbackRoomId = "",
+    forceMediaFallback = false,
   }) {
     this.myParticipantId = myParticipantId;
     this.warningThresholdSeconds = warningThresholdSeconds;
@@ -159,6 +163,8 @@ export class CallRoomController {
     this._reconnectWindowMs = reconnectWindowMs;
     this._createWebSocket = createWebSocket;
     this._now = now || (() => Date.now());
+    this._mediaFallbackRoomId = mediaFallbackRoomId ? String(mediaFallbackRoomId) : "";
+    this._forceMediaFallback = Boolean(forceMediaFallback);
 
     this.ws = null;
     this.negotiator = null;
@@ -697,7 +703,11 @@ export class CallRoomController {
     if (this._negotiatorFactory) {
       return this._negotiatorFactory(options);
     }
-    return new PerfectNegotiator(options);
+    return new FailoverMediaTransport({
+      ...options,
+      selectedRoomId: this._mediaFallbackRoomId,
+      forceFallback: this._forceMediaFallback,
+    });
   }
 
   _isSamePartnerAssignment() {
@@ -752,15 +762,39 @@ export class CallRoomController {
         this.elements.connectionBadge.dataset = {};
       }
       this.elements.connectionBadge.dataset.quality = state;
+      const kind = this.negotiator?.adapterKind;
+      if (kind) {
+        this.elements.connectionBadge.dataset.adapter = kind;
+      }
+      if (state === "connected" && kind === "relay") {
+        this.elements.connectionBadge.textContent = "CONNECTED (RELAY)";
+      }
     }
     if (this.elements.qualityBanner) {
       const degraded = state === "degraded";
-      this.elements.qualityBanner.hidden = !degraded;
+      const relayed =
+        state === "connected" && this.negotiator?.adapterKind === "relay";
+      this.elements.qualityBanner.hidden = !(degraded || relayed);
       if (degraded) {
         this.elements.qualityBanner.textContent =
           "Temporary quality drop — recovering connection…";
+      } else if (relayed) {
+        this.elements.qualityBanner.textContent =
+          "Fallback transport active for this pair — same partner and round.";
       }
     }
+  }
+
+  async forceMediaFallback() {
+    if (!this.negotiator || typeof this.negotiator.forceFallback !== "function") {
+      return false;
+    }
+    const ok = await this.negotiator.forceFallback();
+    if (ok) {
+      this._bindLocalPreview();
+      this._applyConnectionQuality(this.negotiator.quality || "connected");
+    }
+    return ok;
   }
 
   _refreshQualityFromPeer() {

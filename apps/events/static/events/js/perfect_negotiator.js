@@ -188,6 +188,10 @@ export class PerfectNegotiator {
     this.roomId = roomId;
     this.sendSignal = sendSignalingMessage;
     this.rtcConfig = rtcConfig;
+    this.adapterKind =
+      this.rtcConfig && this.rtcConfig.iceTransportPolicy === "relay"
+        ? "relay"
+        : "direct";
 
     // Callbacks
     this.onRemoteStream = onRemoteStream;
@@ -484,6 +488,21 @@ export class PerfectNegotiator {
       // ignore
     }
     this.pc = null;
+  }
+
+  /**
+   * Close the peer connection and drop listeners without stopping tracks.
+   * Used when replacing this adapter with another T-26 transport (T-38).
+   */
+  detachPeerKeepMedia() {
+    this._teardownPeerConnection();
+    this.remoteStream = new MediaStream();
+    this.onRemoteStream = null;
+    this.onFailure = null;
+    this.onStateChange = null;
+    this.onStats = null;
+    this.sendSignal = () => {};
+    this.state = TransportState.CLOSED;
   }
 
   /**
