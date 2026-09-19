@@ -203,11 +203,14 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
         except Exception:
             logger.exception(
                 "Unexpected WebSocket failure for participant %s",
-                self.participant.pk,
+                getattr(self.participant, "pk", None),
             )
             await self._fatal(ErrorCode.ERR_INTERNAL)
 
     async def _handle_message(self, msg_type, payload):
+        if not self.authenticated or self.participant is None:
+            await self._fatal(ErrorCode.ERR_NOT_AUTHENTICATED)
+            return
         if not self.handshake_complete:
             if msg_type != MessageType.CLIENT_HELLO:
                 await self._send_error(
@@ -257,6 +260,9 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
             )
 
     async def _complete_handshake(self, payload):
+        if not self.authenticated or self.participant is None:
+            await self._fatal(ErrorCode.ERR_NOT_AUTHENTICATED)
+            return
         self.handshake_complete = True
         if self.channel_layer:
             self.participant_group = f"participant_{self.participant.pk}"
