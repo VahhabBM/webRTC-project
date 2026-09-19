@@ -1,14 +1,6 @@
 /**
- * T-30/T-31 Call Room controller — lifecycle, synchronized timer, round rotation.
- *
- * Timer uses T-15 clock offset + absolute round_end_ts from server.pairing.
- * Handles T-24 messages: pairing, round_start, round_warning, round_end, event_end.
- * T-31: camera/mic are acquired once and reused across partner switches.
- * T-32: brief ICE/network drops show a degraded quality state and recover
- * on the same peer connection without ending the round or re-prompting devices.
- * T-33: 5–20s network loss reconnects the T-14 socket with bounded backoff
- * to the same partner/room/round, showing RECONNECTING while the T-15 timer
- * keeps ticking from round_end_ts.
+ * T-30/T-31/T-34/T-40 Call Room controller — lifecycle, synchronized timer, round rotation,
+ * partner presence tracking (long absence re-entry), and operator live controls (pause, resume, extend).
  */
 
 import { ClockSyncClient } from "./clock_sync_client.js";
@@ -23,6 +15,7 @@ export const TimerVisualState = Object.freeze({
   NORMAL: "normal",
   WARNING: "warning",
   EXPIRED: "expired",
+  PAUSED: "paused",
 });
 
 export const CallRoomPhase = Object.freeze({
@@ -40,10 +33,31 @@ export const RECONNECT_INITIAL_DELAY_MS = 500;
 export const RECONNECT_MAX_DELAY_MS = 4000;
 /** Stop hammering a dead socket; identity hold on the server is 300s. */
 export const RECONNECT_WINDOW_MS = 45_000;
-/** Longer than T-33 5–20s recovery so a brief drop is not "partner left". */
+/** Partner absence grace period before marking as gone (T-34). */
 export const PARTNER_ABSENCE_GRACE_MS = 25_000;
 export const PARTNER_GONE_FOOTER =
   "Your partner left. The round timer continues — no replacement will be assigned.";
+
+export function partnerLeftBanner(name = "Partner") {
+  return `${name} left. Waiting for them to return — the round continues.`;
+}
+
+/**
+ * Maps protocol state/presence strings or payloads to client presence strings ('connected', 'reconnecting', 'gone').
+ */
+export function partnerPresenceFromProtocol(payload) {
+  if (!payload) return null;
+  const raw =
+    typeof payload === "object" && payload !== null
+      ? payload.state || payload.presence || payload.status
+      : payload;
+  if (!raw) return null;
+  const val = String(raw).toLowerCase();
+  if (val === "disconnected" || val === "gone") return "gone";
+  if (val === "reconnecting") return "reconnecting";
+  if (val === "connected") return "connected";
+  return val;
+}
 
 /** Mirrors call_room_logic.next_reconnect_delay_ms */
 export function nextReconnectDelayMs(
@@ -64,22 +78,6 @@ export function reconnectWindowExhausted(
   return nowMs - startedAtMs >= windowMs;
 }
 
-/** Mirrors call_room_logic.partner_left_banner */
-export function partnerLeftBanner(displayName) {
-  const name =
-    typeof displayName === "string" && displayName.trim()
-      ? displayName.trim()
-      : "Your partner";
-  return `${name} left. Waiting for them to return — the round continues.`;
-}
-
-/** Mirrors call_room_logic.partner_presence_from_protocol */
-export function partnerPresenceFromProtocol(state) {
-  if (state === "connected") return "connected";
-  if (state === "reconnecting") return "reconnecting";
-  return "gone";
-}
-
 /** Mirrors call_room_logic.compute_remaining_ms */
 export function computeRemainingMs(roundEndTs, offsetMs, clientNowMs) {
   const estimatedServerNow = Math.round(clientNowMs + offsetMs);
@@ -95,7 +93,13 @@ export function formatTimerDisplay(remainingMs) {
 }
 
 /** Mirrors call_room_logic.timer_visual_state */
-export function timerVisualState(remainingMs, warningThresholdSeconds, serverWarningActive = false) {
+export function timerVisualState(
+  remainingMs,
+  warningThresholdSeconds,
+  serverWarningActive = false,
+  isPaused = false,
+) {
+  if (isPaused) return TimerVisualState.PAUSED;
   if (remainingMs <= 0) return TimerVisualState.EXPIRED;
   if (serverWarningActive || remainingMs <= warningThresholdSeconds * 1000) {
     return TimerVisualState.WARNING;
@@ -167,11 +171,13 @@ export class CallRoomController {
     this.roundEndTs = null;
     this.roundNumber = null;
     this.serverWarningActive = false;
+    this.isPaused = false;
+    this.partnerPresence = null;
     this.partner = null;
     this.eventEndReason = null;
-    this.partnerPresence = null;
     this._timerInterval = null;
     this._reconnectTimer = null;
+    this._partnerGoneTimer = null;
     this._helloClientTs = null;
     this._sharedStream = null;
     this._mediaPromise = null;
@@ -259,8 +265,12 @@ export class CallRoomController {
       this._handleMessage(JSON.parse(event.data));
     };
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (generation !== this._wsGeneration || this.ws !== socket) return;
+      if (event && (event.code === 4001 || event.reason === "session_replaced")) {
+        this._onSessionReplaced();
+        return;
+      }
       this._onSignalingClosed();
     };
 
@@ -289,6 +299,8 @@ export class CallRoomController {
   disconnect() {
     this._intentionalClose = true;
     this._signalingDegraded = false;
+    this.isPaused = false;
+    this._clearPartnerGone();
     this._unbindOnlineListener();
     this._clearReconnect();
     this._reconnectGaveUp = false;
@@ -332,11 +344,24 @@ export class CallRoomController {
       case "server.event_end":
         await this._onEventEnd(payload);
         break;
-      case "server.partner_state":
-        this._onPartnerState(payload);
-        break;
       case "server.error":
         this._onServerError(payload);
+        break;
+      case "server.session_replaced":
+        this._onSessionReplaced();
+        break;
+      case "server.partner_state":
+      case "server.partner_presence":
+        this._onPartnerState(payload);
+        break;
+      case "operator.pause":
+        this._onOperatorPause(payload);
+        break;
+      case "operator.resume":
+        this._onOperatorResume(payload);
+        break;
+      case "operator.extend":
+        this._onOperatorExtend(payload);
         break;
       default:
         if (type.startsWith("server.webrtc.") && this.negotiator) {
@@ -373,10 +398,6 @@ export class CallRoomController {
     void this.ensureLocalMedia();
   }
 
-  /**
-   * Acquire camera/mic once for the whole event. Pairing and reconnect
-   * reuse this stream and never call getUserMedia again.
-   */
   async ensureLocalMedia() {
     const existing = this._liveStream(this._sharedStream)
       ? this._sharedStream
@@ -421,6 +442,7 @@ export class CallRoomController {
     this.roundNumber = this.partner.roundNumber;
     this.roundEndTs = this.partner.roundEndTs;
     this.serverWarningActive = false;
+    this.isPaused = false;
     this.partnerPresence = "connected";
     this._clearConnectionError();
     this._clearPartnerGone();
@@ -476,6 +498,11 @@ export class CallRoomController {
     this.roundNumber = Number(payload.round_number ?? this.roundNumber);
     this._setPhase(CallRoomPhase.IN_ROUND);
     this.serverWarningActive = false;
+    this.isPaused = false;
+
+    if (this.elements.statusFooter && !this.isPaused) {
+      this.elements.statusFooter.textContent = "Round in progress";
+    }
 
     if (this.negotiator) {
       await this.negotiator.open();
@@ -488,13 +515,17 @@ export class CallRoomController {
     if (payload.round_end_ts) {
       this.roundEndTs = Number(payload.round_end_ts);
     }
-    this._tickTimer();
+    if (!this.isPaused) {
+      this._tickTimer();
+    }
   }
 
   async _onRoundEnd(payload) {
     this.roundNumber = Number(payload.round_number ?? this.roundNumber);
     this._setPhase(CallRoomPhase.ROUND_ENDING);
     this.serverWarningActive = false;
+    this.isPaused = false;
+    this._clearPartnerGone();
 
     if (this.negotiator) {
       await this.negotiator.endRound();
@@ -504,10 +535,7 @@ export class CallRoomController {
     }
     this._bindLocalPreview();
     this.partner = null;
-    this.partnerPresence = null;
-    this._clearPartnerGone();
     this._updatePartnerUI();
-    // Next server.pairing will prepare the next round automatically.
   }
 
   async _onEventEnd(payload) {
@@ -515,6 +543,8 @@ export class CallRoomController {
     this.eventEndReason = payload.reason || "completed";
     this._setPhase(CallRoomPhase.EVENT_ENDED);
     this._signalingDegraded = false;
+    this.isPaused = false;
+    this._clearPartnerGone();
     this._unbindOnlineListener();
     this._clearReconnect();
     this._wsGeneration += 1;
@@ -537,37 +567,46 @@ export class CallRoomController {
     this._intentionalClose = false;
   }
 
-  _onPartnerState(payload) {
-    if (!payload) return;
+  _onServerError(payload) {
+    const code = payload?.code ? String(payload.code) : "";
+    const reason = payload?.reason ? String(payload.reason) : "";
+    const msg = payload?.message || payload?.error || "";
     if (
-      this.partner &&
-      String(payload.partner_id) !== String(this.partner.partnerId)
+      code === "ERR_ALREADY_CONNECTED" ||
+      code === "session_replaced" ||
+      reason === "session_replaced" ||
+      code === "4001" ||
+      /another window/i.test(msg)
     ) {
+      this._onSessionReplaced();
       return;
     }
-    const presence = partnerPresenceFromProtocol(payload.state);
-    this.partnerPresence = presence;
-    if (presence === "gone") {
-      this._showPartnerGone();
-      return;
-    }
-    if (presence === "reconnecting") {
-      this._showPartnerReconnecting();
-      return;
-    }
-    this._clearPartnerGone();
-    this.negotiator?.recoverAfterSignalingRestore?.();
+    this._showConnectionError(msg || "A connection error occurred.");
   }
 
-  _onServerError(payload) {
-    if (payload?.code !== "ERR_ALREADY_CONNECTED") return;
+  _onSessionReplaced() {
     this._intentionalClose = true;
-    this._signalingDegraded = false;
-    this._unbindOnlineListener();
+    this._clearPartnerGone();
     this._clearReconnect();
-    this._wsGeneration += 1;
+    this._unbindOnlineListener();
+    this._stopTimer();
+    this.clockSync.stop();
+
+    if (this.negotiator) {
+      this.negotiator.leave();
+      this.negotiator = null;
+    }
+    this._sharedStream = null;
+    this._mediaPromise = null;
+    if (this.elements.localVideo) {
+      this.elements.localVideo.srcObject = null;
+    }
+    if (this.elements.remoteVideo) {
+      this.elements.remoteVideo.srcObject = null;
+    }
     this._detachSocket();
     this._intentionalClose = false;
+
     if (this.elements.errorBanner) {
       this.elements.errorBanner.hidden = false;
       this.elements.errorBanner.textContent =
@@ -588,10 +627,8 @@ export class CallRoomController {
   }
 
   _showPartnerGone() {
-    if (this.elements.remoteVideo) {
-      this.elements.remoteVideo.srcObject = null;
-    }
-    const bannerText = partnerLeftBanner(this.partner?.displayName);
+    const name = this.partner?.displayName || "Partner";
+    const bannerText = partnerLeftBanner(name);
     if (this.elements.partnerGoneBanner) {
       this.elements.partnerGoneBanner.hidden = false;
       this.elements.partnerGoneBanner.textContent = bannerText;
@@ -599,6 +636,9 @@ export class CallRoomController {
     if (this.elements.qualityBanner) {
       this.elements.qualityBanner.hidden = false;
       this.elements.qualityBanner.textContent = bannerText;
+    }
+    if (this.elements.remoteVideo) {
+      this.elements.remoteVideo.srcObject = null;
     }
     if (this.elements.connectionBadge) {
       this.elements.connectionBadge.textContent = "PARTNER LEFT";
@@ -614,47 +654,125 @@ export class CallRoomController {
     this._updatePartnerUI();
   }
 
-  _showPartnerReconnecting() {
-    if (this.elements.partnerGoneBanner) {
-      this.elements.partnerGoneBanner.hidden = false;
-      this.elements.partnerGoneBanner.textContent =
-        "Your partner is reconnecting…";
+  _onPartnerState(payload) {
+    if (!payload) return;
+    const roomId = payload.room_id || payload.roomId;
+    if (roomId && this.partner && String(roomId) !== String(this.partner.roomId)) {
+      return;
     }
-    if (this.elements.qualityBanner) {
-      this.elements.qualityBanner.hidden = false;
-      this.elements.qualityBanner.textContent =
-        "Your partner is reconnecting…";
+    const partnerId = payload.partner_id || payload.partnerId;
+    if (partnerId && this.partner && String(partnerId) !== String(this.partner.partnerId)) {
+      return;
     }
-    if (this.elements.connectionBadge) {
-      this.elements.connectionBadge.textContent = "PARTNER RECONNECTING";
-      this.elements.connectionBadge.className = "badge reconnecting";
-      if (!this.elements.connectionBadge.dataset) {
-        this.elements.connectionBadge.dataset = {};
+
+    const presence = partnerPresenceFromProtocol(payload) || "gone";
+    this.partnerPresence = presence;
+
+    if (presence === "gone") {
+      this._showPartnerGone();
+    } else if (presence === "reconnecting") {
+      if (this.elements.qualityBanner) {
+        this.elements.qualityBanner.hidden = false;
+        this.elements.qualityBanner.textContent =
+          "Partner temporarily disconnected. Please wait...";
       }
-      this.elements.connectionBadge.dataset.quality = "partner-reconnecting";
-    }
-    if (this.elements.statusFooter) {
-      this.elements.statusFooter.textContent =
-        "Your partner is reconnecting. The round timer continues.";
+      if (this.elements.connectionBadge) {
+        this.elements.connectionBadge.textContent = "PARTNER RECONNECTING";
+        this.elements.connectionBadge.className = "badge reconnecting";
+        if (!this.elements.connectionBadge.dataset) {
+          this.elements.connectionBadge.dataset = {};
+        }
+        this.elements.connectionBadge.dataset.quality = "partner-reconnecting";
+      }
+    } else if (presence === "connected") {
+      this._clearPartnerGone();
     }
   }
 
+  _onPartnerPresence(payload) {
+    this._onPartnerState(payload);
+  }
+
   _clearPartnerGone() {
-    if (this.partnerPresence === "gone" || this.partnerPresence === "reconnecting") {
-      this.partnerPresence = "connected";
+    if (this._partnerGoneTimer) {
+      clearTimeout(this._partnerGoneTimer);
+      this._partnerGoneTimer = null;
     }
     if (this.elements.partnerGoneBanner) {
       this.elements.partnerGoneBanner.hidden = true;
       this.elements.partnerGoneBanner.textContent = "";
     }
-    if (this.elements.qualityBanner) {
+    if (this.elements.qualityBanner && !this._signalingDegraded && !this.isPaused) {
       this.elements.qualityBanner.hidden = true;
       this.elements.qualityBanner.textContent = "";
     }
-    if (this.elements.statusFooter && this.phase === CallRoomPhase.IN_ROUND) {
+    if (this.elements.statusFooter) {
       this.elements.statusFooter.textContent = "Round in progress";
     }
-    this._refreshQualityFromPeer();
+    if (
+      this.elements.connectionBadge &&
+      this.elements.connectionBadge.dataset?.quality === "partner-gone"
+    ) {
+      this._applyConnectionQuality(
+        this.negotiator?.pc?.connectionState || "connected",
+      );
+    }
+  }
+
+  _onOperatorPause(payload) {
+    this.isPaused = true;
+    this._stopTimer();
+
+    const remainingSeconds = Number(payload.remaining_seconds ?? 0);
+    const remainingMs = remainingSeconds * 1000;
+    const display = formatTimerDisplay(remainingMs);
+    this._renderTimer(display, TimerVisualState.PAUSED);
+
+    if (this.elements.qualityBanner) {
+      this.elements.qualityBanner.hidden = false;
+      this.elements.qualityBanner.textContent =
+        "Round temporarily paused by operator.";
+    }
+
+    if (this.onTimerTick) {
+      this.onTimerTick({
+        remainingMs,
+        display,
+        visual: TimerVisualState.PAUSED,
+      });
+    }
+  }
+
+  _onOperatorResume(payload) {
+    this.isPaused = false;
+    if (payload.ends_at) {
+      this.roundEndTs =
+        typeof payload.ends_at === "number"
+          ? payload.ends_at
+          : Date.parse(payload.ends_at);
+    }
+
+    if (this.elements.qualityBanner && !this._signalingDegraded) {
+      this.elements.qualityBanner.hidden = true;
+      this.elements.qualityBanner.textContent = "";
+    }
+
+    this._startTimer();
+  }
+
+  _onOperatorExtend(payload) {
+    if (payload.ends_at) {
+      this.roundEndTs =
+        typeof payload.ends_at === "number"
+          ? payload.ends_at
+          : Date.parse(payload.ends_at);
+    } else if (payload.extended_by_seconds && this.roundEndTs) {
+      this.roundEndTs += Number(payload.extended_by_seconds) * 1000;
+    }
+
+    if (!this.isPaused) {
+      this._tickTimer();
+    }
   }
 
   _createNegotiator(roomId, partnerId, rtcConfig) {
@@ -722,14 +840,6 @@ export class CallRoomController {
   }
 
   _applyConnectionQuality(state) {
-    if (this.partnerPresence === "gone") {
-      this._showPartnerGone();
-      return;
-    }
-    if (this.partnerPresence === "reconnecting") {
-      this._showPartnerReconnecting();
-      return;
-    }
     if (this._signalingDegraded && state !== "connected") {
       this._showReconnecting();
       return;
@@ -810,7 +920,6 @@ export class CallRoomController {
       this.elements.connectionBadge.className = "badge failed";
     }
     this._bindLocalPreview();
-    // Do not leave(), stop tracks, close the WebSocket, or end the event.
   }
 
   _showConnectionError(message) {
@@ -851,6 +960,7 @@ export class CallRoomController {
   }
 
   _tickTimer() {
+    if (this.isPaused) return;
     if (!this.roundEndTs || !this.clockSync.isSynchronised) {
       this._renderTimer("--:--", TimerVisualState.WAITING);
       return;
@@ -865,6 +975,7 @@ export class CallRoomController {
       remainingMs,
       this.warningThresholdSeconds,
       this.serverWarningActive,
+      this.isPaused,
     );
     const display = formatTimerDisplay(remainingMs);
     this._renderTimer(display, visual);

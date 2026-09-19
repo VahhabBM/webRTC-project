@@ -5,15 +5,26 @@ import csv
 from django.contrib import admin, messages
 from django.db.models import Count
 from django.http import HttpResponse
+from django.shortcuts import get_object_or_404, redirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils import timezone
 
-from .models import Event, EventStatus, Pair, Participant, ParticipantTag, Round, Tag
+from .models import (
+    Event,
+    EventStatus,
+    OperatorActionLog,
+    Pair,
+    Participant,
+    ParticipantTag,
+    Round,
+    Tag,
+)
 
-for model in (ParticipantTag, Round):
+for model in (ParticipantTag, Round, Pair):
     admin.site.register(model)
 
+# States in which the matching report action is permitted.
 _MATCHING_RUNNABLE_STATES = frozenset(
     {EventStatus.SCHEDULED, EventStatus.ACTIVE, EventStatus.COMPLETED}
 )
@@ -46,11 +57,11 @@ class EventAdmin(admin.ModelAdmin):
         "break_duration",
     )
 
-    # Override the change-form template to inject the "Run Matching Report" button.
+    # Override the change-form template to inject custom tool buttons.
     change_form_template = "admin/events/event/change_form.html"
 
     # ------------------------------------------------------------------ #
-    # Queryset / display helpers                                           #
+    # Queryset / display helpers                                         #
     # ------------------------------------------------------------------ #
 
     def get_queryset(self, request):
@@ -65,7 +76,7 @@ class EventAdmin(admin.ModelAdmin):
         return obj.participants_count
 
     # ------------------------------------------------------------------ #
-    # Custom URL: matching report page                                     #
+    # Custom URLs: matching report & live monitoring                     #
     # ------------------------------------------------------------------ #
 
     def get_urls(self):
@@ -76,11 +87,16 @@ class EventAdmin(admin.ModelAdmin):
                 self.admin_site.admin_view(self.matching_report_view),
                 name="events_event_matching_report",
             ),
+            path(
+                "<uuid:object_id>/live-monitoring/",
+                self.admin_site.admin_view(self.operator_monitoring_view),
+                name="events_event_live_monitoring",
+            ),
         ]
         return custom + urls
 
     # ------------------------------------------------------------------ #
-    # Inject matching-report URL into the change-form context              #
+    # Inject action URLs into the change-form context                    #
     # ------------------------------------------------------------------ #
 
     def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
@@ -89,10 +105,74 @@ class EventAdmin(admin.ModelAdmin):
             extra_context["matching_report_url"] = reverse(
                 "admin:events_event_matching_report", args=[object_id]
             )
+            extra_context["live_monitoring_url"] = reverse(
+                "admin:events_event_live_monitoring", args=[object_id]
+            )
         return super().changeform_view(request, object_id, form_url, extra_context)
 
     # ------------------------------------------------------------------ #
-    # Matching report view                                                 #
+    # Live monitoring view (T-40)                                        #
+    # ------------------------------------------------------------------ #
+
+    def operator_monitoring_view(self, request, object_id):
+        """Admin action page: T-40 Live Monitoring & Operator Controls."""
+        from apps.events.operator import OperatorService
+
+        event = get_object_or_404(Event, pk=object_id)
+        service = OperatorService(event, is_leader=True)
+
+        if request.method == "POST":
+            action = request.POST.get("action")
+            try:
+                if action == "pause":
+                    service.pause()
+                    messages.success(request, "Round successfully paused.")
+                elif action == "resume":
+                    service.resume()
+                    messages.success(request, "Round successfully resumed.")
+                elif action == "extend":
+                    seconds = int(request.POST.get("seconds", 60))
+                    service.extend(extra_seconds=seconds)
+                    messages.success(request, f"Round extended by {seconds} seconds.")
+            except Exception as exc:  # noqa: BLE001
+                messages.error(request, f"Operator action failed: {exc}")
+            return redirect("admin:events_event_live_monitoring", object_id=event.pk)
+
+        now = timezone.now()
+        active_round = (
+            event.rounds.filter(starts_at__lte=now, ends_at__gte=now).first()
+            or event.rounds.filter(starts_at__gt=now).order_by("starts_at").first()
+        )
+
+        action_logs = (
+            OperatorActionLog.objects.filter(event=event)
+            .select_related("round")
+            .order_by("-performed_at")[:20]
+        )
+        pairs = []
+        if active_round:
+            pairs = active_round.pairs.select_related(
+                "participant_a", "participant_b"
+            ).all()
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": f"Live Monitoring \u2013 {event.name}",
+            "opts": self.model._meta,
+            "app_label": self.model._meta.app_label,
+            "event": event,
+            "active_round": active_round,
+            "action_logs": action_logs,
+            "pairs": pairs,
+        }
+        return TemplateResponse(
+            request,
+            "admin/events/event/live_monitoring.html",
+            context,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Matching report view                                               #
     # ------------------------------------------------------------------ #
 
     def matching_report_view(self, request, object_id):
@@ -104,8 +184,6 @@ class EventAdmin(admin.ModelAdmin):
         POST action=lock – generate again (deterministic) and persist to DB if
                            violations == 0; disabled (returns error) otherwise.
         """
-        from django.shortcuts import get_object_or_404
-
         from apps.events.matching import (
             MatchingError,
             generate_schedule,
@@ -328,34 +406,3 @@ class ParticipantAdmin(admin.ModelAdmin):
             )
 
         return response
-
-
-@admin.register(Pair)
-class PairAdmin(admin.ModelAdmin):
-    list_display = (
-        "room_id",
-        "round",
-        "participant_a",
-        "connection_type_a",
-        "connection_time_ms_a",
-        "participant_b",
-        "connection_type_b",
-        "connection_time_ms_b",
-        "status",
-        "created_at",
-    )
-    list_filter = (
-        "status",
-        "connection_type_a",
-        "connection_type_b",
-        "round__event",
-        "round",
-    )
-    search_fields = ("room_id", "participant_a__user_id", "participant_b__user_id")
-    readonly_fields = (
-        "connection_type_a",
-        "connection_time_ms_a",
-        "connection_type_b",
-        "connection_time_ms_b",
-        "created_at",
-    )

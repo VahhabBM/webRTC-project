@@ -1,0 +1,115 @@
+﻿{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_label|capfirst }}</a>
+  &rsaquo; <a href="{% url 'admin:events_event_changelist' %}">Events</a>
+  &rsaquo; <a href="{% url 'admin:events_event_change' event.pk %}">{{ event.name }}</a>
+  &rsaquo; Live Monitoring
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <h1>Live Monitoring &ndash; {{ event.name }}</h1>
+  <p>
+    <strong>Status:</strong> {{ event.get_status_display }} |
+    <strong>Total Rounds:</strong> {{ event.num_rounds }} |
+    <strong>Participants:</strong> {{ event.participants.count }}
+  </p>
+
+  <div class="module" style="padding: 16px; background: #f8f9fa; border: 1px solid #ddd; margin-bottom: 20px; border-radius: 4px;">
+    <h2>Round Controls (T-40)</h2>
+    {% if active_round %}
+      <p>
+        <strong>Active Round:</strong> #{{ active_round.number }} |
+        <strong>Starts at:</strong> {{ active_round.starts_at|date:"H:i:s" }} |
+        <strong>Ends at:</strong> {{ active_round.ends_at|date:"H:i:s" }}
+      </p>
+
+      <div style="display: flex; gap: 10px; align-items: center; margin-top: 10px;">
+        <form method="post" style="display:inline;">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="pause">
+          <button type="submit" class="button" style="background: #e67e22; color: #fff; padding: 8px 16px; border: none; cursor: pointer; border-radius: 4px;">Pause Round</button>
+        </form>
+
+        <form method="post" style="display:inline;">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="resume">
+          <button type="submit" class="button" style="background: #27ae60; color: #fff; padding: 8px 16px; border: none; cursor: pointer; border-radius: 4px;">Resume Round</button>
+        </form>
+
+        <form method="post" style="display:inline-flex; gap: 6px; align-items: center;">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="extend">
+          <select name="seconds" style="padding: 7px; border-radius: 4px; border: 1px solid #ccc;">
+            <option value="60">+1 Minute</option>
+            <option value="120" selected>+2 Minutes</option>
+            <option value="300">+5 Minutes</option>
+          </select>
+          <button type="submit" class="button" style="background: #2980b9; color: #fff; padding: 8px 16px; border: none; cursor: pointer; border-radius: 4px;">Extend Duration</button>
+        </form>
+      </div>
+    {% else %}
+      <p><em>No active round currently running or event is not in progress.</em></p>
+    {% endif %}
+  </div>
+
+  <div class="module" style="margin-bottom: 20px;">
+    <h2>Active Round Pairings ({% if pairs %}{{ pairs|length }}{% else %}0{% endif %})</h2>
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr style="text-align: left; background: #eee;">
+          <th style="padding: 8px; border: 1px solid #ddd;">Room ID</th>
+          <th style="padding: 8px; border: 1px solid #ddd;">Participant A</th>
+          <th style="padding: 8px; border: 1px solid #ddd;">Participant B</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pair in pairs %}
+          <tr>
+            <td style="padding: 8px; border: 1px solid #ddd;"><code>{{ pair.room_id }}</code></td>
+            <td style="padding: 8px; border: 1px solid #ddd;">{{ pair.participant_a.name|default:pair.participant_a.email }}</td>
+            <td style="padding: 8px; border: 1px solid #ddd;">{{ pair.participant_b.name|default:pair.participant_b.email }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="3" style="padding: 8px; border: 1px solid #ddd; text-align: center;">No active pairings for this round.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="module">
+    <h2>Recent Operator Audit Logs</h2>
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr style="text-align: left; background: #eee;">
+          <th style="padding: 8px; border: 1px solid #ddd;">Timestamp</th>
+          <th style="padding: 8px; border: 1px solid #ddd;">Action</th>
+          <th style="padding: 8px; border: 1px solid #ddd;">Round</th>
+          <th style="padding: 8px; border: 1px solid #ddd;">Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in action_logs %}
+          <tr>
+            <td style="padding: 8px; border: 1px solid #ddd;">{{ log.performed_at|date:"Y-m-d H:i:s" }}</td>
+            <td style="padding: 8px; border: 1px solid #ddd;"><strong>{{ log.action|upper }}</strong></td>
+            <td style="padding: 8px; border: 1px solid #ddd;">{% if log.round %}Round #{{ log.round.number }}{% else %}&mdash;{% endif %}</td>
+            <td style="padding: 8px; border: 1px solid #ddd;"><code>{{ log.details|default:"{}" }}</code></td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="4" style="padding: 8px; border: 1px solid #ddd; text-align: center;">No operator actions recorded yet.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
