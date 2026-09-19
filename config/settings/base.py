@@ -162,6 +162,9 @@ PARTICIPANT_JOIN_BASE_URL = os.environ.get("PARTICIPANT_JOIN_BASE_URL", "")
 # WebSocket protocol policy defaults. T-14 may override these per deployment
 # or event; protocol constants expose the same documented defaults.
 PROTOCOL_RECONNECT_WINDOW_SECONDS = 300
+# Seconds a participant must stay absent before the partner is marked gone (T-34).
+# Kept above the T-33 5–20s recovery window so brief drops are not "partner left".
+PARTNER_ABSENCE_GRACE_SECONDS = env_int("PARTNER_ABSENCE_GRACE_SECONDS", 25)
 PROTOCOL_RATE_LIMIT_MESSAGES_PER_MINUTE = env_int(
     "PROTOCOL_RATE_LIMIT_MESSAGES_PER_MINUTE", 60
 )
