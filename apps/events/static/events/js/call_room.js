@@ -1,6 +1,6 @@
 /**
- * T-30/T-31/T-34/T-40 Call Room controller — lifecycle, synchronized timer, round rotation,
- * partner presence tracking (long absence re-entry), and operator live controls (pause, resume, extend).
+ * T-30/T-31/T-34/T-40/T-41 Call Room controller — lifecycle, synchronized timer, round rotation,
+ * partner presence tracking (long absence re-entry), operator live controls, and disconnect telemetry.
  */
 
 import { ClockSyncClient } from "./clock_sync_client.js";
@@ -187,6 +187,7 @@ export class CallRoomController {
     this._reconnectStartedAt = null;
     this._reconnectGaveUp = false;
     this._onlineHandler = null;
+    this._beforeUnloadHandler = null;
     this._intentionalClose = false;
   }
 
@@ -199,6 +200,7 @@ export class CallRoomController {
   connect() {
     void this.ensureLocalMedia();
     this._bindOnlineListener();
+    this._bindBeforeUnloadListener();
     if (this.phase === CallRoomPhase.EVENT_ENDED || this._reconnectGaveUp) return;
 
     const now = this._now();
@@ -302,6 +304,7 @@ export class CallRoomController {
     this.isPaused = false;
     this._clearPartnerGone();
     this._unbindOnlineListener();
+    this._unbindBeforeUnloadListener();
     this._clearReconnect();
     this._reconnectGaveUp = false;
     this._reconnectStartedAt = null;
@@ -419,6 +422,22 @@ export class CallRoomController {
         })
         .catch((err) => {
           this._mediaPromise = null;
+          // T-41: اعلام رد مجوز مدیا به عنوان علت قطعی
+          if (this.ws && this.ws.readyState === 1) {
+            try {
+              this.ws.send(
+                JSON.stringify({
+                  type: "client.telemetry",
+                  payload: {
+                    cause: "permission_denied",
+                    detail: err.name || String(err),
+                  },
+                }),
+              );
+            } catch {
+              // ignore
+            }
+          }
           this._showConnectionError(
             "Could not start the camera or microphone. Check permissions and try again.",
           );
@@ -546,6 +565,7 @@ export class CallRoomController {
     this.isPaused = false;
     this._clearPartnerGone();
     this._unbindOnlineListener();
+    this._unbindBeforeUnloadListener();
     this._clearReconnect();
     this._wsGeneration += 1;
     this._stopTimer();
@@ -589,6 +609,7 @@ export class CallRoomController {
     this._clearPartnerGone();
     this._clearReconnect();
     this._unbindOnlineListener();
+    this._unbindBeforeUnloadListener();
     this._stopTimer();
     this.clockSync.stop();
 
@@ -1125,6 +1146,37 @@ export class CallRoomController {
       target.removeEventListener("online", this._onlineHandler);
     }
     this._onlineHandler = null;
+  }
+
+  _bindBeforeUnloadListener() {
+    if (this._beforeUnloadHandler) return;
+    const target = typeof window !== "undefined" ? window : globalThis;
+    if (typeof target.addEventListener !== "function") return;
+    this._beforeUnloadHandler = () => {
+      // T-41: ارسال تله‌متری بستن برگه/مرورگر به سرور قبل از نابودی سوکت
+      if (this.ws && this.ws.readyState === 1) {
+        try {
+          this.ws.send(
+            JSON.stringify({
+              type: "client.telemetry",
+              payload: { cause: "tab_closed" },
+            }),
+          );
+        } catch {
+          // ignore
+        }
+      }
+    };
+    target.addEventListener("beforeunload", this._beforeUnloadHandler);
+  }
+
+  _unbindBeforeUnloadListener() {
+    if (!this._beforeUnloadHandler) return;
+    const target = typeof window !== "undefined" ? window : globalThis;
+    if (typeof target.removeEventListener === "function") {
+      target.removeEventListener("beforeunload", this._beforeUnloadHandler);
+    }
+    this._beforeUnloadHandler = null;
   }
 
   _clearReconnect() {

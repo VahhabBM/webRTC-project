@@ -5,9 +5,11 @@ import uuid
 from datetime import timedelta
 from uuid import uuid4
 
+from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.utils import timezone
 from django.utils.timezone import now as django_now
 
 
@@ -391,3 +393,76 @@ class OperatorActionLog(models.Model):
 
     def __str__(self) -> str:
         return f"{self.action} on event {self.event_id} at {self.performed_at}"
+
+
+class DisconnectionCause(models.TextChoices):
+    NETWORK = "network", "خطای شبکه / Network"
+    TAB_CLOSED = "tab_closed", "بستن برگه / Tab Closed"
+    PERMISSION_DENIED = "permission_denied", "رد مجوز مدیا / Permission Denied"
+
+
+class DisconnectionLog(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    event = models.ForeignKey(
+        Event, on_delete=models.CASCADE, related_name="disconnection_logs"
+    )
+    participant = models.ForeignKey(
+        Participant, on_delete=models.CASCADE, related_name="disconnection_logs"
+    )
+    round = models.ForeignKey(
+        Round,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="disconnection_logs",
+    )
+    cause = models.CharField(
+        max_length=32,
+        choices=DisconnectionCause.choices,
+        default=DisconnectionCause.NETWORK,
+        db_index=True,
+    )
+    detail = models.TextField(blank=True, default="")
+    disconnected_at = models.DateTimeField(default=timezone.now, db_index=True)
+    reconnected_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-disconnected_at"]
+        indexes = [
+            models.Index(fields=["event", "disconnected_at"]),
+            models.Index(fields=["participant", "disconnected_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.participant.display_name} - {self.cause} "
+            f"({self.disconnected_at:%H:%M:%S})"
+        )
+
+
+class ParticipantIncidentNote(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    event = models.ForeignKey(
+        Event, on_delete=models.CASCADE, related_name="incident_notes"
+    )
+    participant = models.ForeignKey(
+        Participant, on_delete=models.CASCADE, related_name="incident_notes"
+    )
+    operator = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="operator_incident_notes",
+    )
+    note = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return (
+            f"Note on {self.participant.display_name} at "
+            f"{self.created_at:%Y-%m-%d %H:%M}"
+        )
