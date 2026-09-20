@@ -282,7 +282,7 @@ export class CallRoomController {
     };
 
     socket.onerror = () => {
-      // onclose will handle reconnect
+      // onclose handles reconnect
     };
   }
 
@@ -434,7 +434,7 @@ export class CallRoomController {
                   type: "client.telemetry",
                   payload: {
                     cause: "permission_denied",
-                    detail: err.name || String(err),
+                    detail: err?.name || String(err),
                   },
                 }),
               );
@@ -806,6 +806,7 @@ export class CallRoomController {
       partnerParticipantId: partnerId,
       roomId,
       rtcConfig,
+      forceFallback: this.forceMediaFallback,
       localStream: this._sharedStream || null,
       sendSignalingMessage: (signalMsg) => {
         if (this.ws?.readyState === 1) {
@@ -977,6 +978,9 @@ export class CallRoomController {
   _startTimer() {
     this._stopTimer();
     this._timerInterval = setInterval(() => this._tickTimer(), 250);
+    if (this._timerInterval?.unref) {
+      this._timerInterval.unref();
+    }
     this._tickTimer();
   }
 
@@ -1089,6 +1093,9 @@ export class CallRoomController {
       }
       this.connect();
     }, delay);
+    if (this._reconnectTimer?.unref) {
+      this._reconnectTimer.unref();
+    }
   }
 
   _giveUpReconnect() {
