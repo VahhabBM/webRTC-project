@@ -38,13 +38,9 @@ export const CallRoomPhase = Object.freeze({
   DISCONNECTED: "disconnected",
 });
 
-/** Initial wait before the first T-14 reconnect attempt (T-33). */
 export const RECONNECT_INITIAL_DELAY_MS = 500;
-/** Cap so restoration of a 5–20s outage still reconnects in <10s. */
 export const RECONNECT_MAX_DELAY_MS = 4000;
-/** Stop hammering a dead socket; identity hold on the server is 300s. */
 export const RECONNECT_WINDOW_MS = 45_000;
-/** Partner absence grace period before marking as gone (T-34). */
 export const PARTNER_ABSENCE_GRACE_MS = 25_000;
 export const PARTNER_GONE_FOOTER =
   "Your partner left. The round timer continues — no replacement will be assigned.";
@@ -53,9 +49,6 @@ export function partnerLeftBanner(name = "Partner") {
   return `${name} left. Waiting for them to return — the round continues.`;
 }
 
-/**
- * Maps protocol state/presence strings or payloads to client presence strings ('connected', 'reconnecting', 'gone').
- */
 export function partnerPresenceFromProtocol(payload) {
   if (!payload) return null;
   const raw =
@@ -70,7 +63,6 @@ export function partnerPresenceFromProtocol(payload) {
   return val;
 }
 
-/** Mirrors call_room_logic.next_reconnect_delay_ms */
 export function nextReconnectDelayMs(
   attempt,
   initialMs = RECONNECT_INITIAL_DELAY_MS,
@@ -80,7 +72,6 @@ export function nextReconnectDelayMs(
   return Math.min(maxMs, initialMs * 2 ** n);
 }
 
-/** Mirrors call_room_logic.reconnect_window_exhausted */
 export function reconnectWindowExhausted(
   startedAtMs,
   nowMs,
@@ -89,13 +80,11 @@ export function reconnectWindowExhausted(
   return nowMs - startedAtMs >= windowMs;
 }
 
-/** Mirrors call_room_logic.compute_remaining_ms */
 export function computeRemainingMs(roundEndTs, offsetMs, clientNowMs) {
   const estimatedServerNow = Math.round(clientNowMs + offsetMs);
   return Math.max(0, roundEndTs - estimatedServerNow);
 }
 
-/** Mirrors call_room_logic.format_timer_display */
 export function formatTimerDisplay(remainingMs) {
   const totalSeconds = Math.max(0, Math.floor(remainingMs / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -103,7 +92,6 @@ export function formatTimerDisplay(remainingMs) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
-/** Mirrors call_room_logic.timer_visual_state */
 export function timerVisualState(
   remainingMs,
   warningThresholdSeconds,
@@ -118,7 +106,6 @@ export function timerVisualState(
   return TimerVisualState.NORMAL;
 }
 
-/** Mirrors call_room_logic.parse_pairing_payload */
 export function parsePairingPayload(payload) {
   const tags = Array.isArray(payload.partner_tags)
     ? payload.partner_tags.map(String)
@@ -140,21 +127,16 @@ export function parsePairingPayload(payload) {
   };
 }
 
-/**
- * Main call-room orchestrator.
- */
 export class CallRoomController {
   constructor({
     myParticipantId,
     warningThresholdSeconds = 30,
     forceMediaFallback = false,
-    forceFallback = false,
     elements = {},
     onPhaseChange = null,
     onTimerTick = null,
     fetchIceServers = null,
     negotiatorFactory = null,
-    transportFactory = null,
     transientIceGraceMs = null,
     iceRestartAfterDisconnectMs = null,
     reconnectInitialDelayMs = RECONNECT_INITIAL_DELAY_MS,
@@ -165,13 +147,12 @@ export class CallRoomController {
   }) {
     this.myParticipantId = myParticipantId;
     this.warningThresholdSeconds = warningThresholdSeconds;
-    this.forceMediaFallback = Boolean(forceMediaFallback || forceFallback);
-    this.forceFallback = this.forceMediaFallback;
+    this.forceMediaFallback = Boolean(forceMediaFallback);
     this.elements = elements;
     this.onPhaseChange = onPhaseChange;
     this.onTimerTick = onTimerTick;
     this._fetchIceServers = fetchIceServers;
-    this._negotiatorFactory = transportFactory || negotiatorFactory;
+    this._negotiatorFactory = negotiatorFactory;
     this._transientIceGraceMs = transientIceGraceMs;
     this._iceRestartAfterDisconnectMs = iceRestartAfterDisconnectMs;
     this._reconnectInitialDelayMs = reconnectInitialDelayMs;
@@ -207,14 +188,6 @@ export class CallRoomController {
     this._intentionalClose = false;
   }
 
-  get transport() {
-    return this.negotiator;
-  }
-
-  set transport(val) {
-    this.negotiator = val;
-  }
-
   _liveStream(stream) {
     return Boolean(
       stream && stream.getTracks().some((track) => track.readyState !== "ended"),
@@ -226,18 +199,11 @@ export class CallRoomController {
       await this.negotiator.forceMediaFallback();
       this._bindLocalPreview();
       this._applyConnectionQuality("relay");
-    } else if (this.negotiator && typeof this.negotiator.forceFallback === "function") {
-      await this.negotiator.forceFallback();
-      this._bindLocalPreview();
-      this._applyConnectionQuality("relay");
     }
   }
 
-  async forceFallback() {
-    return this.forceMediaFallback();
-  }
-
   connect() {
+    void this.ensureLocalMedia();
     this._bindOnlineListener();
     this._bindBeforeUnloadListener();
     if (this.phase === CallRoomPhase.EVENT_ENDED || this._reconnectGaveUp) return;
@@ -316,7 +282,7 @@ export class CallRoomController {
     };
 
     socket.onerror = () => {
-      // onclose handles reconnect
+      // onclose will handle reconnect
     };
   }
 
@@ -839,9 +805,7 @@ export class CallRoomController {
       myParticipantId: this.myParticipantId,
       partnerParticipantId: partnerId,
       roomId,
-      selectedRoomId: roomId,
       rtcConfig,
-      forceFallback: this.forceMediaFallback,
       localStream: this._sharedStream || null,
       sendSignalingMessage: (signalMsg) => {
         if (this.ws?.readyState === 1) {
@@ -851,7 +815,9 @@ export class CallRoomController {
       onRemoteStream: (stream) => {
         if (this.elements.remoteVideo && this.elements.remoteVideo.srcObject !== stream) {
           this.elements.remoteVideo.srcObject = stream;
-          this.elements.remoteVideo.play?.().catch(() => {});
+          if (typeof this.elements.remoteVideo.play === "function") {
+            this.elements.remoteVideo.play().catch(() => {});
+          }
         }
       },
       onStateChange: (state) => {
