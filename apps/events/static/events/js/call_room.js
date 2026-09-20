@@ -11,6 +11,8 @@
  * keeps ticking from round_end_ts.
  * T-38: a pair-scoped second media adapter may take over if the primary/direct
  * path fails. Call-room code uses only the shared T-26 transport surface.
+ * T-39: if the primary path is not connected in time, the same T-38 fallback
+ * is activated for THIS pair only.
  * T-30/T-31/T-34/T-40 Call Room controller — lifecycle, synchronized timer, round rotation,
  * partner presence tracking (long absence re-entry), and operator live controls (pause, resume, extend).
  */
@@ -19,6 +21,7 @@ import { ClockSyncClient } from "./clock_sync_client.js";
 import {
   FailoverMediaTransport,
   DEFAULT_MEDIA_CONSTRAINTS,
+  DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS,
   acquireSharedLocalMedia,
 } from "./media_transport.js";
 
@@ -162,6 +165,8 @@ export class CallRoomController {
     now = null,
     mediaFallbackRoomId = "",
     forceMediaFallback = false,
+    escalationTimeoutMs = DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS,
+    scheduleEscalation = null,
   }) {
     this.myParticipantId = myParticipantId;
     this.warningThresholdSeconds = warningThresholdSeconds;
@@ -179,6 +184,10 @@ export class CallRoomController {
     this._now = now || (() => Date.now());
     this._mediaFallbackRoomId = mediaFallbackRoomId ? String(mediaFallbackRoomId) : "";
     this._forceMediaFallback = Boolean(forceMediaFallback);
+    this._escalationTimeoutMs = Number.isFinite(Number(escalationTimeoutMs))
+      ? Number(escalationTimeoutMs)
+      : DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS;
+    this._scheduleEscalation = scheduleEscalation;
 
     this.ws = null;
     this.negotiator = null;
@@ -835,6 +844,8 @@ export class CallRoomController {
       ...options,
       selectedRoomId: this._mediaFallbackRoomId,
       forceFallback: this._forceMediaFallback,
+      escalationTimeoutMs: this._escalationTimeoutMs,
+      scheduleEscalation: this._scheduleEscalation,
     });
   }
 
@@ -954,10 +965,15 @@ export class CallRoomController {
 
   _onPartnerSwitchFailure(err, reason = "PARTNER_SWITCH_FAILED") {
     console.error("[CallRoom] Partner switch/renegotiation failed:", err);
-    const message =
-      reason === "ICE_CONNECTION_FAILED"
-        ? "Connection to this partner failed. Your camera stays on; other rounds are not stopped."
-        : "Could not connect to the next partner. Your camera stays on and other rounds are not stopped.";
+    let message =
+      "Could not connect to the next partner. Your camera stays on and other rounds are not stopped.";
+    if (reason === "ICE_CONNECTION_FAILED") {
+      message =
+        "Connection to this partner failed. Your camera stays on; other rounds are not stopped.";
+    } else if (reason === "ESCALATION_FALLBACK_UNAVAILABLE") {
+      message =
+        "Direct call did not connect and fallback is not available for this pair. Other rooms are not affected.";
+    }
     this._showConnectionError(message);
     if (this.elements.connectionBadge) {
       this.elements.connectionBadge.textContent = `FAILED: ${reason}`;
