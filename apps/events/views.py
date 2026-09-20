@@ -24,6 +24,7 @@ from apps.events.auth import (
 from apps.events.models import ConnectionType, Pair, Participant
 from apps.events.orchestrator import invalidate_participant_sockets
 from apps.events.turn import TurnCredentialService, generate_ice_servers
+from apps.protocol.media_transport import DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS
 
 
 def get_authenticated_participant(request: HttpRequest) -> Participant | None:
@@ -155,6 +156,13 @@ def video_room_page(request: HttpRequest) -> HttpResponse:
             ),
             "media_fallback_room_id": getattr(settings, "MEDIA_FALLBACK_ROOM_ID", "")
             or "",
+            "media_fallback_escalation_timeout_ms": int(
+                getattr(
+                    settings,
+                    "MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS",
+                    DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS,
+                )
+            ),
         },
     )
 

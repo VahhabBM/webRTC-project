@@ -75,6 +75,11 @@ class Command(BaseCommand):
             "  http://localhost:8000/room/"
             "?media_fallback_room=test-room-101&force_media_fallback=1\n"
         )
+        self.stdout.write(
+            "T-39 automatic escalation (no force flag; wait for timeout):\n"
+            "  http://localhost:8000/room/"
+            "?media_fallback_room=test-room-101\n"
+        )
 
         if not options.get("extra_pair"):
             return

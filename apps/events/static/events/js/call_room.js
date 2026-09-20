@@ -1,12 +1,28 @@
 /**
+/**
  * T-30/T-31/T-34/T-40/T-41 Call Room controller — lifecycle, synchronized timer, round rotation,
  * partner presence tracking (long absence re-entry), operator live controls, and disconnect telemetry.
+ *
+ * Timer uses T-15 clock offset + absolute round_end_ts from server.pairing.
+ * Handles T-24 messages: pairing, round_start, round_warning, round_end, event_end.
+ * T-31: camera/mic are acquired once and reused across partner switches.
+ * T-32: brief ICE/network drops show a degraded quality state and recover
+ * on the same peer connection without ending the round or re-prompting devices.
+ * T-33: 5–20s network loss reconnects the T-14 socket with bounded backoff
+ * to the same partner/room/round, showing RECONNECTING while the T-15 timer
+ * keeps ticking from round_end_ts.
+ * T-38: a pair-scoped second media adapter may take over if the primary/direct
+ * path fails. Call-room code uses only the shared T-26 transport surface.
+ * T-39: if the primary path is not connected in time, the same T-38 fallback
+ * is activated for THIS pair only.
+ * T-40/T-41: partner presence tracking and operator live controls.
  */
 
 import { ClockSyncClient } from "./clock_sync_client.js";
 import {
   FailoverMediaTransport,
   DEFAULT_MEDIA_CONSTRAINTS,
+  DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS,
   acquireSharedLocalMedia,
 } from "./media_transport.js";
 
@@ -34,31 +50,50 @@ export const PARTNER_ABSENCE_GRACE_MS = 25_000;
 export const PARTNER_GONE_FOOTER =
   "Your partner left. The round timer continues — no replacement will be assigned.";
 
-export function partnerLeftBanner(name = "Partner") {
+export function partnerLeftBanner(
+  name = "Partner",
+) {
   return `${name} left. Waiting for them to return — the round continues.`;
 }
 
-export function partnerPresenceFromProtocol(payload) {
-  if (!payload) return null;
+export function partnerPresenceFromProtocol(
+  payload,
+) {
+  if (!payload) {
+    return null;
+  }
 
   const raw =
-    typeof payload === "object" && payload !== null
-      ? payload.state || payload.presence || payload.status
+    typeof payload === "object" &&
+    payload !== null
+      ? payload.state ||
+        payload.presence ||
+        payload.status
       : payload;
 
-  if (!raw) return null;
+  if (!raw) {
+    return null;
+  }
 
-  const val = String(raw).toLowerCase();
+  const val =
+    String(raw).toLowerCase();
 
-  if (val === "disconnected" || val === "gone") {
+  if (
+    val === "disconnected" ||
+    val === "gone"
+  ) {
     return "gone";
   }
 
-  if (val === "reconnecting") {
+  if (
+    val === "reconnecting"
+  ) {
     return "reconnecting";
   }
 
-  if (val === "connected") {
+  if (
+    val === "connected"
+  ) {
     return "connected";
   }
 
@@ -67,19 +102,32 @@ export function partnerPresenceFromProtocol(payload) {
 
 export function nextReconnectDelayMs(
   attempt,
-  initialMs = RECONNECT_INITIAL_DELAY_MS,
-  maxMs = RECONNECT_MAX_DELAY_MS,
+  initialMs =
+    RECONNECT_INITIAL_DELAY_MS,
+  maxMs =
+    RECONNECT_MAX_DELAY_MS,
 ) {
-  const n = Math.max(0, Number(attempt) || 0);
-  return Math.min(maxMs, initialMs * 2 ** n);
+  const n = Math.max(
+    0,
+    Number(attempt) || 0,
+  );
+
+  return Math.min(
+    maxMs,
+    initialMs * 2 ** n,
+  );
 }
 
 export function reconnectWindowExhausted(
   startedAtMs,
   nowMs,
-  windowMs = RECONNECT_WINDOW_MS,
+  windowMs =
+    RECONNECT_WINDOW_MS,
 ) {
-  return nowMs - startedAtMs >= windowMs;
+  return (
+    nowMs - startedAtMs >=
+    windowMs
+  );
 }
 
 export function computeRemainingMs(
@@ -88,7 +136,9 @@ export function computeRemainingMs(
   clientNowMs,
 ) {
   const estimatedServerNow =
-    Math.round(clientNowMs + offsetMs);
+    Math.round(
+      clientNowMs + offsetMs,
+    );
 
   return Math.max(
     0,
@@ -96,22 +146,34 @@ export function computeRemainingMs(
   );
 }
 
-export function formatTimerDisplay(remainingMs) {
-  const totalSeconds = Math.max(
-    0,
-    Math.floor(remainingMs / 1000),
-  );
+export function formatTimerDisplay(
+  remainingMs,
+) {
+  const totalSeconds =
+    Math.max(
+      0,
+      Math.floor(
+        remainingMs / 1000,
+      ),
+    );
 
-  const minutes = Math.floor(
-    totalSeconds / 60,
-  );
+  const minutes =
+    Math.floor(
+      totalSeconds / 60,
+    );
 
   const seconds =
     totalSeconds % 60;
 
-  return `${String(minutes).padStart(2, "0")}:${String(
-    seconds,
-  ).padStart(2, "0")}`;
+  return `${String(
+    minutes,
+  ).padStart(
+    2,
+    "0",
+  )}:${String(seconds).padStart(
+    2,
+    "0",
+  )}`;
 }
 
 export function timerVisualState(
@@ -130,7 +192,9 @@ export function timerVisualState(
 
   if (
     serverWarningActive ||
-    remainingMs <= warningThresholdSeconds * 1000
+    remainingMs <=
+      warningThresholdSeconds *
+        1000
   ) {
     return TimerVisualState.WARNING;
   }
@@ -138,24 +202,44 @@ export function timerVisualState(
   return TimerVisualState.NORMAL;
 }
 
-export function parsePairingPayload(payload) {
-  const tags = Array.isArray(payload.partner_tags)
-    ? payload.partner_tags.map(String)
-    : [];
+export function parsePairingPayload(
+  payload,
+) {
+  const tags =
+    Array.isArray(
+      payload.partner_tags,
+    )
+      ? payload.partner_tags.map(
+          String,
+        )
+      : [];
 
   const displayName =
-    typeof payload.partner_display_name === "string" &&
+    typeof payload.partner_display_name ===
+      "string" &&
     payload.partner_display_name.trim()
       ? payload.partner_display_name
       : "Partner";
 
   return {
-    partnerId: String(payload.partner_id),
-    roomId: String(payload.room_id),
-    roundNumber: Number(payload.round_number),
-    roundStartTs: Number(payload.round_start_ts),
-    roundEndTs: Number(payload.round_end_ts),
-    isOfferer: Boolean(payload.is_offerer),
+    partnerId: String(
+      payload.partner_id,
+    ),
+    roomId: String(
+      payload.room_id,
+    ),
+    roundNumber: Number(
+      payload.round_number,
+    ),
+    roundStartTs: Number(
+      payload.round_start_ts,
+    ),
+    roundEndTs: Number(
+      payload.round_end_ts,
+    ),
+    isOfferer: Boolean(
+      payload.is_offerer,
+    ),
     displayName,
     tags,
   };
@@ -165,36 +249,89 @@ export class CallRoomController {
   constructor({
     myParticipantId,
     warningThresholdSeconds = 30,
+
     forceMediaFallback = false,
     forceFallback = false,
+
     mediaFallbackRoomId = "",
+
+    escalationTimeoutMs =
+      DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS,
+
+    scheduleEscalation = null,
+
     elements = {},
+
     onPhaseChange = null,
     onTimerTick = null,
+
     fetchIceServers = null,
+
     negotiatorFactory = null,
     transportFactory = null,
+
     transientIceGraceMs = null,
     iceRestartAfterDisconnectMs = null,
-    reconnectInitialDelayMs = RECONNECT_INITIAL_DELAY_MS,
-    reconnectMaxDelayMs = RECONNECT_MAX_DELAY_MS,
-    reconnectWindowMs = RECONNECT_WINDOW_MS,
+
+    reconnectInitialDelayMs =
+      RECONNECT_INITIAL_DELAY_MS,
+
+    reconnectMaxDelayMs =
+      RECONNECT_MAX_DELAY_MS,
+
+    reconnectWindowMs =
+      RECONNECT_WINDOW_MS,
+
     createWebSocket = null,
     now = null,
   }) {
-    this.myParticipantId = myParticipantId;
+    this.myParticipantId =
+      myParticipantId;
 
     this.warningThresholdSeconds =
       warningThresholdSeconds;
 
+    /*
+     * Pair-scoped fallback configuration.
+     *
+     * IMPORTANT:
+     * Fallback is only allowed when the current room matches
+     * mediaFallbackRoomId.
+     */
     this.mediaFallbackRoomId =
-      String(mediaFallbackRoomId || "");
+      String(
+        mediaFallbackRoomId || "",
+      );
+
+    /*
+     * Keep the underscore aliases used by the main branch.
+     * This allows both branches' code paths to use the same values.
+     */
+    this._mediaFallbackRoomId =
+      this.mediaFallbackRoomId;
 
     this.forceMediaFallbackEnabled =
       Boolean(
         forceMediaFallback ||
           forceFallback,
       );
+
+    this._forceMediaFallback =
+      this.forceMediaFallbackEnabled;
+
+    this._escalationTimeoutMs =
+      Number.isFinite(
+        Number(
+          escalationTimeoutMs,
+        ),
+      )
+        ? Number(
+            escalationTimeoutMs,
+          )
+        : DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS;
+
+    this._scheduleEscalation =
+      scheduleEscalation;
 
     this.elements = elements;
 
@@ -207,6 +344,12 @@ export class CallRoomController {
     this._fetchIceServers =
       fetchIceServers;
 
+    /*
+     * transportFactory has priority over negotiatorFactory
+     * because the newer test/transport abstraction uses it.
+     *
+     * The older negotiatorFactory remains supported for compatibility.
+     */
     this._negotiatorFactory =
       transportFactory ||
       negotiatorFactory;
@@ -244,51 +387,75 @@ export class CallRoomController {
     this.roundEndTs = null;
     this.roundNumber = null;
 
-    this.serverWarningActive = false;
+    this.serverWarningActive =
+      false;
+
     this.isPaused = false;
 
-    this.partnerPresence = null;
+    this.partnerPresence =
+      null;
+
     this.partner = null;
 
-    this.eventEndReason = null;
+    this.eventEndReason =
+      null;
 
-    this._timerInterval = null;
-    this._reconnectTimer = null;
-    this._partnerGoneTimer = null;
+    this._timerInterval =
+      null;
+
+    this._reconnectTimer =
+      null;
+
+    this._partnerGoneTimer =
+      null;
 
     this._permanentIceFailureTimer =
       null;
 
     /*
-     * Generation token for permanent ICE-failure
-     * notifications.
+     * Generation token for permanent ICE failure notifications.
      *
-     * This prevents stale timers from firing after:
-     * - a successful reconnection,
-     * - partner/transport replacement,
-     * - round end,
-     * - event end.
+     * Prevents stale timers from affecting:
+     * - a new partner,
+     * - a replacement transport,
+     * - a completed round,
+     * - an ended event.
      */
     this._permanentIceFailureGeneration =
       0;
 
-    this._helloClientTs = null;
+    this._helloClientTs =
+      null;
 
-    this._sharedStream = null;
-    this._mediaPromise = null;
+    this._sharedStream =
+      null;
 
-    this._signalingDegraded = false;
+    this._mediaPromise =
+      null;
 
-    this._wsGeneration = 0;
+    this._signalingDegraded =
+      false;
 
-    this._reconnectAttempt = 0;
-    this._reconnectStartedAt = null;
-    this._reconnectGaveUp = false;
+    this._wsGeneration =
+      0;
 
-    this._onlineHandler = null;
-    this._beforeUnloadHandler = null;
+    this._reconnectAttempt =
+      0;
 
-    this._intentionalClose = false;
+    this._reconnectStartedAt =
+      null;
+
+    this._reconnectGaveUp =
+      false;
+
+    this._onlineHandler =
+      null;
+
+    this._beforeUnloadHandler =
+      null;
+
+    this._intentionalClose =
+      false;
   }
 
   get transport() {
@@ -306,7 +473,8 @@ export class CallRoomController {
           .getTracks()
           .some(
             (track) =>
-              track.readyState !== "ended",
+              track.readyState !==
+              "ended",
           ),
     );
   }
@@ -319,8 +487,12 @@ export class CallRoomController {
 
     if (
       !this.mediaFallbackRoomId ||
-      String(currentRoomId) !==
-        String(this.mediaFallbackRoomId)
+      String(
+        currentRoomId,
+      ) !==
+        String(
+          this.mediaFallbackRoomId,
+        )
     ) {
       return false;
     }
@@ -336,7 +508,8 @@ export class CallRoomController {
     ) {
       await this.negotiator.forceMediaFallback();
     } else if (
-      typeof this.negotiator.forceFallback ===
+      typeof this.negotiator
+        .forceFallback ===
       "function"
     ) {
       await this.negotiator.forceFallback();
@@ -345,6 +518,7 @@ export class CallRoomController {
     }
 
     this._bindLocalPreview();
+
     this._applyConnectionQuality(
       "relay",
     );
@@ -370,10 +544,12 @@ export class CallRoomController {
       return;
     }
 
-    const now = this._now();
+    const now =
+      this._now();
 
     if (
-      this._reconnectStartedAt != null &&
+      this._reconnectStartedAt !=
+        null &&
       reconnectWindowExhausted(
         this._reconnectStartedAt,
         now,
@@ -411,14 +587,17 @@ export class CallRoomController {
       ++this._wsGeneration;
 
     const host =
-      typeof location !== "undefined" &&
+      typeof location !==
+        "undefined" &&
       location.host
         ? location.host
         : "localhost";
 
     const protocol =
-      typeof location !== "undefined" &&
-      location.protocol === "https:"
+      typeof location !==
+        "undefined" &&
+      location.protocol ===
+        "https:"
         ? "wss"
         : "ws";
 
@@ -427,18 +606,23 @@ export class CallRoomController {
 
     const factory =
       this._createWebSocket ||
-      (typeof WebSocket !== "undefined"
+      (typeof WebSocket !==
+      "undefined"
         ? (target) =>
-            new WebSocket(target)
+            new WebSocket(
+              target,
+            )
         : null);
 
     if (!factory) {
       return;
     }
 
-    this.ws = factory(url);
+    this.ws =
+      factory(url);
 
-    const socket = this.ws;
+    const socket =
+      this.ws;
 
     socket.onopen = () => {
       if (
@@ -451,9 +635,14 @@ export class CallRoomController {
 
       this._clearReconnect();
 
-      this._reconnectAttempt = 0;
-      this._reconnectStartedAt = null;
-      this._reconnectGaveUp = false;
+      this._reconnectAttempt =
+        0;
+
+      this._reconnectStartedAt =
+        null;
+
+      this._reconnectGaveUp =
+        false;
 
       this._helloClientTs =
         this._now();
@@ -470,49 +659,54 @@ export class CallRoomController {
       );
     };
 
-    socket.onmessage = (event) => {
-      if (
-        generation !==
-          this._wsGeneration ||
-        this.ws !== socket
-      ) {
-        return;
-      }
+    socket.onmessage =
+      (event) => {
+        if (
+          generation !==
+            this._wsGeneration ||
+          this.ws !== socket
+        ) {
+          return;
+        }
 
-      this._handleMessage(
-        JSON.parse(event.data),
-      );
-    };
+        this._handleMessage(
+          JSON.parse(
+            event.data,
+          ),
+        );
+      };
 
-    socket.onclose = (event) => {
-      if (
-        generation !==
-          this._wsGeneration ||
-        this.ws !== socket
-      ) {
-        return;
-      }
+    socket.onclose =
+      (event) => {
+        if (
+          generation !==
+            this._wsGeneration ||
+          this.ws !== socket
+        ) {
+          return;
+        }
 
-      if (
-        event &&
-        (
-          event.code === 4001 ||
-          event.reason ===
-            "session_replaced"
-        )
-      ) {
-        this._onSessionReplaced();
-        return;
-      }
+        if (
+          event &&
+          (
+            event.code === 4001 ||
+            event.reason ===
+              "session_replaced"
+          )
+        ) {
+          this._onSessionReplaced();
+          return;
+        }
 
-      this._onSignalingClosed();
-    };
+        this._onSignalingClosed();
+      };
 
     socket.onerror = () => {};
   }
 
   _detachSocket() {
-    const socket = this.ws;
+    const socket =
+      this.ws;
 
     if (!socket) {
       return;
@@ -525,8 +719,10 @@ export class CallRoomController {
 
     try {
       if (
-        socket.readyState === 0 ||
-        socket.readyState === 1
+        socket.readyState ===
+          0 ||
+        socket.readyState ===
+          1
       ) {
         socket.close();
       }
@@ -536,26 +732,38 @@ export class CallRoomController {
   }
 
   disconnect() {
-    this._intentionalClose = true;
+    this._intentionalClose =
+      true;
 
-    this._signalingDegraded = false;
-    this.isPaused = false;
+    this._signalingDegraded =
+      false;
+
+    this.isPaused =
+      false;
 
     this._clearPartnerGone();
+
     this._clearPermanentIceFailureTimer();
 
     this._unbindOnlineListener();
+
     this._unbindBeforeUnloadListener();
 
     this._clearReconnect();
 
-    this._reconnectGaveUp = false;
-    this._reconnectStartedAt = null;
-    this._reconnectAttempt = 0;
+    this._reconnectGaveUp =
+      false;
+
+    this._reconnectStartedAt =
+      null;
+
+    this._reconnectAttempt =
+      0;
 
     this._wsGeneration += 1;
 
     this._stopTimer();
+
     this.clockSync.stop();
 
     if (this.negotiator) {
@@ -563,20 +771,27 @@ export class CallRoomController {
       this.negotiator = null;
     }
 
-    this._sharedStream = null;
-    this._mediaPromise = null;
+    this._sharedStream =
+      null;
+
+    this._mediaPromise =
+      null;
 
     this._detachSocket();
 
-    this._intentionalClose = false;
+    this._intentionalClose =
+      false;
   }
 
   async _handleMessage(msg) {
-    const { type, payload } = msg;
+    const { type, payload } =
+      msg;
 
     switch (type) {
       case "server.hello":
-        this._onServerHello(payload);
+        this._onServerHello(
+          payload,
+        );
         break;
 
       case "server.clock_sync":
@@ -586,27 +801,39 @@ export class CallRoomController {
         break;
 
       case "server.pairing":
-        await this._onPairing(payload);
+        await this._onPairing(
+          payload,
+        );
         break;
 
       case "server.round_start":
-        await this._onRoundStart(payload);
+        await this._onRoundStart(
+          payload,
+        );
         break;
 
       case "server.round_warning":
-        this._onRoundWarning(payload);
+        this._onRoundWarning(
+          payload,
+        );
         break;
 
       case "server.round_end":
-        await this._onRoundEnd(payload);
+        await this._onRoundEnd(
+          payload,
+        );
         break;
 
       case "server.event_end":
-        await this._onEventEnd(payload);
+        await this._onEventEnd(
+          payload,
+        );
         break;
 
       case "server.error":
-        this._onServerError(payload);
+        this._onServerError(
+          payload,
+        );
         break;
 
       case "server.session_replaced":
@@ -615,19 +842,27 @@ export class CallRoomController {
 
       case "server.partner_state":
       case "server.partner_presence":
-        this._onPartnerState(payload);
+        this._onPartnerState(
+          payload,
+        );
         break;
 
       case "operator.pause":
-        this._onOperatorPause(payload);
+        this._onOperatorPause(
+          payload,
+        );
         break;
 
       case "operator.resume":
-        this._onOperatorResume(payload);
+        this._onOperatorResume(
+          payload,
+        );
         break;
 
       case "operator.extend":
-        this._onOperatorExtend(payload);
+        this._onOperatorExtend(
+          payload,
+        );
         break;
 
       default:
@@ -648,7 +883,8 @@ export class CallRoomController {
 
   _onServerHello(payload) {
     if (
-      this._helloClientTs !== null &&
+      this._helloClientTs !==
+        null &&
       payload.server_ts
     ) {
       this.clockSync.applyHelloOffset(
@@ -660,10 +896,13 @@ export class CallRoomController {
     this.clockSync.start(
       (envelope) => {
         if (
-          this.ws?.readyState === 1
+          this.ws?.readyState ===
+          1
         ) {
           this.ws.send(
-            JSON.stringify(envelope),
+            JSON.stringify(
+              envelope,
+            ),
           );
         }
       },
@@ -722,51 +961,58 @@ export class CallRoomController {
       return existing;
     }
 
-    this._sharedStream = null;
+    this._sharedStream =
+      null;
 
     if (!this._mediaPromise) {
       this._mediaPromise =
         acquireSharedLocalMedia(
           DEFAULT_MEDIA_CONSTRAINTS,
         )
-          .then((stream) => {
-            this._sharedStream =
-              stream;
+          .then(
+            (stream) => {
+              this._sharedStream =
+                stream;
 
-            this._bindLocalPreview();
+              this._bindLocalPreview();
 
-            return stream;
-          })
-          .catch((err) => {
-            this._mediaPromise = null;
+              return stream;
+            },
+          )
+          .catch(
+            (err) => {
+              this._mediaPromise =
+                null;
 
-            if (
-              this.ws &&
-              this.ws.readyState === 1
-            ) {
-              try {
-                this.ws.send(
-                  JSON.stringify({
-                    type:
-                      "client.telemetry",
-                    payload: {
-                      cause:
-                        "permission_denied",
-                      detail:
-                        err?.name ||
-                        String(err),
-                    },
-                  }),
-                );
-              } catch {}
-            }
+              if (
+                this.ws &&
+                this.ws.readyState ===
+                  1
+              ) {
+                try {
+                  this.ws.send(
+                    JSON.stringify({
+                      type:
+                        "client.telemetry",
+                      payload: {
+                        cause:
+                          "permission_denied",
+                        detail:
+                          err?.name ||
+                          String(err),
+                      },
+                    }),
+                  );
+                } catch {}
+              }
 
-            this._showConnectionError(
-              "Could not start the camera or microphone. Check permissions and try again.",
-            );
+              this._showConnectionError(
+                "Could not start the camera or microphone. Check permissions and try again.",
+              );
 
-            throw err;
-          });
+              throw err;
+            },
+          );
     }
 
     return this._mediaPromise;
@@ -784,18 +1030,25 @@ export class CallRoomController {
       String(
         this.partner.partnerId,
       ) ===
-        String(next.partnerId) &&
+        String(
+          next.partnerId,
+        ) &&
       String(
         this.partner.roomId,
       ) ===
-        String(next.roomId) &&
+        String(
+          next.roomId,
+        ) &&
       Number(
         this.partner.roundNumber,
       ) ===
-        Number(next.roundNumber) &&
+        Number(
+          next.roundNumber,
+        ) &&
       this._isSamePartnerAssignment();
 
-    this.partner = next;
+    this.partner =
+      next;
 
     this.roundNumber =
       this.partner.roundNumber;
@@ -806,7 +1059,8 @@ export class CallRoomController {
     this.serverWarningActive =
       false;
 
-    this.isPaused = false;
+    this.isPaused =
+      false;
 
     this.partnerPresence =
       "connected";
@@ -898,7 +1152,9 @@ export class CallRoomController {
     this._startTimer();
   }
 
-  async _onRoundStart(payload) {
+  async _onRoundStart(
+    payload,
+  ) {
     this.roundNumber =
       Number(
         payload.round_number ??
@@ -912,10 +1168,12 @@ export class CallRoomController {
     this.serverWarningActive =
       false;
 
-    this.isPaused = false;
+    this.isPaused =
+      false;
 
     if (
-      this.elements.statusFooter &&
+      this.elements
+        .statusFooter &&
       !this.isPaused
     ) {
       this.elements.statusFooter.textContent =
@@ -959,7 +1217,8 @@ export class CallRoomController {
     this.serverWarningActive =
       false;
 
-    this.isPaused = false;
+    this.isPaused =
+      false;
 
     this._clearPartnerGone();
     this._clearPermanentIceFailureTimer();
@@ -968,7 +1227,9 @@ export class CallRoomController {
       await this.negotiator.endRound();
     }
 
-    if (this.elements.remoteVideo) {
+    if (
+      this.elements.remoteVideo
+    ) {
       this.elements.remoteVideo.srcObject =
         null;
     }
@@ -995,7 +1256,8 @@ export class CallRoomController {
     this._signalingDegraded =
       false;
 
-    this.isPaused = false;
+    this.isPaused =
+      false;
 
     this._clearPartnerGone();
     this._clearPermanentIceFailureTimer();
@@ -1016,15 +1278,22 @@ export class CallRoomController {
       this.negotiator = null;
     }
 
-    this._sharedStream = null;
-    this._mediaPromise = null;
+    this._sharedStream =
+      null;
 
-    if (this.elements.localVideo) {
+    this._mediaPromise =
+      null;
+
+    if (
+      this.elements.localVideo
+    ) {
       this.elements.localVideo.srcObject =
         null;
     }
 
-    if (this.elements.remoteVideo) {
+    if (
+      this.elements.remoteVideo
+    ) {
       this.elements.remoteVideo.srcObject =
         null;
     }
@@ -1054,12 +1323,17 @@ export class CallRoomController {
     if (
       code ===
         "ERR_ALREADY_CONNECTED" ||
-      code === "session_replaced" ||
-      reason === "session_replaced" ||
+      code ===
+        "session_replaced" ||
+      reason ===
+        "session_replaced" ||
       code === "4001" ||
-      /another window/i.test(msg)
+      /another window/i.test(
+        msg,
+      )
     ) {
       this._onSessionReplaced();
+
       return;
     }
 
@@ -1075,7 +1349,6 @@ export class CallRoomController {
 
     this._clearPartnerGone();
     this._clearPermanentIceFailureTimer();
-
     this._clearReconnect();
 
     this._unbindOnlineListener();
@@ -1089,15 +1362,22 @@ export class CallRoomController {
       this.negotiator = null;
     }
 
-    this._sharedStream = null;
-    this._mediaPromise = null;
+    this._sharedStream =
+      null;
 
-    if (this.elements.localVideo) {
+    this._mediaPromise =
+      null;
+
+    if (
+      this.elements.localVideo
+    ) {
       this.elements.localVideo.srcObject =
         null;
     }
 
-    if (this.elements.remoteVideo) {
+    if (
+      this.elements.remoteVideo
+    ) {
       this.elements.remoteVideo.srcObject =
         null;
     }
@@ -1107,7 +1387,9 @@ export class CallRoomController {
     this._intentionalClose =
       false;
 
-    if (this.elements.errorBanner) {
+    if (
+      this.elements.errorBanner
+    ) {
       this.elements.errorBanner.hidden =
         false;
 
@@ -1115,12 +1397,16 @@ export class CallRoomController {
         "You joined from another window. This session is no longer active.";
     }
 
-    if (this.elements.statusFooter) {
+    if (
+      this.elements.statusFooter
+    ) {
       this.elements.statusFooter.textContent =
         "You joined from another window. This session is no longer active.";
     }
 
-    if (this.elements.connectionBadge) {
+    if (
+      this.elements.connectionBadge
+    ) {
       this.elements.connectionBadge.textContent =
         "SESSION REPLACED";
 
@@ -1146,10 +1432,13 @@ export class CallRoomController {
       "Partner";
 
     const bannerText =
-      partnerLeftBanner(name);
+      partnerLeftBanner(
+        name,
+      );
 
     if (
-      this.elements.partnerGoneBanner
+      this.elements
+        .partnerGoneBanner
     ) {
       this.elements.partnerGoneBanner.hidden =
         false;
@@ -1219,7 +1508,9 @@ export class CallRoomController {
       roomId &&
       this.partner &&
       String(roomId) !==
-        String(this.partner.roomId)
+        String(
+          this.partner.roomId,
+        )
     ) {
       return;
     }
@@ -1232,7 +1523,9 @@ export class CallRoomController {
       partnerId &&
       this.partner &&
       String(partnerId) !==
-        String(this.partner.partnerId)
+        String(
+          this.partner.partnerId,
+        )
     ) {
       return;
     }
@@ -1248,10 +1541,12 @@ export class CallRoomController {
     if (presence === "gone") {
       this._showPartnerGone();
     } else if (
-      presence === "reconnecting"
+      presence ===
+      "reconnecting"
     ) {
       if (
-        this.elements.qualityBanner
+        this.elements
+          .qualityBanner
       ) {
         this.elements.qualityBanner.hidden =
           false;
@@ -1261,7 +1556,8 @@ export class CallRoomController {
       }
 
       if (
-        this.elements.connectionBadge
+        this.elements
+          .connectionBadge
       ) {
         this.elements.connectionBadge.textContent =
           "PARTNER RECONNECTING";
@@ -1287,7 +1583,9 @@ export class CallRoomController {
     }
   }
 
-  _onPartnerPresence(payload) {
+  _onPartnerPresence(
+    payload,
+  ) {
     this._onPartnerState(
       payload,
     );
@@ -1336,8 +1634,10 @@ export class CallRoomController {
     }
 
     if (
-      this.elements.connectionBadge &&
-      this.elements.connectionBadge
+      this.elements
+        .connectionBadge &&
+      this.elements
+        .connectionBadge
         .dataset?.quality ===
         "partner-gone"
     ) {
@@ -1349,7 +1649,9 @@ export class CallRoomController {
     }
   }
 
-  _onOperatorPause(payload) {
+  _onOperatorPause(
+    payload,
+  ) {
     this.isPaused = true;
 
     this._stopTimer();
@@ -1374,7 +1676,8 @@ export class CallRoomController {
     );
 
     if (
-      this.elements.qualityBanner
+      this.elements
+        .qualityBanner
     ) {
       this.elements.qualityBanner.hidden =
         false;
@@ -1393,7 +1696,9 @@ export class CallRoomController {
     }
   }
 
-  _onOperatorResume(payload) {
+  _onOperatorResume(
+    payload,
+  ) {
     this.isPaused = false;
 
     if (payload.ends_at) {
@@ -1407,7 +1712,8 @@ export class CallRoomController {
     }
 
     if (
-      this.elements.qualityBanner &&
+      this.elements
+        .qualityBanner &&
       !this._signalingDegraded
     ) {
       this.elements.qualityBanner.hidden =
@@ -1420,7 +1726,9 @@ export class CallRoomController {
     this._startTimer();
   }
 
-  _onOperatorExtend(payload) {
+  _onOperatorExtend(
+    payload,
+  ) {
     if (payload.ends_at) {
       this.roundEndTs =
         typeof payload.ends_at ===
@@ -1450,22 +1758,41 @@ export class CallRoomController {
     rtcConfig,
   ) {
     const options = {
-  myParticipantId: this.myParticipantId,
-  partnerParticipantId: partnerId,
-  roomId,
-  selectedRoomId: this.mediaFallbackRoomId,
-  rtcConfig,
-  
+      myParticipantId:
+        this.myParticipantId,
+
+      partnerParticipantId:
+        partnerId,
+
+      roomId,
+
+      /*
+       * CRITICAL:
+       * Fallback must be scoped to mediaFallbackRoomId.
+       *
+       * Do NOT use:
+       *   selectedRoomId: roomId
+       *
+       * because that would make every current pair automatically
+       * eligible for relay fallback.
+       */
+      selectedRoomId:
+        this.mediaFallbackRoomId,
+
+      rtcConfig,
+
       forceFallback:
         this.forceMediaFallbackEnabled,
 
       localStream:
-        this._sharedStream || null,
+        this._sharedStream ||
+        null,
 
       sendSignalingMessage:
         (signalMsg) => {
           if (
-            this.ws?.readyState === 1
+            this.ws?.readyState ===
+            1
           ) {
             this.ws.send(
               JSON.stringify(
@@ -1478,22 +1805,31 @@ export class CallRoomController {
       onRemoteStream:
         (stream) => {
           if (
-            this.elements.remoteVideo &&
-            this.elements.remoteVideo
-              .srcObject !== stream
+            this.elements
+              .remoteVideo &&
+            this.elements
+              .remoteVideo
+              .srcObject !==
+              stream
           ) {
-            this.elements.remoteVideo.srcObject =
+            this.elements
+              .remoteVideo
+              .srcObject =
               stream;
 
             if (
-              typeof this.elements
+              typeof this
+                .elements
                 .remoteVideo
                 .play ===
               "function"
             ) {
-              this.elements.remoteVideo
+              this.elements
+                .remoteVideo
                 .play()
-                .catch(() => {});
+                .catch(
+                  () => {},
+                );
             }
           }
         },
@@ -1508,15 +1844,13 @@ export class CallRoomController {
             return;
           }
 
-          if (state === "failed") {
+          if (
+            state === "failed"
+          ) {
             this._schedulePermanentIceFailureNotice();
           } else if (
             state === "connected"
           ) {
-            /*
-             * A real connection recovery cancels
-             * the pending permanent-failure notice.
-             */
             this._clearPermanentIceFailureTimer();
           }
 
@@ -1537,10 +1871,21 @@ export class CallRoomController {
           }
 
           this._onPartnerSwitchFailure(
-            new Error(reason),
+            new Error(
+              reason,
+            ),
             reason,
           );
         },
+
+      /*
+       * T-39 / main branch escalation support.
+       */
+      escalationTimeoutMs:
+        this._escalationTimeoutMs,
+
+      scheduleEscalation:
+        this._scheduleEscalation,
     };
 
     if (
@@ -1566,6 +1911,10 @@ export class CallRoomController {
 
     let transport;
 
+    /*
+     * Preserve dependency injection used by tests
+     * and by older code.
+     */
     if (this._negotiatorFactory) {
       transport =
         this._negotiatorFactory(
@@ -1578,6 +1927,10 @@ export class CallRoomController {
         );
     }
 
+    /*
+     * Compatibility shim for transports that expose
+     * forceFallback() but not forceMediaFallback().
+     */
     if (
       transport &&
       typeof transport
@@ -1587,7 +1940,8 @@ export class CallRoomController {
       transport.forceMediaFallback =
         async () => {
           if (
-            typeof transport.forceFallback ===
+            typeof transport
+              .forceFallback ===
             "function"
           ) {
             return await transport.forceFallback();
@@ -1646,7 +2000,8 @@ export class CallRoomController {
     ) {
       if (
         this.elements.localVideo
-          .srcObject !== stream
+          .srcObject !==
+        stream
       ) {
         this.elements.localVideo.srcObject =
           stream;
@@ -1663,6 +2018,7 @@ export class CallRoomController {
       state !== "relay"
     ) {
       this._showReconnecting();
+
       return;
     }
 
@@ -1693,14 +2049,17 @@ export class CallRoomController {
 
       this.elements.connectionBadge.textContent =
         labels[state] ||
-        String(state).toUpperCase();
+        String(
+          state,
+        ).toUpperCase();
 
       this.elements.connectionBadge.className =
         `badge ${state}`;
 
       if (
         !this.elements
-          .connectionBadge.dataset
+          .connectionBadge
+          .dataset
       ) {
         this.elements.connectionBadge.dataset =
           {};
@@ -1731,7 +2090,9 @@ export class CallRoomController {
       this.negotiator?.pc
         ?.connectionState;
 
-    if (conn === "connected") {
+    if (
+      conn === "connected"
+    ) {
       this._applyConnectionQuality(
         "connected",
       );
@@ -1746,7 +2107,9 @@ export class CallRoomController {
   }
 
   _onSignalingClosed() {
-    if (this._intentionalClose) {
+    if (
+      this._intentionalClose
+    ) {
       return;
     }
 
@@ -1789,17 +2152,15 @@ export class CallRoomController {
   }
 
   /**
-   * Schedule a controller-level permanent ICE failure notice.
+   * Controller-level permanent ICE failure notice.
    *
-   * Important:
-   * We intentionally DO NOT check the current pc.connectionState
-   * when the timer fires.
+   * We intentionally do not inspect the current pc.connectionState
+   * inside the timer callback.
    *
-   * FailoverMediaTransport may perform an ICE restart during the grace
-   * period and may replace/recycle its RTCPeerConnection. The failure
-   * event is still considered permanent from the controller's point
-   * of view unless an actual "connected" state arrives and clears this
-   * timer.
+   * The underlying transport may perform ICE restart/recovery and may
+   * replace the underlying RTCPeerConnection while this timer is pending.
+   *
+   * A real "connected" callback clears this timer before it fires.
    */
   _schedulePermanentIceFailureNotice() {
     this._clearPermanentIceFailureTimer();
@@ -1830,59 +2191,57 @@ export class CallRoomController {
       ++this._permanentIceFailureGeneration;
 
     this._permanentIceFailureTimer =
-      setTimeout(() => {
-        this._permanentIceFailureTimer =
-          null;
+      setTimeout(
+        () => {
+          this._permanentIceFailureTimer =
+            null;
 
-        /*
-         * Ignore stale callbacks created by an older
-         * failure/recovery cycle.
-         */
-        if (
-          generation !==
-          this
-            ._permanentIceFailureGeneration
-        ) {
-          return;
-        }
+          /*
+           * Ignore stale failure cycles.
+           */
+          if (
+            generation !==
+            this
+              ._permanentIceFailureGeneration
+          ) {
+            return;
+          }
 
-        /*
-         * A different transport means the old partner/
-         * connection is no longer active.
-         */
-        if (
-          this.negotiator !==
-          transport
-        ) {
-          return;
-        }
+          /*
+           * Ignore old partner/transport instances.
+           */
+          if (
+            this.negotiator !==
+            transport
+          ) {
+            return;
+          }
 
-        /*
-         * Never surface an ICE failure after the event
-         * has already ended.
-         */
-        if (
-          this.phase ===
-          CallRoomPhase.EVENT_ENDED
-        ) {
-          return;
-        }
+          /*
+           * Never surface a permanent ICE failure
+           * after the event has ended.
+           */
+          if (
+            this.phase ===
+            CallRoomPhase.EVENT_ENDED
+          ) {
+            return;
+          }
 
-        /*
-         * Do NOT inspect transport.pc.connectionState here.
-         *
-         * The transport can initiate an ICE restart and
-         * replace/change the underlying RTCPeerConnection
-         * while the permanent-failure timer is pending.
-         */
-
-        this._onPartnerSwitchFailure(
-          new Error(
-            "ICE connection failed",
-          ),
-          "ICE_CONNECTION_FAILED",
-        );
-      }, delayMs);
+          /*
+           * Do NOT inspect transport.pc.connectionState here.
+           *
+           * The transport may restart/recreate the peer connection.
+           */
+          this._onPartnerSwitchFailure(
+            new Error(
+              "ICE connection failed",
+            ),
+            "ICE_CONNECTION_FAILED",
+          );
+        },
+        delayMs,
+      );
 
     if (
       this._permanentIceFailureTimer
@@ -1904,10 +2263,6 @@ export class CallRoomController {
         null;
     }
 
-    /*
-     * Invalidate all callbacks that may already
-     * be queued/racing with clearTimeout().
-     */
     this._permanentIceFailureGeneration +=
       1;
   }
@@ -1922,11 +2277,22 @@ export class CallRoomController {
       err,
     );
 
-    const message =
+    let message =
+      "Could not connect to the next partner. Your camera stays on and other rounds are not stopped.";
+
+    if (
       reason ===
       "ICE_CONNECTION_FAILED"
-        ? "Connection to this partner failed. Your camera stays on; other rounds are not stopped."
-        : "Could not connect to the next partner. Your camera stays on and other rounds are not stopped.";
+    ) {
+      message =
+        "Connection to this partner failed. Your camera stays on; other rounds are not stopped.";
+    } else if (
+      reason ===
+      "ESCALATION_FALLBACK_UNAVAILABLE"
+    ) {
+      message =
+        "Direct call did not connect and fallback is not available for this pair. Other rooms are not affected.";
+    }
 
     this._showConnectionError(
       message,
@@ -2005,7 +2371,8 @@ export class CallRoomController {
 
     this._timerInterval =
       setInterval(
-        () => this._tickTimer(),
+        () =>
+          this._tickTimer(),
         250,
       );
 
@@ -2019,12 +2386,15 @@ export class CallRoomController {
   }
 
   _stopTimer() {
-    if (this._timerInterval) {
+    if (
+      this._timerInterval
+    ) {
       clearInterval(
         this._timerInterval,
       );
 
-      this._timerInterval = null;
+      this._timerInterval =
+        null;
     }
   }
 
@@ -2102,7 +2472,9 @@ export class CallRoomController {
   }
 
   _updatePartnerUI() {
-    if (this.elements.partnerName) {
+    if (
+      this.elements.partnerName
+    ) {
       this.elements.partnerName.textContent =
         this.partner?.displayName ??
         "—";
@@ -2143,7 +2515,8 @@ export class CallRoomController {
   }
 
   _setPhase(phase) {
-    this.phase = phase;
+    this.phase =
+      phase;
 
     if (
       this.elements.phaseBadge
@@ -2196,6 +2569,7 @@ export class CallRoomController {
       )
     ) {
       this._giveUpReconnect();
+
       return;
     }
 
@@ -2210,23 +2584,27 @@ export class CallRoomController {
       1;
 
     this._reconnectTimer =
-      setTimeout(() => {
-        this._reconnectTimer =
-          null;
+      setTimeout(
+        () => {
+          this._reconnectTimer =
+            null;
 
-        if (
-          reconnectWindowExhausted(
-            this._reconnectStartedAt,
-            this._now(),
-            this._reconnectWindowMs,
-          )
-        ) {
-          this._giveUpReconnect();
-          return;
-        }
+          if (
+            reconnectWindowExhausted(
+              this._reconnectStartedAt,
+              this._now(),
+              this._reconnectWindowMs,
+            )
+          ) {
+            this._giveUpReconnect();
 
-        this.connect();
-      }, delay);
+            return;
+          }
+
+          this.connect();
+        },
+        delay,
+      );
 
     if (
       this._reconnectTimer?.unref
@@ -2400,7 +2778,8 @@ export class CallRoomController {
       () => {
         if (
           this.ws &&
-          this.ws.readyState === 1
+          this.ws.readyState ===
+            1
         ) {
           try {
             this.ws.send(
@@ -2447,7 +2826,9 @@ export class CallRoomController {
   }
 
   _clearReconnect() {
-    if (this._reconnectTimer) {
+    if (
+      this._reconnectTimer
+    ) {
       clearTimeout(
         this._reconnectTimer,
       );

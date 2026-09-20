@@ -3,6 +3,7 @@
 from .media_transport import (
     ADAPTER_KIND_DIRECT,
     ADAPTER_KIND_RELAY,
+    DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS,
     DirectMediaTransport,
     FailoverMediaTransport,
     FakeMediaTransport,
@@ -15,11 +16,13 @@ from .media_transport import (
     SharedLocalMedia,
     TransportStats,
     fallback_allowed_for_room,
+    resolve_escalation_timeout_ms,
 )
 
 __all__ = [
     "ADAPTER_KIND_DIRECT",
     "ADAPTER_KIND_RELAY",
+    "DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS",
     "DirectMediaTransport",
     "FailoverMediaTransport",
     "FakeMediaTransport",
@@ -32,4 +35,5 @@ __all__ = [
     "SharedLocalMedia",
     "TransportStats",
     "fallback_allowed_for_room",
+    "resolve_escalation_timeout_ms",
 ]
