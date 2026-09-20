@@ -147,6 +147,7 @@ export class CallRoomController {
   constructor({
     myParticipantId,
     warningThresholdSeconds = 30,
+    forceMediaFallback = false,
     elements = {},
     onPhaseChange = null,
     onTimerTick = null,
@@ -162,6 +163,7 @@ export class CallRoomController {
   }) {
     this.myParticipantId = myParticipantId;
     this.warningThresholdSeconds = warningThresholdSeconds;
+    this.forceMediaFallback = Boolean(forceMediaFallback);
     this.elements = elements;
     this.onPhaseChange = onPhaseChange;
     this.onTimerTick = onTimerTick;
@@ -206,6 +208,14 @@ export class CallRoomController {
     return Boolean(
       stream && stream.getTracks().some((track) => track.readyState !== "ended"),
     );
+  }
+
+  async forceMediaFallback() {
+    if (this.negotiator && typeof this.negotiator.forceMediaFallback === "function") {
+      await this.negotiator.forceMediaFallback();
+      this._bindLocalPreview();
+      this._applyConnectionQuality("relay");
+    }
   }
 
   connect() {
@@ -812,6 +822,7 @@ export class CallRoomController {
       partnerParticipantId: partnerId,
       roomId,
       rtcConfig,
+      forceFallback: this.forceMediaFallback,
       localStream: this._sharedStream || null,
       sendSignalingMessage: (signalMsg) => {
         if (this.ws?.readyState === 1) {
