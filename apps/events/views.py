@@ -153,6 +153,8 @@ def video_room_page(request: HttpRequest) -> HttpResponse:
             "warning_threshold_seconds": getattr(
                 settings, "ORCHESTRATOR_FINAL_SECONDS", 30
             ),
+            "media_fallback_room_id": getattr(settings, "MEDIA_FALLBACK_ROOM_ID", "")
+            or "",
         },
     )
 
