@@ -1,4 +1,4 @@
-"""Authenticated WebSocket connection layer (T-14, T-24, T-25, T-27 & T-29)."""
+"""Authenticated WebSocket connection layer (T-14, T-24, T-25, T-27, T-29 & T-41)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.conf import settings
 from django.core.cache import cache
+from django.utils import timezone
 
 from apps.protocol.constants import (
     CLOSE_AUTHENTICATION_FAILED,
@@ -133,6 +134,9 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
         self._rate_timestamps = deque()
         self._heartbeat_task = None
         self._session_replaced = False
+        self._last_telemetry_cause = None
+        self._last_telemetry_detail = ""
+
         try:
             self.participant = await _participant_from_scope(self.scope)
             self.authenticated = self.participant is not None
@@ -167,6 +171,27 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                     self.event_group, self.channel_name
                 )
 
+        # T-41: تشخیص و ثبت علت قطعی ارتباط در صورت پایان جلسه عادی
+        if (
+            self.participant
+            and self.handshake_complete
+            and not getattr(self, "_session_replaced", False)
+        ):
+            cause = getattr(self, "_last_telemetry_cause", None)
+            detail = getattr(self, "_last_telemetry_detail", "")
+            if not cause:
+                if close_code == 1001:
+                    cause = "tab_closed"
+                else:
+                    cause = "network"
+            try:
+                await self._record_disconnection(cause, detail)
+            except Exception:
+                logger.exception(
+                    "Failed recording disconnection for participant %s",
+                    self.participant.pk,
+                )
+
         await self._on_live_socket_closed()
 
     async def receive(self, text_data=None, bytes_data=None):
@@ -174,6 +199,18 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
         raw = text_data if text_data is not None else bytes_data
         if raw is None:
             return
+
+        # T-41: دریافت و ذخیره تله‌متری دلایل خروج قبل از ولیدیشن پروتکل اصلی
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict) and data.get("type") == "client.telemetry":
+                payload = data.get("payload", {})
+                self._last_telemetry_cause = payload.get("cause")
+                self._last_telemetry_detail = str(payload.get("detail", ""))
+                return
+        except Exception:
+            pass
+
         max_bytes = getattr(settings, "WEBSOCKET_MAX_MESSAGE_BYTES", 64 * 1024)
         size = len(raw.encode("utf-8")) if isinstance(raw, str) else len(raw)
         if size > max_bytes:
@@ -284,8 +321,55 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
         )
         await self._claim_exclusive_connection()
         await self._clear_absence_watch()
+        await self._mark_reconnected()
         await self._notify_partner_presence(PartnerState.CONNECTED)
         await self._maybe_send_reconnect_snapshot()
+
+    @database_sync_to_async
+    def _record_disconnection(self, cause: str, detail: str) -> None:
+        from apps.events.models import (
+            DisconnectionCause,
+            DisconnectionLog,
+            ParticipantStatus,
+        )
+
+        now = timezone.now()
+        event = getattr(self.participant, "event", None)
+        active_round = None
+        if event:
+            active_round = event.rounds.filter(
+                starts_at__lte=now, ends_at__gte=now
+            ).first()
+
+        valid_causes = {c.value: c.value for c in DisconnectionCause}
+        stored_cause = valid_causes.get(cause, DisconnectionCause.NETWORK)
+
+        DisconnectionLog.objects.create(
+            event=event or self.participant.event,
+            participant=self.participant,
+            round=active_round,
+            cause=stored_cause,
+            detail=detail,
+            disconnected_at=now,
+        )
+        self.participant.status = ParticipantStatus.DISCONNECTED
+        self.participant.save(update_fields=["status", "updated_at"])
+
+    @database_sync_to_async
+    def _mark_reconnected(self) -> None:
+        from apps.events.models import DisconnectionLog, ParticipantStatus
+
+        if not self.participant:
+            return
+        now = timezone.now()
+        DisconnectionLog.objects.filter(
+            participant=self.participant,
+            reconnected_at__isnull=True,
+        ).update(reconnected_at=now)
+
+        if self.participant.status != ParticipantStatus.ACTIVE:
+            self.participant.status = ParticipantStatus.ACTIVE
+            self.participant.save(update_fields=["status", "updated_at"])
 
     async def _maybe_send_reconnect_snapshot(self) -> None:
         """Replay current pairing/round to this socket only (T-14/T-33)."""

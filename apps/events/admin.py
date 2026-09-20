@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 
 from django.contrib import admin, messages
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.template.response import TemplateResponse
@@ -11,11 +11,15 @@ from django.urls import path, reverse
 from django.utils import timezone
 
 from .models import (
+    DisconnectionCause,
+    DisconnectionLog,
     Event,
     EventStatus,
     OperatorActionLog,
     Pair,
     Participant,
+    ParticipantIncidentNote,
+    ParticipantStatus,
     ParticipantTag,
     Round,
     Tag,
@@ -23,6 +27,30 @@ from .models import (
 
 for model in (ParticipantTag, Round, Pair):
     admin.site.register(model)
+
+
+@admin.register(DisconnectionLog)
+class DisconnectionLogAdmin(admin.ModelAdmin):
+    list_display = (
+        "participant",
+        "event",
+        "cause",
+        "disconnected_at",
+        "reconnected_at",
+    )
+    list_filter = ("cause", "disconnected_at", "event")
+    search_fields = ("participant__display_name", "participant__email")
+
+
+@admin.register(ParticipantIncidentNote)
+class ParticipantIncidentNoteAdmin(admin.ModelAdmin):
+    list_display = ("participant", "operator", "event", "created_at", "short_note")
+    search_fields = ("participant__display_name", "participant__email", "note")
+    list_filter = ("created_at", "event")
+
+    def short_note(self, obj):
+        return obj.note[:60]
+
 
 # States in which the matching report action is permitted.
 _MATCHING_RUNNABLE_STATES = frozenset(
@@ -111,11 +139,11 @@ class EventAdmin(admin.ModelAdmin):
         return super().changeform_view(request, object_id, form_url, extra_context)
 
     # ------------------------------------------------------------------ #
-    # Live monitoring view (T-40)                                        #
+    # Live monitoring view (T-40 & T-41)                                 #
     # ------------------------------------------------------------------ #
 
     def operator_monitoring_view(self, request, object_id):
-        """Admin action page: T-40 Live Monitoring & Operator Controls."""
+        """Admin action page: T-40/T-41 Live Monitoring, Incidents & Operator Controls."""
         from apps.events.operator import OperatorService
 
         event = get_object_or_404(Event, pk=object_id)
@@ -124,7 +152,26 @@ class EventAdmin(admin.ModelAdmin):
         if request.method == "POST":
             action = request.POST.get("action")
             try:
-                if action == "pause":
+                if action == "add_incident_note":
+                    p_id = request.POST.get("participant_id")
+                    note_text = request.POST.get("note", "").strip()
+                    if p_id and note_text:
+                        participant = get_object_or_404(
+                            Participant, pk=p_id, event=event
+                        )
+                        ParticipantIncidentNote.objects.create(
+                            event=event,
+                            participant=participant,
+                            operator=request.user
+                            if request.user.is_authenticated
+                            else None,
+                            note=note_text,
+                        )
+                        messages.success(
+                            request,
+                            f"یادداشت رخداد برای {participant.display_name} ذخیره شد.",
+                        )
+                elif action == "pause":
                     service.pause()
                     messages.success(request, "Round successfully paused.")
                 elif action == "resume":
@@ -137,6 +184,26 @@ class EventAdmin(admin.ModelAdmin):
             except Exception as exc:  # noqa: BLE001
                 messages.error(request, f"Operator action failed: {exc}")
             return redirect("admin:events_event_live_monitoring", object_id=event.pk)
+
+        # T-41: جستجوی شرکت‌کننده بر اساس نام یا ایمیل
+        search_query = request.GET.get("q", "").strip()
+        search_results = []
+        if search_query:
+            search_results = (
+                event.participants.filter(
+                    Q(display_name__icontains=search_query)
+                    | Q(email__icontains=search_query)
+                )
+                .prefetch_related("disconnection_logs", "incident_notes")
+                .distinct()
+            )
+
+        # T-41: فهرست شرکت‌کنندگان قطع‌شده زنده
+        disconnected_participants = (
+            event.participants.filter(status=ParticipantStatus.DISCONNECTED)
+            .prefetch_related("disconnection_logs", "incident_notes")
+            .order_by("-updated_at")
+        )
 
         now = timezone.now()
         active_round = (
@@ -164,6 +231,10 @@ class EventAdmin(admin.ModelAdmin):
             "active_round": active_round,
             "action_logs": action_logs,
             "pairs": pairs,
+            "disconnected_participants": disconnected_participants,
+            "search_query": search_query,
+            "search_results": search_results,
+            "incident_causes": DisconnectionCause.choices,
         }
         return TemplateResponse(
             request,
