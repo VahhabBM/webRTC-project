@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class MediaTransportState(StrEnum):
@@ -230,6 +234,38 @@ class RoundMediaSession:
 ADAPTER_KIND_DIRECT = "direct"
 ADAPTER_KIND_RELAY = "relay"
 
+# T-39: single default. Settings, Python adapters, and tests must read this
+# instead of hardcoding the millisecond value in call sites.
+DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS = 6000
+
+
+def resolve_escalation_timeout_ms(explicit: int | None = None) -> int:
+    """Return the T-39 timeout: explicit override, then Django settings, then default."""
+    if explicit is not None:
+        return int(explicit)
+    try:
+        from django.conf import settings
+
+        value = getattr(settings, "MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS", None)
+        if value is not None:
+            return int(value)
+    except Exception:
+        pass
+    return DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS
+
+
+def _default_schedule_timer(
+    delay_ms: int, callback: Callable[[], None]
+) -> Callable[[], None]:
+    timer = threading.Timer(max(delay_ms, 0) / 1000.0, callback)
+    timer.daemon = True
+    timer.start()
+
+    def cancel() -> None:
+        timer.cancel()
+
+    return cancel
+
 
 def fallback_allowed_for_room(
     room_id: str | None,
@@ -419,6 +455,9 @@ class FailoverMediaTransport(MediaTransport):
         fallback_factory: Callable[[], MediaTransport] | None = None,
         selected_room_id: str | None = None,
         shared_media: SharedLocalMedia | None = None,
+        escalation_timeout_ms: int | None = None,
+        schedule_timer: Callable[[int, Callable[[], None]], Callable[[], None]]
+        | None = None,
     ) -> None:
         self._shared_media = shared_media or SharedLocalMedia()
         self._selected_room_id = selected_room_id or ""
@@ -434,6 +473,14 @@ class FailoverMediaTransport(MediaTransport):
         }
         self._bound: list[tuple[str, Callable[..., Any]]] = []
         self.fallback_activations = 0
+        self._escalation_timeout_ms = resolve_escalation_timeout_ms(
+            escalation_timeout_ms
+        )
+        self._schedule_timer = schedule_timer or _default_schedule_timer
+        self._cancel_escalation: Callable[[], None] | None = None
+        self._escalation_generation = 0
+        self._primary_connected = False
+        self.last_escalation_log: dict[str, Any] | None = None
         self._bind_active()
 
     @property
@@ -476,6 +523,93 @@ class FailoverMediaTransport(MediaTransport):
     def attached_track_ids(self) -> list[str]:
         return list(getattr(self._active, "attached_track_ids", []))
 
+    @property
+    def escalation_timeout_ms(self) -> int:
+        return self._escalation_timeout_ms
+
+    def _clear_escalation_timer(self) -> None:
+        self._escalation_generation += 1
+        cancel = self._cancel_escalation
+        self._cancel_escalation = None
+        if cancel is not None:
+            cancel()
+
+    def _arm_escalation_timer(self) -> None:
+        self._clear_escalation_timer()
+        if self._using_fallback or self._switching or self._primary_connected:
+            return
+        gen = self._escalation_generation
+        timeout_ms = self._escalation_timeout_ms
+
+        def _fire() -> None:
+            self._on_escalation_timeout(gen)
+
+        self._cancel_escalation = self._schedule_timer(timeout_ms, _fire)
+
+    def _escalation_log_fields(
+        self, *, result: str, reason: str = ""
+    ) -> dict[str, Any]:
+        room_id = self.current_room_id
+        return {
+            "room_id": room_id,
+            "partner_id": self.current_partner_id,
+            "primary_path": ADAPTER_KIND_DIRECT,
+            "timeout_ms": self._escalation_timeout_ms,
+            "fallback_configured": bool(self._selected_room_id),
+            "fallback_selected_room_id": self._selected_room_id or "",
+            "fallback_allowed": fallback_allowed_for_room(
+                room_id, self._selected_room_id
+            ),
+            "using_fallback": self._using_fallback,
+            "result": result,
+            "reason": reason,
+        }
+
+    def _record_escalation(self, *, result: str, reason: str = "") -> None:
+        fields = self._escalation_log_fields(result=result, reason=reason)
+        self.last_escalation_log = fields
+        logger.info("media_escalation %s", result, extra=fields)
+
+    def _on_escalation_timeout(self, gen: int) -> None:
+        if gen != self._escalation_generation:
+            return
+        if self._using_fallback or self._switching or self._primary_connected:
+            return
+        try:
+            self._handle_escalation_timeout()
+        except Exception:
+            logger.exception(
+                "media_escalation error",
+                extra=self._escalation_log_fields(result="error"),
+            )
+
+    def _handle_escalation_timeout(self) -> None:
+        allowed = fallback_allowed_for_room(
+            self.current_room_id, self._selected_room_id
+        )
+        if not allowed:
+            self._record_escalation(result="skipped", reason="FALLBACK_UNAVAILABLE")
+            self.emit(
+                MediaTransportEvent.DEGRADED,
+                reason="ESCALATION_FALLBACK_UNAVAILABLE",
+            )
+            self.emit(
+                MediaTransportEvent.FAILED,
+                reason="ESCALATION_FALLBACK_UNAVAILABLE",
+            )
+            return
+        ok = self._activate_fallback("ESCALATION_TIMEOUT")
+        self._record_escalation(
+            result="activated" if ok else "failed",
+            reason="ESCALATION_TIMEOUT" if ok else "FALLBACK_ACTIVATION_FAILED",
+        )
+        if not ok:
+            self.emit(
+                MediaTransportEvent.DEGRADED,
+                reason="ESCALATION_FAILED",
+            )
+            self.emit(MediaTransportEvent.FAILED, reason="ESCALATION_FAILED")
+
     def _bind_active(self) -> None:
         self._bound = []
         for event in MediaTransportEvent:
@@ -490,7 +624,13 @@ class FailoverMediaTransport(MediaTransport):
 
     def _make_forwarder(self, event: MediaTransportEvent) -> Callable[..., Any]:
         def handler(*args: Any, **kwargs: Any) -> None:
+            if event == MediaTransportEvent.CONNECTED:
+                self._primary_connected = not self._using_fallback
+                self._clear_escalation_timer()
+                self.emit(event, *args, **kwargs)
+                return
             if event == MediaTransportEvent.FAILED:
+                self._clear_escalation_timer()
                 self._on_active_failed(*args, **kwargs)
                 return
             self.emit(event, *args, **kwargs)
@@ -510,12 +650,14 @@ class FailoverMediaTransport(MediaTransport):
         partner_id = self.current_partner_id
         if not fallback_allowed_for_room(room_id, self._selected_room_id):
             return False
+        self._clear_escalation_timer()
         was_open = self._active.state == MediaTransportState.OPEN
         self._switching = True
         self.emit(MediaTransportEvent.DEGRADED, reason=reason or "PRIMARY_FAILED")
         self._close_active_keep_media()
         self._active = self._fallback_factory()
         self._using_fallback = True
+        self._primary_connected = False
         self.fallback_activations += 1
         self._bind_active()
         if room_id and partner_id:
@@ -530,9 +672,11 @@ class FailoverMediaTransport(MediaTransport):
             return
         if fallback_allowed_for_room(new_room_id, self._selected_room_id):
             return
+        self._clear_escalation_timer()
         self._close_active_keep_media()
         self._active = self._primary
         self._using_fallback = False
+        self._primary_connected = False
         self._bind_active()
 
     def _on_active_failed(self, reason: str = "", **kwargs: Any) -> None:
@@ -550,11 +694,15 @@ class FailoverMediaTransport(MediaTransport):
         partner_id: str,
         config: MediaTransportConfig | dict[str, Any] | None = None,
     ) -> None:
+        self._clear_escalation_timer()
+        self._primary_connected = False
         self._restore_primary_if_needed(room_id)
         self._active.preconnect(room_id, partner_id, config)
 
     def open(self) -> None:
+        self._primary_connected = False
         self._active.open()
+        self._arm_escalation_timer()
 
     def switch_partner(
         self,
@@ -562,14 +710,19 @@ class FailoverMediaTransport(MediaTransport):
         new_partner_id: str,
         config: MediaTransportConfig | dict[str, Any] | None = None,
     ) -> None:
+        self._clear_escalation_timer()
+        self._primary_connected = False
         self._restore_primary_if_needed(new_room_id)
         self._active.switch_partner(new_room_id, new_partner_id, config)
+        self._arm_escalation_timer()
 
     def leave(self) -> None:
+        self._clear_escalation_timer()
         self._unbind_active()
         self._active.leave()
         self._shared_media.release()
         self._using_fallback = False
+        self._primary_connected = False
 
     def on(
         self,
