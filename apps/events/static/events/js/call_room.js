@@ -199,6 +199,10 @@ export class CallRoomController {
       await this.negotiator.forceMediaFallback();
       this._bindLocalPreview();
       this._applyConnectionQuality("relay");
+    } else if (this.negotiator && typeof this.negotiator.forceFallback === "function") {
+      await this.negotiator.forceFallback();
+      this._bindLocalPreview();
+      this._applyConnectionQuality("relay");
     }
   }
 
