@@ -28,6 +28,7 @@ htmlcov/
 .tox/
 .mypy_cache/
 .ruff_cache/
+message-layer-load-test-result.json
 
 # Django
 *.log
