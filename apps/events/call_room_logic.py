@@ -1,4 +1,4 @@
-"""Pure call-room timer and lifecycle logic (T-30).
+"""Pure call-room timer, presence, and lifecycle logic (T-30, T-34, T-40).
 
 Mirrors the client-side calculations in call_room.js so they can be
 unit-tested without a browser. Uses the same T-15 offset model as
@@ -8,6 +8,7 @@ apps.events.clock_sync.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 
 
@@ -16,6 +17,7 @@ class TimerVisualState(StrEnum):
     NORMAL = "normal"
     WARNING = "warning"
     EXPIRED = "expired"
+    PAUSED = "paused"
 
 
 class CallRoomPhase(StrEnum):
@@ -28,8 +30,6 @@ class CallRoomPhase(StrEnum):
 
 
 class PartnerPresence(StrEnum):
-    """User-facing partner presence. ``gone`` maps from protocol ``disconnected``."""
-
     CONNECTED = "connected"
     RECONNECTING = "reconnecting"
     GONE = "gone"
@@ -40,7 +40,8 @@ class PartnerPresence(StrEnum):
 RECONNECT_INITIAL_DELAY_MS = 500
 RECONNECT_MAX_DELAY_MS = 4000
 RECONNECT_WINDOW_MS = 45_000
-# Longer than T-33's 5–20s recovery window so a brief drop is not "partner left".
+
+# Longer than T-33's 5–20s recovery window so a brief drop is not "partner left" (T-34).
 PARTNER_ABSENCE_GRACE_MS = 25_000
 PARTNER_GONE_FOOTER = (
     "Your partner left. The round timer continues — no replacement will be assigned."
@@ -76,18 +77,8 @@ def reconnect_window_exhausted(
     return int(now_ms) - int(started_at_ms) >= int(window_ms)
 
 
-def partner_presence_from_protocol(state: str) -> PartnerPresence:
-    """Map T-13 ``server.partner_state`` onto the call-room presence UI."""
-    value = str(state or "")
-    if value == PartnerPresence.CONNECTED:
-        return PartnerPresence.CONNECTED
-    if value == PartnerPresence.RECONNECTING:
-        return PartnerPresence.RECONNECTING
-    return PartnerPresence.GONE
-
-
-def partner_left_banner(display_name: str | None) -> str:
-    name = (display_name or "").strip() or "Your partner"
+def partner_left_banner(name: str = "Partner") -> str:
+    """Banner message shown during absence grace window before partner is marked gone."""
     return f"{name} left. Waiting for them to return — the round continues."
 
 
@@ -114,6 +105,43 @@ def should_announce_partner_gone(
     return absence_grace_elapsed(disconnected_at_ms, now_ms, grace_ms=grace_ms)
 
 
+def partner_presence_from_protocol(
+    payload: dict | str | PartnerPresence | None,
+) -> PartnerPresence | None:
+    """Extract and validate PartnerPresence from protocol message or payload."""
+    if payload is None:
+        return None
+    if isinstance(payload, PartnerPresence):
+        return payload
+    if isinstance(payload, dict):
+        raw = payload.get("state") or payload.get("presence") or payload.get("status")
+        if not raw and "payload" in payload and isinstance(payload["payload"], dict):
+            raw = (
+                payload["payload"].get("state")
+                or payload["payload"].get("presence")
+                or payload["payload"].get("status")
+            )
+    elif isinstance(payload, str):
+        raw = payload
+    else:
+        return None
+
+    if not raw:
+        return None
+
+    val = str(raw).lower()
+    if val in ("disconnected", "gone"):
+        return PartnerPresence.GONE
+    if val in ("reconnecting",):
+        return PartnerPresence.RECONNECTING
+    if val in ("connected",):
+        return PartnerPresence.CONNECTED
+    try:
+        return PartnerPresence(val)
+    except ValueError:
+        return None
+
+
 def compute_remaining_ms(
     round_end_ts: int,
     offset_ms: float,
@@ -136,7 +164,10 @@ def timer_visual_state(
     warning_threshold_seconds: int,
     *,
     server_warning_active: bool = False,
+    is_paused: bool = False,
 ) -> TimerVisualState:
+    if is_paused:
+        return TimerVisualState.PAUSED
     if remaining_ms <= 0:
         return TimerVisualState.EXPIRED
     if server_warning_active or remaining_ms <= warning_threshold_seconds * 1000:
@@ -183,14 +214,14 @@ def parse_pairing_payload(payload: dict) -> PartnerInfo:
 
 @dataclass
 class CallRoomState:
-    """Reducer state for T-24 lifecycle message handling."""
-
     phase: CallRoomPhase = CallRoomPhase.IDLE
     round_number: int | None = None
     round_end_ts: int | None = None
     server_warning_active: bool = False
     partner: PartnerInfo | None = None
     event_end_reason: str | None = None
+    is_paused: bool = False
+    paused_remaining_ms: int | None = None
     partner_presence: PartnerPresence | None = None
 
     def on_pairing(self, payload: dict) -> CallRoomState:
@@ -202,6 +233,8 @@ class CallRoomState:
             server_warning_active=False,
             partner=partner,
             event_end_reason=None,
+            is_paused=False,
+            paused_remaining_ms=None,
             partner_presence=PartnerPresence.CONNECTED,
         )
 
@@ -213,6 +246,8 @@ class CallRoomState:
             server_warning_active=False,
             partner=self.partner,
             event_end_reason=None,
+            is_paused=False,
+            paused_remaining_ms=None,
             partner_presence=self.partner_presence,
         )
 
@@ -225,6 +260,8 @@ class CallRoomState:
             server_warning_active=True,
             partner=self.partner,
             event_end_reason=None,
+            is_paused=self.is_paused,
+            paused_remaining_ms=self.paused_remaining_ms,
             partner_presence=self.partner_presence,
         )
 
@@ -236,6 +273,8 @@ class CallRoomState:
             server_warning_active=False,
             partner=None,
             event_end_reason=None,
+            is_paused=False,
+            paused_remaining_ms=None,
             partner_presence=None,
         )
 
@@ -247,21 +286,9 @@ class CallRoomState:
             server_warning_active=False,
             partner=None,
             event_end_reason=str(payload.get("reason", "completed")),
+            is_paused=False,
+            paused_remaining_ms=None,
             partner_presence=None,
-        )
-
-    def on_partner_state(self, payload: dict) -> CallRoomState:
-        """Presence only: never pause, reset, or advance the round timer."""
-        return CallRoomState(
-            phase=self.phase,
-            round_number=self.round_number,
-            round_end_ts=self.round_end_ts,
-            server_warning_active=self.server_warning_active,
-            partner=self.partner,
-            event_end_reason=self.event_end_reason,
-            partner_presence=partner_presence_from_protocol(
-                str(payload.get("state", ""))
-            ),
         )
 
     def on_disconnect(self) -> CallRoomState:
@@ -272,6 +299,8 @@ class CallRoomState:
             server_warning_active=self.server_warning_active,
             partner=self.partner,
             event_end_reason=self.event_end_reason,
+            is_paused=self.is_paused,
+            paused_remaining_ms=self.paused_remaining_ms,
             partner_presence=self.partner_presence,
         )
 
@@ -285,6 +314,85 @@ class CallRoomState:
                 server_warning_active=self.server_warning_active,
                 partner=self.partner,
                 event_end_reason=self.event_end_reason,
+                is_paused=self.is_paused,
+                paused_remaining_ms=self.paused_remaining_ms,
                 partner_presence=self.partner_presence,
             )
         return self.on_disconnect()
+
+    def on_operator_pause(self, payload: dict) -> CallRoomState:
+        """Freeze round timer during an operator pause action."""
+        remaining_seconds = int(payload.get("remaining_seconds", 0))
+        return CallRoomState(
+            phase=self.phase,
+            round_number=int(payload.get("round_number", self.round_number or 0)),
+            round_end_ts=self.round_end_ts,
+            server_warning_active=self.server_warning_active,
+            partner=self.partner,
+            event_end_reason=self.event_end_reason,
+            is_paused=True,
+            paused_remaining_ms=remaining_seconds * 1000,
+            partner_presence=self.partner_presence,
+        )
+
+    def on_operator_resume(self, payload: dict) -> CallRoomState:
+        """Resume round timer with new ends_at timestamp from operator."""
+        ends_at_iso = payload.get("ends_at")
+        new_end_ts = self.round_end_ts
+        if ends_at_iso:
+            new_end_ts = int(datetime.fromisoformat(ends_at_iso).timestamp() * 1000)
+
+        return CallRoomState(
+            phase=self.phase,
+            round_number=int(payload.get("round_number", self.round_number or 0)),
+            round_end_ts=new_end_ts,
+            server_warning_active=False,
+            partner=self.partner,
+            event_end_reason=self.event_end_reason,
+            is_paused=False,
+            paused_remaining_ms=None,
+            partner_presence=self.partner_presence,
+        )
+
+    def on_operator_extend(self, payload: dict) -> CallRoomState:
+        """Extend current round end timestamp from operator action."""
+        ends_at_iso = payload.get("ends_at")
+        new_end_ts = self.round_end_ts
+        if ends_at_iso:
+            new_end_ts = int(datetime.fromisoformat(ends_at_iso).timestamp() * 1000)
+        elif "extended_by_seconds" in payload and self.round_end_ts:
+            new_end_ts = self.round_end_ts + int(payload["extended_by_seconds"]) * 1000
+
+        return CallRoomState(
+            phase=self.phase,
+            round_number=int(payload.get("round_number", self.round_number or 0)),
+            round_end_ts=new_end_ts,
+            server_warning_active=self.server_warning_active,
+            partner=self.partner,
+            event_end_reason=self.event_end_reason,
+            is_paused=self.is_paused,
+            paused_remaining_ms=self.paused_remaining_ms,
+            partner_presence=self.partner_presence,
+        )
+
+    def on_partner_state(self, payload: dict | PartnerPresence | str) -> CallRoomState:
+        """Update partner presence status from real-time events."""
+        presence = (
+            payload
+            if isinstance(payload, PartnerPresence)
+            else partner_presence_from_protocol(payload)
+        )
+        return CallRoomState(
+            phase=self.phase,
+            round_number=self.round_number,
+            round_end_ts=self.round_end_ts,
+            server_warning_active=self.server_warning_active,
+            partner=self.partner,
+            event_end_reason=self.event_end_reason,
+            is_paused=self.is_paused,
+            paused_remaining_ms=self.paused_remaining_ms,
+            partner_presence=presence,
+        )
+
+    # Alias for backward compatibility
+    on_partner_presence = on_partner_state
