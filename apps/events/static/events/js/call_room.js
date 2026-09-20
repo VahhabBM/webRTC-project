@@ -121,11 +121,13 @@ export class CallRoomController {
     myParticipantId,
     warningThresholdSeconds = 30,
     forceMediaFallback = false,
+    forceFallback = false,
     elements = {},
     onPhaseChange = null,
     onTimerTick = null,
     fetchIceServers = null,
     negotiatorFactory = null,
+    transportFactory = null,
     transientIceGraceMs = null,
     iceRestartAfterDisconnectMs = null,
     reconnectInitialDelayMs = RECONNECT_INITIAL_DELAY_MS,
@@ -136,12 +138,13 @@ export class CallRoomController {
   }) {
     this.myParticipantId = myParticipantId;
     this.warningThresholdSeconds = warningThresholdSeconds;
-    this.forceMediaFallback = Boolean(forceMediaFallback);
+    this.forceMediaFallback = Boolean(forceMediaFallback || forceFallback);
+    this.forceFallback = this.forceMediaFallback;
     this.elements = elements;
     this.onPhaseChange = onPhaseChange;
     this.onTimerTick = onTimerTick;
     this._fetchIceServers = fetchIceServers;
-    this._negotiatorFactory = negotiatorFactory;
+    this._negotiatorFactory = transportFactory || negotiatorFactory;
     this._transientIceGraceMs = transientIceGraceMs;
     this._iceRestartAfterDisconnectMs = iceRestartAfterDisconnectMs;
     this._reconnectInitialDelayMs = reconnectInitialDelayMs;
@@ -177,6 +180,14 @@ export class CallRoomController {
     this._intentionalClose = false;
   }
 
+  get transport() {
+    return this.negotiator;
+  }
+
+  set transport(val) {
+    this.negotiator = val;
+  }
+
   _liveStream(stream) {
     return Boolean(
       stream && stream.getTracks().some((track) => track.readyState !== "ended"),
@@ -193,6 +204,10 @@ export class CallRoomController {
       this._bindLocalPreview();
       this._applyConnectionQuality("relay");
     }
+  }
+
+  async forceFallback() {
+    return this.forceMediaFallback();
   }
 
   connect() {
@@ -792,6 +807,7 @@ export class CallRoomController {
       myParticipantId: this.myParticipantId,
       partnerParticipantId: partnerId,
       roomId,
+      selectedRoomId: roomId,
       rtcConfig,
       forceFallback: this.forceMediaFallback,
       localStream: this._sharedStream || null,
