@@ -1,14 +1,25 @@
 /**
  * T-30/T-31/T-34/T-40/T-41 Call Room controller — lifecycle, synchronized timer, round rotation,
  * partner presence tracking (long absence re-entry), operator live controls, and disconnect telemetry.
+ *
+ * Timer uses T-15 clock offset + absolute round_end_ts from server.pairing.
+ * Handles T-24 messages: pairing, round_start, round_warning, round_end, event_end.
+ * T-31: camera/mic are acquired once and reused across partner switches.
+ * T-32: brief ICE/network drops show a degraded quality state and recover
+ * on the same peer connection without ending the round or re-prompting devices.
+ * T-33: 5-20s network loss reconnects the T-14 socket with bounded backoff
+ * to the same partner/room/round, showing RECONNECTING while the T-15 timer
+ * keeps ticking from round_end_ts.
+ * T-38: a pair-scoped second media adapter may take over if the primary/direct
+ * path fails. Call-room code uses only the shared T-26 transport surface.
  */
 
 import { ClockSyncClient } from "./clock_sync_client.js";
 import {
-  PerfectNegotiator,
+  FailoverMediaTransport,
   DEFAULT_MEDIA_CONSTRAINTS,
   acquireSharedLocalMedia,
-} from "./perfect_negotiator.js";
+} from "./media_transport.js";
 
 export const TimerVisualState = Object.freeze({
   WAITING: "waiting",
@@ -422,7 +433,6 @@ export class CallRoomController {
         })
         .catch((err) => {
           this._mediaPromise = null;
-          // T-41: اعلام رد مجوز مدیا به عنوان علت قطعی
           if (this.ws && this.ws.readyState === 1) {
             try {
               this.ws.send(
@@ -836,7 +846,7 @@ export class CallRoomController {
     if (this._negotiatorFactory) {
       return this._negotiatorFactory(options);
     }
-    return new PerfectNegotiator(options);
+    return new FailoverMediaTransport(options);
   }
 
   _isSamePartnerAssignment() {
@@ -861,11 +871,11 @@ export class CallRoomController {
   }
 
   _applyConnectionQuality(state) {
-    if (this._signalingDegraded && state !== "connected") {
+    if (this._signalingDegraded && state !== "connected" && state !== "relay") {
       this._showReconnecting();
       return;
     }
-    if (state === "connected") {
+    if (state === "connected" || state === "relay") {
       this._clearConnectionError();
     }
     if (this.elements.connectionBadge) {
@@ -875,6 +885,7 @@ export class CallRoomController {
         degraded: "QUALITY DROP",
         failed: "FAILED",
         closed: "CLOSED",
+        relay: "RELAY ACTIVE",
       };
       this.elements.connectionBadge.textContent =
         labels[state] || String(state).toUpperCase();
@@ -1153,7 +1164,6 @@ export class CallRoomController {
     const target = typeof window !== "undefined" ? window : globalThis;
     if (typeof target.addEventListener !== "function") return;
     this._beforeUnloadHandler = () => {
-      // T-41: ارسال تله‌متری بستن برگه/مرورگر به سرور قبل از نابودی سوکت
       if (this.ws && this.ws.readyState === 1) {
         try {
           this.ws.send(
