@@ -148,11 +148,13 @@ export class CallRoomController {
     myParticipantId,
     warningThresholdSeconds = 30,
     forceMediaFallback = false,
+    forceFallback = false,
     elements = {},
     onPhaseChange = null,
     onTimerTick = null,
     fetchIceServers = null,
     negotiatorFactory = null,
+    transportFactory = null,
     transientIceGraceMs = null,
     iceRestartAfterDisconnectMs = null,
     reconnectInitialDelayMs = RECONNECT_INITIAL_DELAY_MS,
@@ -163,12 +165,13 @@ export class CallRoomController {
   }) {
     this.myParticipantId = myParticipantId;
     this.warningThresholdSeconds = warningThresholdSeconds;
-    this.forceMediaFallback = Boolean(forceMediaFallback);
+    this.forceMediaFallback = Boolean(forceMediaFallback || forceFallback);
+    this.forceFallback = this.forceMediaFallback;
     this.elements = elements;
     this.onPhaseChange = onPhaseChange;
     this.onTimerTick = onTimerTick;
     this._fetchIceServers = fetchIceServers;
-    this._negotiatorFactory = negotiatorFactory;
+    this._negotiatorFactory = transportFactory || negotiatorFactory;
     this._transientIceGraceMs = transientIceGraceMs;
     this._iceRestartAfterDisconnectMs = iceRestartAfterDisconnectMs;
     this._reconnectInitialDelayMs = reconnectInitialDelayMs;
@@ -204,6 +207,14 @@ export class CallRoomController {
     this._intentionalClose = false;
   }
 
+  get transport() {
+    return this.negotiator;
+  }
+
+  set transport(val) {
+    this.negotiator = val;
+  }
+
   _liveStream(stream) {
     return Boolean(
       stream && stream.getTracks().some((track) => track.readyState !== "ended"),
@@ -215,11 +226,18 @@ export class CallRoomController {
       await this.negotiator.forceMediaFallback();
       this._bindLocalPreview();
       this._applyConnectionQuality("relay");
+    } else if (this.negotiator && typeof this.negotiator.forceFallback === "function") {
+      await this.negotiator.forceFallback();
+      this._bindLocalPreview();
+      this._applyConnectionQuality("relay");
     }
   }
 
+  async forceFallback() {
+    return this.forceMediaFallback();
+  }
+
   connect() {
-    void this.ensureLocalMedia();
     this._bindOnlineListener();
     this._bindBeforeUnloadListener();
     if (this.phase === CallRoomPhase.EVENT_ENDED || this._reconnectGaveUp) return;
@@ -298,7 +316,7 @@ export class CallRoomController {
     };
 
     socket.onerror = () => {
-      // onclose will handle reconnect
+      // onclose handles reconnect
     };
   }
 
@@ -821,6 +839,7 @@ export class CallRoomController {
       myParticipantId: this.myParticipantId,
       partnerParticipantId: partnerId,
       roomId,
+      selectedRoomId: roomId,
       rtcConfig,
       forceFallback: this.forceMediaFallback,
       localStream: this._sharedStream || null,
@@ -832,7 +851,7 @@ export class CallRoomController {
       onRemoteStream: (stream) => {
         if (this.elements.remoteVideo && this.elements.remoteVideo.srcObject !== stream) {
           this.elements.remoteVideo.srcObject = stream;
-          this.elements.remoteVideo.play().catch(() => {});
+          this.elements.remoteVideo.play?.().catch(() => {});
         }
       },
       onStateChange: (state) => {
@@ -1145,8 +1164,7 @@ export class CallRoomController {
 
   _bindOnlineListener() {
     if (this._onlineHandler) return;
-    const target = typeof window !== "undefined" ? window : globalThis;
-    if (typeof target.addEventListener !== "function") return;
+    if (typeof window === "undefined" || typeof window.addEventListener !== "function") return;
     this._onlineHandler = () => {
       if (this.phase === CallRoomPhase.EVENT_ENDED) return;
       if (!this._signalingDegraded && this.phase !== CallRoomPhase.DISCONNECTED) {
@@ -1158,22 +1176,20 @@ export class CallRoomController {
       this._clearReconnect();
       this.connect();
     };
-    target.addEventListener("online", this._onlineHandler);
+    window.addEventListener("online", this._onlineHandler);
   }
 
   _unbindOnlineListener() {
     if (!this._onlineHandler) return;
-    const target = typeof window !== "undefined" ? window : globalThis;
-    if (typeof target.removeEventListener === "function") {
-      target.removeEventListener("online", this._onlineHandler);
+    if (typeof window !== "undefined" && typeof window.removeEventListener === "function") {
+      window.removeEventListener("online", this._onlineHandler);
     }
     this._onlineHandler = null;
   }
 
   _bindBeforeUnloadListener() {
+    if (typeof window === "undefined" || typeof window.addEventListener !== "function") return;
     if (this._beforeUnloadHandler) return;
-    const target = typeof window !== "undefined" ? window : globalThis;
-    if (typeof target.addEventListener !== "function") return;
     this._beforeUnloadHandler = () => {
       if (this.ws && this.ws.readyState === 1) {
         try {
@@ -1188,14 +1204,13 @@ export class CallRoomController {
         }
       }
     };
-    target.addEventListener("beforeunload", this._beforeUnloadHandler);
+    window.addEventListener("beforeunload", this._beforeUnloadHandler);
   }
 
   _unbindBeforeUnloadListener() {
-    if (!this._beforeUnloadHandler) return;
-    const target = typeof window !== "undefined" ? window : globalThis;
-    if (typeof target.removeEventListener === "function") {
-      target.removeEventListener("beforeunload", this._beforeUnloadHandler);
+    if (typeof window === "undefined" || !this._beforeUnloadHandler) return;
+    if (typeof window.removeEventListener === "function") {
+      window.removeEventListener("beforeunload", this._beforeUnloadHandler);
     }
     this._beforeUnloadHandler = null;
   }
