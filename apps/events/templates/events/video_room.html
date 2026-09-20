@@ -188,10 +188,16 @@
     import { CallRoomController, CallRoomPhase } from '/static/events/js/call_room.js';
 
     const WARNING_THRESHOLD_SECONDS = {{ warning_threshold_seconds }};
+    const params = new URLSearchParams(window.location.search);
+    const mediaFallbackRoomId =
+      params.get("media_fallback_room") || "{{ media_fallback_room_id|default:''|escapejs }}";
+    const forceMediaFallback = params.get("force_media_fallback") === "1";
 
     const controller = new CallRoomController({
       myParticipantId: null,
       warningThresholdSeconds: WARNING_THRESHOLD_SECONDS,
+      mediaFallbackRoomId,
+      forceMediaFallback,
       elements: {
         localVideo: document.getElementById('localVideo'),
         remoteVideo: document.getElementById('remoteVideo'),
@@ -242,6 +248,7 @@
       }
       const meData = await meRes.json();
       controller.myParticipantId = meData.participant.id;
+      window.__t38ForceMediaFallback = () => controller.forceMediaFallback();
       controller.connect();
     }
 

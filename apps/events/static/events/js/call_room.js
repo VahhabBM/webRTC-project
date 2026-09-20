@@ -1,14 +1,26 @@
 /**
+ * T-30/T-31 Call Room controller — lifecycle, synchronized timer, round rotation.
+ *
+ * Timer uses T-15 clock offset + absolute round_end_ts from server.pairing.
+ * Handles T-24 messages: pairing, round_start, round_warning, round_end, event_end.
+ * T-31: camera/mic are acquired once and reused across partner switches.
+ * T-32: brief ICE/network drops show a degraded quality state and recover
+ * on the same peer connection without ending the round or re-prompting devices.
+ * T-33: 5–20s network loss reconnects the T-14 socket with bounded backoff
+ * to the same partner/room/round, showing RECONNECTING while the T-15 timer
+ * keeps ticking from round_end_ts.
+ * T-38: a pair-scoped second media adapter may take over if the primary/direct
+ * path fails. Call-room code uses only the shared T-26 transport surface.
  * T-30/T-31/T-34/T-40 Call Room controller — lifecycle, synchronized timer, round rotation,
  * partner presence tracking (long absence re-entry), and operator live controls (pause, resume, extend).
  */
 
 import { ClockSyncClient } from "./clock_sync_client.js";
 import {
-  PerfectNegotiator,
+  FailoverMediaTransport,
   DEFAULT_MEDIA_CONSTRAINTS,
   acquireSharedLocalMedia,
-} from "./perfect_negotiator.js";
+} from "./media_transport.js";
 
 export const TimerVisualState = Object.freeze({
   WAITING: "waiting",
@@ -148,6 +160,8 @@ export class CallRoomController {
     reconnectWindowMs = RECONNECT_WINDOW_MS,
     createWebSocket = null,
     now = null,
+    mediaFallbackRoomId = "",
+    forceMediaFallback = false,
   }) {
     this.myParticipantId = myParticipantId;
     this.warningThresholdSeconds = warningThresholdSeconds;
@@ -163,6 +177,8 @@ export class CallRoomController {
     this._reconnectWindowMs = reconnectWindowMs;
     this._createWebSocket = createWebSocket;
     this._now = now || (() => Date.now());
+    this._mediaFallbackRoomId = mediaFallbackRoomId ? String(mediaFallbackRoomId) : "";
+    this._forceMediaFallback = Boolean(forceMediaFallback);
 
     this.ws = null;
     this.negotiator = null;
@@ -815,7 +831,11 @@ export class CallRoomController {
     if (this._negotiatorFactory) {
       return this._negotiatorFactory(options);
     }
-    return new PerfectNegotiator(options);
+    return new FailoverMediaTransport({
+      ...options,
+      selectedRoomId: this._mediaFallbackRoomId,
+      forceFallback: this._forceMediaFallback,
+    });
   }
 
   _isSamePartnerAssignment() {
@@ -862,15 +882,39 @@ export class CallRoomController {
         this.elements.connectionBadge.dataset = {};
       }
       this.elements.connectionBadge.dataset.quality = state;
+      const kind = this.negotiator?.adapterKind;
+      if (kind) {
+        this.elements.connectionBadge.dataset.adapter = kind;
+      }
+      if (state === "connected" && kind === "relay") {
+        this.elements.connectionBadge.textContent = "CONNECTED (RELAY)";
+      }
     }
     if (this.elements.qualityBanner) {
       const degraded = state === "degraded";
-      this.elements.qualityBanner.hidden = !degraded;
+      const relayed =
+        state === "connected" && this.negotiator?.adapterKind === "relay";
+      this.elements.qualityBanner.hidden = !(degraded || relayed);
       if (degraded) {
         this.elements.qualityBanner.textContent =
           "Temporary quality drop — recovering connection…";
+      } else if (relayed) {
+        this.elements.qualityBanner.textContent =
+          "Fallback transport active for this pair — same partner and round.";
       }
     }
+  }
+
+  async forceMediaFallback() {
+    if (!this.negotiator || typeof this.negotiator.forceFallback !== "function") {
+      return false;
+    }
+    const ok = await this.negotiator.forceFallback();
+    if (ok) {
+      this._bindLocalPreview();
+      this._applyConnectionQuality(this.negotiator.quality || "connected");
+    }
+    return ok;
   }
 
   _refreshQualityFromPeer() {
