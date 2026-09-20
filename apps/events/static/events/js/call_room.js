@@ -1,17 +1,6 @@
 /**
  * T-30/T-31/T-34/T-40/T-41 Call Room controller — lifecycle, synchronized timer, round rotation,
  * partner presence tracking (long absence re-entry), operator live controls, and disconnect telemetry.
- *
- * Timer uses T-15 clock offset + absolute round_end_ts from server.pairing.
- * Handles T-24 messages: pairing, round_start, round_warning, round_end, event_end.
- * T-31: camera/mic are acquired once and reused across partner switches.
- * T-32: brief ICE/network drops show a degraded quality state and recover
- * on the same peer connection without ending the round or re-prompting devices.
- * T-33: 5-20s network loss reconnects the T-14 socket with bounded backoff
- * to the same partner/room/round, showing RECONNECTING while the T-15 timer
- * keeps ticking from round_end_ts.
- * T-38: a pair-scoped second media adapter may take over if the primary/direct
- * path fails. Call-room code uses only the shared T-26 transport surface.
  */
 
 import { ClockSyncClient } from "./clock_sync_client.js";
@@ -285,9 +274,7 @@ export class CallRoomController {
       this._onSignalingClosed();
     };
 
-    socket.onerror = () => {
-      // onclose handles reconnect
-    };
+    socket.onerror = () => {};
   }
 
   _detachSocket() {
@@ -301,9 +288,7 @@ export class CallRoomController {
       if (socket.readyState === 0 || socket.readyState === 1) {
         socket.close();
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
     this.ws = null;
   }
 
@@ -442,9 +427,7 @@ export class CallRoomController {
                   },
                 }),
               );
-            } catch {
-              // ignore
-            }
+            } catch {}
           }
           this._showConnectionError(
             "Could not start the camera or microphone. Check permissions and try again.",
@@ -1176,9 +1159,7 @@ export class CallRoomController {
               payload: { cause: "tab_closed" },
             }),
           );
-        } catch {
-          // ignore
-        }
+        } catch {}
       }
     };
     window.addEventListener("beforeunload", this._beforeUnloadHandler);
