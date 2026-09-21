@@ -1,6 +1,8 @@
-import pytest
 from datetime import timedelta
+
+import pytest
 from django.utils import timezone
+
 from apps.events.models import Event
 from apps.events.operator import OperatorService
 
