@@ -201,3 +201,64 @@ class OperatorService:
             absent_participant_ids=absent_participant_ids,
             operator_details=operator_details,
         )
+
+    def get_live_metrics(self) -> dict:
+        """محاسبه متریک‌های زنده رویداد و بررسی آستانه‌های هشدار (T-43)"""
+        active_connections_count = getattr(self.event, "active_connections_count", 0)
+        active_rooms_count = getattr(self.event, "active_rooms_count", 0)
+
+        total_sessions = max(active_rooms_count * 2, 1)
+        relay_path_share_percentage = getattr(
+            self.event, "relay_path_share_percentage", 0.0
+        )
+
+        fallback_upgrades_count = getattr(self.event, "fallback_upgrades_count", 0)
+        upgrade_percentage = (
+            (fallback_upgrades_count / total_sessions) * 100
+            if total_sessions > 0
+            else 0.0
+        )
+
+        message_latency_ms = getattr(self.event, "message_latency_ms", 0.0)
+        drop_rate_one_minute = getattr(self.event, "drop_rate_one_minute", 0.0)
+
+        alerts = []
+
+        # آستانه ۱: سهم مسیر کمکی از ۳۵٪ بیشتر شود
+        if relay_path_share_percentage > 35.0:
+            alerts.append(
+                {
+                    "type": "HIGH_RELAY_SHARE",
+                    "message": f"Relay path share is {relay_path_share_percentage:.1f}%, exceeding 35% threshold.",
+                }
+            )
+
+        # آستانه ۲: ارتقا از ۱۰٪ اتاق‌ها بیشتر شود
+        if upgrade_percentage > 10.0:
+            alerts.append(
+                {
+                    "type": "HIGH_FALLBACK_UPGRADES",
+                    "message": f"Fallback upgrades are at {upgrade_percentage:.1f}%, exceeding 10% threshold.",
+                }
+            )
+
+        # آستانه ۳: افت متصل‌ها در یک دقیقه بیش از ۵٪ باشد
+        if drop_rate_one_minute > 5.0:
+            alerts.append(
+                {
+                    "type": "HIGH_CONNECTION_DROP",
+                    "message": f"Connection drop rate in the last minute is {drop_rate_one_minute:.1f}%, exceeding 5% threshold.",
+                }
+            )
+
+        return {
+            "active_connections_count": active_connections_count,
+            "active_rooms_count": active_rooms_count,
+            "relay_path_share_percentage": relay_path_share_percentage,
+            "fallback_upgrades_count": fallback_upgrades_count,
+            "message_latency_ms": message_latency_ms,
+            "drop_rate_one_minute": drop_rate_one_minute,
+            "has_critical_alerts": len(alerts) > 0,
+            "alerts": alerts,
+            "checked_at": timezone.now().isoformat(),
+        }
