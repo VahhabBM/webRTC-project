@@ -93,6 +93,20 @@ Apply formatting:
 docker compose exec web ruff format .
 ```
 
+## Message-layer load test (T-44)
+
+Staging/local tool that connects N synthetic T-14 WebSocket clients (acceptance
+sample: **50**, not 900), authenticates through the existing join-link session
+contract, runs one T-24 round transition, and writes latency/loss JSON.
+
+```bash
+python manage.py message_layer_load_test --clients 50
+```
+
+Full flags, staging URLs, result-file fields, and the T-30 regression checklist
+are in [docs/message-layer-load-test.md](docs/message-layer-load-test.md).
+The tool refuses production settings and is not part of the runtime consumer.
+
 ## Synthetic event data (T-06)
 
 Use the `seed_event` management command to create a new synthetic Event, its rounds,
@@ -184,7 +198,10 @@ patterns.
 │   ├── wsgi.py
 │   └── asgi.py
 ├── docs/
-│   └── protocol.md          # WebSocket protocol specification
+│   ├── protocol.md          # WebSocket protocol specification
+│   └── message-layer-load-test.md  # T-44 staging load-test CLI
+├── tools/
+│   └── message_layer_load_test/    # T-44 synthetic client runner (not runtime)
 ├── docker/
 │   └── entrypoint.sh        # wait for Postgres, migrate, then start
 ├── tests/
