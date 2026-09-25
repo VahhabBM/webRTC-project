@@ -1,4 +1,4 @@
-"""Authenticated WebSocket connection layer (T-14)."""
+"""Authenticated WebSocket connection layer (T-14, T-24, T-25, T-27, T-29 & T-41)."""
 
 from __future__ import annotations
 
@@ -12,32 +12,86 @@ from datetime import UTC, datetime
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.conf import settings
+from django.core.cache import cache
+from django.utils import timezone
 
 from apps.protocol.constants import (
+    CLOSE_AUTHENTICATION_FAILED,
     CLOSE_INTERNAL_ERROR,
     CLOSE_MESSAGE_TOO_BIG,
     CLOSE_NORMAL,
     ERROR_CLOSE_CODES,
     ErrorCode,
     MessageType,
+    PartnerState,
 )
 from apps.protocol.exceptions import ProtocolError
 from apps.protocol.schemas import (
     build_server_clock_sync,
     build_server_error,
     build_server_hello,
+    build_server_ice_candidate,
     build_server_pong,
+    build_server_webrtc_answer,
+    build_server_webrtc_offer,
     error_from_protocol_error,
 )
 from apps.protocol.validators import validate_message
 
 from .auth import resolve_participant_from_scope
+from .orchestrator import (
+    OrchestratorRealtime,
+    absence_generation_key,
+    connection_channel_key,
+    current_pair_for_participant,
+)
 
 logger = logging.getLogger(__name__)
+
+# In-process long-absence watches. Generation in cache is the source of truth.
+_absence_watches: dict[str, asyncio.Task] = {}
+
+
+def _hello_seen_key(participant_id) -> str:
+    return f"ws:hello-seen:{participant_id}"
 
 
 def _timestamp_ms() -> int:
     return int(datetime.now(UTC).timestamp() * 1000)
+
+
+async def _watch_partner_absence(event, participant, generation: int) -> None:
+    """After the T-34 grace period, mark the partner gone if still absent."""
+    pid = str(participant.pk)
+    try:
+        grace = float(getattr(settings, "PARTNER_ABSENCE_GRACE_SECONDS", 25))
+        await asyncio.sleep(max(grace, 0))
+        try:
+            stored = await database_sync_to_async(cache.get)(
+                absence_generation_key(participant.pk)
+            )
+        except Exception:
+            logger.exception(
+                "Absence generation read failed for participant %s", participant.pk
+            )
+            return
+        if stored != generation:
+            return
+        try:
+            await OrchestratorRealtime(event).anotify_partner_presence(
+                participant, PartnerState.DISCONNECTED
+            )
+        except Exception:
+            logger.exception(
+                "Long-absence partner notify failed for participant %s",
+                participant.pk,
+            )
+    except asyncio.CancelledError:
+        raise
+    finally:
+        current = _absence_watches.get(pid)
+        if current is not None and current.done():
+            _absence_watches.pop(pid, None)
 
 
 @database_sync_to_async
@@ -45,12 +99,32 @@ def _participant_from_scope(scope):
     return resolve_participant_from_scope(scope)
 
 
-class ParticipantConsumer(AsyncWebsocketConsumer):
-    """One isolated, session-authenticated protocol connection.
+@database_sync_to_async
+def _resolve_partner_for_participant(participant, room_id: str):
+    from django.db.models import Q
 
-    Multiple sockets for the same participant are deliberately allowed.
-    Identity is resolved once from the Django session and never from payloads.
-    """
+    from apps.events.models import Pair
+
+    if not participant or not room_id:
+        return None
+
+    pair = (
+        Pair.objects.filter(room_id=room_id)
+        .filter(Q(participant_a=participant) | Q(participant_b=participant))
+        .select_related("participant_a", "participant_b")
+        .first()
+    )
+    if not pair:
+        return None
+    return (
+        pair.participant_b
+        if pair.participant_a_id == participant.pk
+        else pair.participant_a
+    )
+
+
+class ParticipantConsumer(AsyncWebsocketConsumer):
+    """One isolated, session-authenticated protocol connection."""
 
     async def connect(self):
         self.participant = None
@@ -59,6 +133,10 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
         self.last_activity = time.monotonic()
         self._rate_timestamps = deque()
         self._heartbeat_task = None
+        self._session_replaced = False
+        self._last_telemetry_cause = None
+        self._last_telemetry_detail = ""
+
         try:
             self.participant = await _participant_from_scope(self.scope)
             self.authenticated = self.participant is not None
@@ -83,11 +161,56 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
             except asyncio.CancelledError:
                 pass
 
+        if self.channel_layer:
+            if hasattr(self, "participant_group"):
+                await self.channel_layer.group_discard(
+                    self.participant_group, self.channel_name
+                )
+            if hasattr(self, "event_group"):
+                await self.channel_layer.group_discard(
+                    self.event_group, self.channel_name
+                )
+
+        # T-41: تشخیص و ثبت علت قطعی ارتباط در صورت پایان جلسه عادی
+        if (
+            self.participant
+            and self.handshake_complete
+            and not getattr(self, "_session_replaced", False)
+        ):
+            cause = getattr(self, "_last_telemetry_cause", None)
+            detail = getattr(self, "_last_telemetry_detail", "")
+            if not cause:
+                if close_code == 1001:
+                    cause = "tab_closed"
+                else:
+                    cause = "network"
+            try:
+                await self._record_disconnection(cause, detail)
+            except Exception:
+                logger.exception(
+                    "Failed recording disconnection for participant %s",
+                    self.participant.pk,
+                )
+
+        await self._on_live_socket_closed()
+
     async def receive(self, text_data=None, bytes_data=None):
         self.last_activity = time.monotonic()
         raw = text_data if text_data is not None else bytes_data
         if raw is None:
             return
+
+        # T-41: دریافت و ذخیره تله‌متری دلایل خروج قبل از ولیدیشن پروتکل اصلی
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict) and data.get("type") == "client.telemetry":
+                payload = data.get("payload", {})
+                self._last_telemetry_cause = payload.get("cause")
+                self._last_telemetry_detail = str(payload.get("detail", ""))
+                return
+        except Exception:
+            pass
+
         max_bytes = getattr(settings, "WEBSOCKET_MAX_MESSAGE_BYTES", 64 * 1024)
         size = len(raw.encode("utf-8")) if isinstance(raw, str) else len(raw)
         if size > max_bytes:
@@ -117,11 +240,14 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
         except Exception:
             logger.exception(
                 "Unexpected WebSocket failure for participant %s",
-                self.participant.pk,
+                getattr(self.participant, "pk", None),
             )
             await self._fatal(ErrorCode.ERR_INTERNAL)
 
     async def _handle_message(self, msg_type, payload):
+        if not self.authenticated or self.participant is None:
+            await self._fatal(ErrorCode.ERR_NOT_AUTHENTICATED)
+            return
         if not self.handshake_complete:
             if msg_type != MessageType.CLIENT_HELLO:
                 await self._send_error(
@@ -136,13 +262,15 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
         if msg_type == MessageType.CLIENT_PING:
             await self._send(
                 build_server_pong(
-                    client_ts_echo=payload["client_ts"], server_ts=_timestamp_ms()
+                    client_ts_echo=payload["client_ts"],
+                    server_ts=_timestamp_ms(),
                 )
             )
         elif msg_type == MessageType.CLIENT_CLOCK_SYNC:
             await self._send(
                 build_server_clock_sync(
-                    client_ts_echo=payload["client_ts"], server_ts=_timestamp_ms()
+                    client_ts_echo=payload["client_ts"],
+                    server_ts=_timestamp_ms(),
                 )
             )
         elif msg_type == MessageType.CLIENT_HELLO:
@@ -151,6 +279,16 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 "client.hello has already been accepted.",
                 original_type=str(msg_type),
             )
+        elif msg_type == MessageType.CLIENT_READY:
+            # Idempotent T-13 state signal. Missing/repeat ready never delays
+            # the authoritative scheduler or T-24 round_start broadcast.
+            return
+        elif msg_type in (
+            MessageType.CLIENT_WEBRTC_OFFER,
+            MessageType.CLIENT_WEBRTC_ANSWER,
+            MessageType.CLIENT_WEBRTC_ICE,
+        ):
+            await self._handle_webrtc_signal(msg_type, payload)
         else:
             await self._send_error(
                 ErrorCode.ERR_INVALID_STATE,
@@ -159,7 +297,20 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
             )
 
     async def _complete_handshake(self, payload):
+        if not self.authenticated or self.participant is None:
+            await self._fatal(ErrorCode.ERR_NOT_AUTHENTICATED)
+            return
         self.handshake_complete = True
+        if self.channel_layer:
+            self.participant_group = f"participant_{self.participant.pk}"
+            await self.channel_layer.group_add(
+                self.participant_group, self.channel_name
+            )
+
+            # عضویت در گروه عمومی رویداد جهت دریافت اکشن‌های اپراتور
+            self.event_group = f"event_{self.participant.event_id}"
+            await self.channel_layer.group_add(self.event_group, self.channel_name)
+
         await self._send(
             build_server_hello(
                 participant_id=str(self.participant.pk),
@@ -167,6 +318,332 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 client_ts_echo=payload["client_ts"],
                 event_id=str(self.participant.event_id),
             )
+        )
+        await self._claim_exclusive_connection()
+        await self._clear_absence_watch()
+        await self._mark_reconnected()
+        await self._notify_partner_presence(PartnerState.CONNECTED)
+        await self._maybe_send_reconnect_snapshot()
+
+    @database_sync_to_async
+    def _record_disconnection(self, cause: str, detail: str) -> None:
+        from apps.events.models import (
+            DisconnectionCause,
+            DisconnectionLog,
+            ParticipantStatus,
+        )
+
+        now = timezone.now()
+        event = getattr(self.participant, "event", None)
+        active_round = None
+        if event:
+            active_round = event.rounds.filter(
+                starts_at__lte=now, ends_at__gte=now
+            ).first()
+
+        valid_causes = {c.value: c.value for c in DisconnectionCause}
+        stored_cause = valid_causes.get(cause, DisconnectionCause.NETWORK)
+
+        DisconnectionLog.objects.create(
+            event=event or self.participant.event,
+            participant=self.participant,
+            round=active_round,
+            cause=stored_cause,
+            detail=detail,
+            disconnected_at=now,
+        )
+        self.participant.status = ParticipantStatus.DISCONNECTED
+        self.participant.save(update_fields=["status", "updated_at"])
+
+    @database_sync_to_async
+    def _mark_reconnected(self) -> None:
+        from apps.events.models import DisconnectionLog, ParticipantStatus
+
+        if not self.participant:
+            return
+        now = timezone.now()
+        DisconnectionLog.objects.filter(
+            participant=self.participant,
+            reconnected_at__isnull=True,
+        ).update(reconnected_at=now)
+
+        if self.participant.status != ParticipantStatus.ACTIVE:
+            self.participant.status = ParticipantStatus.ACTIVE
+            self.participant.save(update_fields=["status", "updated_at"])
+
+    async def _maybe_send_reconnect_snapshot(self) -> None:
+        """Replay current pairing/round to this socket only (T-14/T-33)."""
+        if not self.participant:
+            return
+        key = _hello_seen_key(self.participant.pk)
+        ttl = getattr(settings, "PROTOCOL_RECONNECT_WINDOW_SECONDS", 300)
+        try:
+            seen = await database_sync_to_async(cache.get)(key)
+            await database_sync_to_async(cache.set)(key, True, ttl)
+        except Exception:
+            logger.exception(
+                "Reconnect window cache failed for participant %s",
+                self.participant.pk,
+            )
+            return
+        if not seen:
+            return
+        try:
+            messages = await database_sync_to_async(self._reconnect_snapshot)()
+        except Exception:
+            logger.exception(
+                "Reconnect snapshot failed for participant %s",
+                self.participant.pk,
+            )
+            return
+        for message in messages:
+            try:
+                await self._send(message)
+            except Exception:
+                logger.exception(
+                    "Failed delivering reconnect snapshot to participant %s",
+                    self.participant.pk,
+                )
+                return
+
+    def _reconnect_snapshot(self) -> list:
+        event = getattr(self.participant, "event", None)
+        if event is None:
+            return []
+        return OrchestratorRealtime(event).reconnect_snapshot_messages(self.participant)
+
+    async def session_replaced(self, event: dict) -> None:
+        """A newer T-08 session took over this participant (T-34)."""
+        del event
+        if getattr(self, "_session_replaced", False):
+            return
+        self._session_replaced = True
+        try:
+            await self._send_error(
+                ErrorCode.ERR_ALREADY_CONNECTED,
+                "You joined from another window. This session is no longer active.",
+            )
+        except Exception:
+            logger.exception(
+                "Failed notifying replaced session for participant %s",
+                getattr(self.participant, "pk", None),
+            )
+        await self.close(
+            code=ERROR_CLOSE_CODES.get(
+                ErrorCode.ERR_ALREADY_CONNECTED, CLOSE_AUTHENTICATION_FAILED
+            )
+        )
+
+    async def _claim_exclusive_connection(self) -> None:
+        if not self.participant:
+            return
+        key = connection_channel_key(self.participant.pk)
+        ttl = getattr(settings, "PARTICIPANT_SESSION_AGE", 60 * 60 * 24 * 30)
+        try:
+            previous = await database_sync_to_async(cache.get)(key)
+            await database_sync_to_async(cache.set)(key, self.channel_name, ttl)
+        except Exception:
+            logger.exception(
+                "Connection claim cache failed for participant %s",
+                self.participant.pk,
+            )
+            return
+        if previous and previous != self.channel_name and self.channel_layer:
+            try:
+                await self.channel_layer.send(previous, {"type": "session.replaced"})
+            except Exception:
+                logger.exception(
+                    "Failed replacing stale socket for participant %s",
+                    self.participant.pk,
+                )
+
+    async def _clear_absence_watch(self) -> None:
+        if not self.participant:
+            return
+        try:
+            await database_sync_to_async(cache.delete)(
+                absence_generation_key(self.participant.pk)
+            )
+        except Exception:
+            logger.exception(
+                "Absence cache clear failed for participant %s", self.participant.pk
+            )
+
+        pid = str(self.participant.pk)
+        task = _absence_watches.pop(pid, None)
+        if task and not task.done():
+            task.cancel()
+
+    async def _on_live_socket_closed(self) -> None:
+        if not self.participant or not self.handshake_complete:
+            return
+        if getattr(self, "_session_replaced", False):
+            return
+        key = connection_channel_key(self.participant.pk)
+        try:
+            current = await database_sync_to_async(cache.get)(key)
+        except Exception:
+            logger.exception(
+                "Connection cache read failed for participant %s",
+                self.participant.pk,
+            )
+            return
+        if current != self.channel_name:
+            return
+        try:
+            await database_sync_to_async(cache.delete)(key)
+        except Exception:
+            logger.exception(
+                "Connection cache delete failed for participant %s",
+                self.participant.pk,
+            )
+        await self._begin_absence_watch()
+
+    async def _begin_absence_watch(self) -> None:
+        participant = self.participant
+        event = getattr(participant, "event", None)
+        if participant is None or event is None:
+            return
+        try:
+            pair = await database_sync_to_async(current_pair_for_participant)(
+                event, participant
+            )
+        except Exception:
+            logger.exception(
+                "Absence pair lookup failed for participant %s", participant.pk
+            )
+            return
+        if not pair:
+            return
+        generation = time.time_ns()
+        ttl = getattr(settings, "PROTOCOL_RECONNECT_WINDOW_SECONDS", 300)
+        try:
+            await database_sync_to_async(cache.set)(
+                absence_generation_key(participant.pk), generation, ttl
+            )
+        except Exception:
+            logger.exception(
+                "Absence generation cache failed for participant %s", participant.pk
+            )
+            return
+        pid = str(participant.pk)
+        previous = _absence_watches.pop(pid, None)
+        if previous and not previous.done():
+            previous.cancel()
+        _absence_watches[pid] = asyncio.create_task(
+            _watch_partner_absence(event, participant, generation)
+        )
+
+    async def _notify_partner_presence(self, state: str) -> None:
+        if not self.participant:
+            return
+        event = getattr(self.participant, "event", None)
+        if event is None:
+            return
+        try:
+            await OrchestratorRealtime(event).anotify_partner_presence(
+                self.participant, state
+            )
+        except Exception:
+            logger.exception(
+                "Partner presence notify failed for participant %s",
+                self.participant.pk,
+            )
+
+    async def _handle_webrtc_signal(self, msg_type: MessageType, payload: dict) -> None:
+        room_id = payload.get("room_id")
+        partner = await _resolve_partner_for_participant(self.participant, room_id)
+        if not partner:
+            await self._send_error(
+                ErrorCode.ERR_WRONG_ROOM,
+                f"Participant is not assigned to room {room_id}.",
+                original_type=str(msg_type),
+            )
+            return
+
+        from_id = str(self.participant.pk)
+        if msg_type == MessageType.CLIENT_WEBRTC_OFFER:
+            outbound = build_server_webrtc_offer(
+                room_id=room_id,
+                from_participant_id=from_id,
+                sdp=payload["sdp"],
+            )
+        elif msg_type == MessageType.CLIENT_WEBRTC_ANSWER:
+            outbound = build_server_webrtc_answer(
+                room_id=room_id,
+                from_participant_id=from_id,
+                sdp=payload["sdp"],
+            )
+        elif msg_type == MessageType.CLIENT_WEBRTC_ICE:
+            outbound = build_server_ice_candidate(
+                room_id=room_id,
+                from_participant_id=from_id,
+                candidate=payload["candidate"],
+                sdp_mid=payload["sdp_mid"],
+                sdp_mline_index=payload["sdp_mline_index"],
+            )
+        else:
+            return
+
+        if self.channel_layer:
+            await self.channel_layer.group_send(
+                f"participant_{partner.pk}",
+                {
+                    "type": "webrtc_relay",
+                    "message": outbound,
+                },
+            )
+
+    async def webrtc_relay(self, event: dict) -> None:
+        await self._send(event["message"])
+
+    async def orchestrator_message(self, event: dict) -> None:
+        """Deliver a T-13 orchestrator envelope published via the channel layer.
+
+        Send failures are swallowed so a disconnected client cannot delay
+        delivery to other members of the same group.
+        """
+        message = event.get("message")
+        if not message:
+            return
+        try:
+            await self._send(message)
+        except Exception:
+            logger.exception(
+                "Failed delivering orchestrator message to participant %s",
+                getattr(self.participant, "pk", None),
+            )
+
+    # ----------------------------------------------------------------------
+    # هندلرهای دریافت پیام از Channel Layer (T-25 & T-29)
+    # ----------------------------------------------------------------------
+
+    async def round_preconnect(self, event: dict) -> None:
+        """ارسال اعلان فاز پیش‌اتصال ۲۰ ثانیه‌ای به کلاینت جهت تبادل سایلنت سیگنالینگ"""
+        await self._send(
+            {
+                "type": "round.preconnect",
+                "payload": event.get("payload", {}),
+            }
+        )
+
+    async def round_start(self, event: dict) -> None:
+        """ارسال اعلان شروع رسمی راند و فعال‌سازی تصویر/صدا در ثانیه صفر"""
+        await self._send(
+            {
+                "type": "round.start",
+                "payload": event.get("payload", {}),
+            }
+        )
+
+    async def operator_action(self, event: dict) -> None:
+        """ارسال اکشن‌های کنترلی اپراتور (Pause, Resume, Extend) به سوکت کلاینت"""
+        action = event.get("action", "")
+        await self._send(
+            {
+                "type": f"operator.{action}" if action else "operator.action",
+                "payload": event.get("payload", {}),
+            }
         )
 
     def _within_rate_limit(self) -> bool:
@@ -195,7 +672,7 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 "Heartbeat failure for participant %s", self.participant.pk
             )
 
-    async def _send(self, message):
+    async def _send(self, message: dict):
         await self.send(text_data=json.dumps(message))
 
     async def _send_error(self, code, message, *, original_type=None, detail=None):

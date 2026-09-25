@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+import uuid
 from datetime import timedelta
 from uuid import uuid4
 
@@ -52,3 +53,34 @@ class TermsAcceptance(models.Model):
     )
     accepted_at = models.DateTimeField(auto_now_add=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
+
+
+class DeviceCheckLog(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event = models.ForeignKey(
+        "events.Event",
+        on_delete=models.CASCADE,
+        related_name="device_check_logs",
+        null=True,
+        blank=True,
+    )
+    participant = models.ForeignKey(
+        "events.Participant",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="device_checks",
+    )
+    camera_working = models.BooleanField(default=False)
+    mic_working = models.BooleanField(default=False)
+    error_type = models.CharField(max_length=64, blank=True, default="")
+    user_agent = models.TextField(blank=True, default="")
+    is_in_app_browser = models.BooleanField(default=False)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return f"DeviceCheck (Cam: {self.camera_working}, Mic: {self.mic_working}, Err: {self.error_type or 'None'})"

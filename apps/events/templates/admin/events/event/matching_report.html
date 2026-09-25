@@ -1,0 +1,223 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_label|capfirst }}</a>
+  &rsaquo; <a href="{% url 'admin:events_event_changelist' %}">Events</a>
+  &rsaquo; <a href="{% url 'admin:events_event_change' event.pk %}">{{ event.name }}</a>
+  &rsaquo; Matching Report
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>Matching Report &ndash; {{ event.name }}</h1>
+
+<p>
+  <strong>Status:</strong> {{ event.get_status_display }}
+  &nbsp;|&nbsp;
+  <strong>Rounds:</strong> {{ event.num_rounds }}
+  &nbsp;|&nbsp;
+  <strong>Participants:</strong> {{ event.participants.count }}
+</p>
+
+{# ── State gate ─────────────────────────────────────────────────────────── #}
+{% if not can_run %}
+<div class="errornote">
+  <p>
+    <strong>Matching is not available.</strong>
+    The event must be in <em>Scheduled</em>, <em>Active</em>, or
+    <em>Completed</em> state to run matching.
+    Current state: <strong>{{ event.get_status_display }}</strong>.
+  </p>
+</div>
+{% else %}
+
+{# ── Error banner ────────────────────────────────────────────────────────── #}
+{% if error_message %}
+<div class="errornote">
+  <p><strong>Error:</strong> {{ error_message }}</p>
+</div>
+{% endif %}
+
+{# ── Confirmation gate (rerun) ───────────────────────────────────────────── #}
+{% if needs_confirmation %}
+<div class="errornote">
+  <p>
+    <strong>A schedule already exists for this event.</strong>
+    Running matching again will <em>replace</em> all existing rounds and pairs.
+    Check the box below to confirm, then click <em>Run Matching</em>.
+  </p>
+</div>
+{% endif %}
+
+{# ── Run form (shown before a report is available, or when confirmation is needed) #}
+{% if not report or needs_confirmation %}
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="action" value="run">
+
+  {% if has_schedule %}
+    <p>
+      <label style="font-weight:bold;">
+        <input type="checkbox" name="confirmed" value="yes"
+               {% if needs_confirmation %}autofocus{% endif %}
+               required>
+        I confirm I want to <strong>replace</strong> the existing schedule.
+      </label>
+    </p>
+  {% endif %}
+
+  <p>
+    <button type="submit" class="button{% if not report %} default{% endif %}">
+      Run Matching
+    </button>
+  </p>
+</form>
+{% endif %}
+
+{# ── Quality report ──────────────────────────────────────────────────────── #}
+{% if report %}
+
+<h2>Quality Report</h2>
+
+<h3>Per-Round Metrics</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Round</th>
+      <th>Pairs</th>
+      <th>Avg Score</th>
+      <th>10th Pct Score</th>
+      <th>Zero-tag Pairs</th>
+      <th>Bye (Unmatched PID)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in report.rounds %}
+    <tr>
+      <td style="text-align:center;">{{ r.number }}</td>
+      <td style="text-align:center;">{{ r.pair_count }}</td>
+      <td style="text-align:right;">{{ r.avg_score|floatformat:4 }}</td>
+      <td style="text-align:right;">{{ r.p10_score|floatformat:4 }}</td>
+      <td style="text-align:center;">{{ r.zero_tag_pairs }}</td>
+      <td style="font-family:monospace;font-size:0.85em;">
+        {% if r.unmatched_pid %}{{ r.unmatched_pid|slice:":8" }}&hellip;{% else %}&mdash;{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3>Summary</h3>
+<table style="width:auto;">
+  <tr><th style="text-align:left;padding-right:2em;">Total Pairs</th>
+      <td>{{ report.total_pairs }}</td></tr>
+  <tr><th style="text-align:left;padding-right:2em;">Zero-tag Pairs (total)</th>
+      <td>{{ report.total_zero_tag_pairs }}</td></tr>
+  <tr><th style="text-align:left;padding-right:2em;">Constraint Violations</th>
+      <td>
+        <strong>{{ report.violation_count }}</strong>
+        {% if report.violation_count == 0 %}
+          &nbsp;<span style="color:green;">&#10003; Clean</span>
+        {% else %}
+          &nbsp;<span style="color:red;">&#10007; Cannot lock</span>
+        {% endif %}
+      </td></tr>
+</table>
+
+{# ── Bye distribution ────────────────────────────────────────────────────── #}
+{% if report.bye_distribution %}
+<h3>Bye Distribution</h3>
+<table style="width:auto;">
+  <thead>
+    <tr>
+      <th>Participant ID (prefix)</th>
+      <th>Bye Count</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for pid, count in report.bye_distribution.items %}
+    <tr>
+      <td style="font-family:monospace;font-size:0.85em;">{{ pid|slice:":8" }}&hellip;</td>
+      <td style="text-align:center;">{{ count }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{# ── Violation details ───────────────────────────────────────────────────── #}
+{% if report.violations %}
+<h3>Constraint Violations</h3>
+<div class="errornote">
+  <p>
+    <strong>{{ report.violation_count }} violation(s) detected.</strong>
+    The schedule cannot be locked until all violations are resolved.
+  </p>
+  <ul>
+    {% for v in report.violations %}
+    <li><code>{{ v.kind }}</code>: {{ v.detail }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{# ── Lock result ─────────────────────────────────────────────────────────── #}
+<h3>Lock Result</h3>
+{% if schedule_locked %}
+  <p style="color:green;font-weight:bold;">
+    &#10003; Schedule has been locked and persisted to the database.
+  </p>
+{% elif report.can_lock %}
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="lock">
+    <input type="hidden" name="confirmed" value="yes">
+    {% if has_schedule %}
+    <p class="help">
+      Warning: clicking <em>Lock Result</em> will <strong>replace</strong>
+      the existing schedule in the database.
+    </p>
+    {% endif %}
+    <p>
+      <button type="submit" class="button default">Lock Result</button>
+    </p>
+  </form>
+{% else %}
+  <p>
+    <button type="button" class="button" disabled>Lock Result</button>
+  </p>
+  <p class="errornote" style="display:inline-block;">
+    Lock is disabled: {{ report.violation_count }} constraint violation(s) must
+    be zero before the schedule can be locked.
+  </p>
+{% endif %}
+
+{# ── Re-run form ─────────────────────────────────────────────────────────── #}
+<h3>Re-run Matching</h3>
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="action" value="run">
+  <input type="hidden" name="confirmed" value="yes">
+  <p class="help">
+    Generates a fresh report without writing to the database.
+    Use <em>Lock Result</em> above to persist.
+  </p>
+  <p>
+    <button type="submit" class="button">Re-run Matching</button>
+  </p>
+</form>
+
+{% endif %}{# end if report #}
+
+{% endif %}{# end if can_run #}
+
+<p style="margin-top:2em;">
+  <a href="{% url 'admin:events_event_change' event.pk %}" class="button">
+    &larr; Back to Event
+  </a>
+</p>
+
+{% endblock %}

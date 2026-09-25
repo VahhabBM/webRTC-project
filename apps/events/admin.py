@@ -1,14 +1,61 @@
+from __future__ import annotations
+
 import csv
 
 from django.contrib import admin, messages
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import HttpResponse
+from django.shortcuts import get_object_or_404, redirect
+from django.template.response import TemplateResponse
+from django.urls import path, reverse
 from django.utils import timezone
 
-from .models import Event, Pair, Participant, ParticipantTag, Round, Tag
+from .models import (
+    DisconnectionCause,
+    DisconnectionLog,
+    Event,
+    EventStatus,
+    OperatorActionLog,
+    Pair,
+    Participant,
+    ParticipantIncidentNote,
+    ParticipantStatus,
+    ParticipantTag,
+    Round,
+    Tag,
+)
 
 for model in (ParticipantTag, Round, Pair):
     admin.site.register(model)
+
+
+@admin.register(DisconnectionLog)
+class DisconnectionLogAdmin(admin.ModelAdmin):
+    list_display = (
+        "participant",
+        "event",
+        "cause",
+        "disconnected_at",
+        "reconnected_at",
+    )
+    list_filter = ("cause", "disconnected_at", "event")
+    search_fields = ("participant__display_name", "participant__email")
+
+
+@admin.register(ParticipantIncidentNote)
+class ParticipantIncidentNoteAdmin(admin.ModelAdmin):
+    list_display = ("participant", "operator", "event", "created_at", "short_note")
+    search_fields = ("participant__display_name", "participant__email", "note")
+    list_filter = ("created_at", "event")
+
+    def short_note(self, obj):
+        return obj.note[:60]
+
+
+# States in which the matching report action is permitted.
+_MATCHING_RUNNABLE_STATES = frozenset(
+    {EventStatus.SCHEDULED, EventStatus.ACTIVE, EventStatus.COMPLETED}
+)
 
 
 @admin.register(Event)
@@ -38,6 +85,13 @@ class EventAdmin(admin.ModelAdmin):
         "break_duration",
     )
 
+    # Override the change-form template to inject custom tool buttons.
+    change_form_template = "admin/events/event/change_form.html"
+
+    # ------------------------------------------------------------------ #
+    # Queryset / display helpers                                         #
+    # ------------------------------------------------------------------ #
+
     def get_queryset(self, request):
         return (
             super()
@@ -48,6 +102,250 @@ class EventAdmin(admin.ModelAdmin):
     @admin.display(description="Participants")
     def participants_count(self, obj):
         return obj.participants_count
+
+    # ------------------------------------------------------------------ #
+    # Custom URLs: matching report & live monitoring                     #
+    # ------------------------------------------------------------------ #
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom = [
+            path(
+                "<uuid:object_id>/matching-report/",
+                self.admin_site.admin_view(self.matching_report_view),
+                name="events_event_matching_report",
+            ),
+            path(
+                "<uuid:object_id>/live-monitoring/",
+                self.admin_site.admin_view(self.operator_monitoring_view),
+                name="events_event_live_monitoring",
+            ),
+        ]
+        return custom + urls
+
+    # ------------------------------------------------------------------ #
+    # Inject action URLs into the change-form context                    #
+    # ------------------------------------------------------------------ #
+
+    def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
+        extra_context = extra_context or {}
+        if object_id:
+            extra_context["matching_report_url"] = reverse(
+                "admin:events_event_matching_report", args=[object_id]
+            )
+            extra_context["live_monitoring_url"] = reverse(
+                "admin:events_event_live_monitoring", args=[object_id]
+            )
+        return super().changeform_view(request, object_id, form_url, extra_context)
+
+    # ------------------------------------------------------------------ #
+    # Live monitoring view (T-40 & T-41)                                 #
+    # ------------------------------------------------------------------ #
+
+    def operator_monitoring_view(self, request, object_id):
+        """Admin action page: T-40/T-41 Live Monitoring, Incidents & Operator Controls."""
+        from apps.events.operator import OperatorService
+
+        event = get_object_or_404(Event, pk=object_id)
+        service = OperatorService(event, is_leader=True)
+
+        if request.method == "POST":
+            action = request.POST.get("action")
+            try:
+                if action == "add_incident_note":
+                    p_id = request.POST.get("participant_id")
+                    note_text = request.POST.get("note", "").strip()
+                    if p_id and note_text:
+                        participant = get_object_or_404(
+                            Participant, pk=p_id, event=event
+                        )
+                        ParticipantIncidentNote.objects.create(
+                            event=event,
+                            participant=participant,
+                            operator=request.user
+                            if request.user.is_authenticated
+                            else None,
+                            note=note_text,
+                        )
+                        messages.success(
+                            request,
+                            f"یادداشت رخداد برای {participant.display_name} ذخیره شد.",
+                        )
+                elif action == "pause":
+                    service.pause()
+                    messages.success(request, "Round successfully paused.")
+                elif action == "resume":
+                    service.resume()
+                    messages.success(request, "Round successfully resumed.")
+                elif action == "extend":
+                    seconds = int(request.POST.get("seconds", 60))
+                    service.extend(extra_seconds=seconds)
+                    messages.success(request, f"Round extended by {seconds} seconds.")
+            except Exception as exc:  # noqa: BLE001
+                messages.error(request, f"Operator action failed: {exc}")
+            return redirect("admin:events_event_live_monitoring", object_id=event.pk)
+
+        # T-41: جستجوی شرکت‌کننده بر اساس نام یا ایمیل
+        search_query = request.GET.get("q", "").strip()
+        search_results = []
+        if search_query:
+            search_results = (
+                event.participants.filter(
+                    Q(display_name__icontains=search_query)
+                    | Q(email__icontains=search_query)
+                )
+                .prefetch_related("disconnection_logs", "incident_notes")
+                .distinct()
+            )
+
+        # T-41: فهرست شرکت‌کنندگان قطع‌شده زنده
+        disconnected_participants = (
+            event.participants.filter(status=ParticipantStatus.DISCONNECTED)
+            .prefetch_related("disconnection_logs", "incident_notes")
+            .order_by("-updated_at")
+        )
+
+        now = timezone.now()
+        active_round = (
+            event.rounds.filter(starts_at__lte=now, ends_at__gte=now).first()
+            or event.rounds.filter(starts_at__gt=now).order_by("starts_at").first()
+        )
+
+        action_logs = (
+            OperatorActionLog.objects.filter(event=event)
+            .select_related("round")
+            .order_by("-performed_at")[:20]
+        )
+        pairs = []
+        if active_round:
+            pairs = active_round.pairs.select_related(
+                "participant_a", "participant_b"
+            ).all()
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": f"Live Monitoring \u2013 {event.name}",
+            "opts": self.model._meta,
+            "app_label": self.model._meta.app_label,
+            "event": event,
+            "active_round": active_round,
+            "action_logs": action_logs,
+            "pairs": pairs,
+            "disconnected_participants": disconnected_participants,
+            "search_query": search_query,
+            "search_results": search_results,
+            "incident_causes": DisconnectionCause.choices,
+        }
+        return TemplateResponse(
+            request,
+            "admin/events/event/live_monitoring.html",
+            context,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Matching report view                                               #
+    # ------------------------------------------------------------------ #
+
+    def matching_report_view(self, request, object_id):
+        """Admin action page: generate a T-20 schedule and display a quality report.
+
+        GET  – show the run-matching form (disabled when state is wrong).
+        POST action=run  – generate in-memory, display report; require confirmation
+                           if a schedule already exists in the DB.
+        POST action=lock – generate again (deterministic) and persist to DB if
+                           violations == 0; disabled (returns error) otherwise.
+        """
+        from apps.events.matching import (
+            MatchingError,
+            generate_schedule,
+            validate_schedule,
+        )
+        from apps.events.report import build_report
+        from apps.events.scheduling import build_match_input, persist_schedule
+
+        event = get_object_or_404(Event, pk=object_id)
+
+        can_run = event.status in _MATCHING_RUNNABLE_STATES
+        has_schedule = event.rounds.exists()
+
+        report = None
+        error_message = None
+        schedule_locked = False
+        needs_confirmation = False
+
+        if request.method == "POST":
+            action = request.POST.get("action", "")
+            confirmed = request.POST.get("confirmed") == "yes"
+
+            if action in ("run", "lock"):
+                if not can_run:
+                    error_message = (
+                        f"Matching is not available for events in "
+                        f"'{event.get_status_display()}' state. "
+                        f"The event must be Scheduled, Active, or Completed."
+                    )
+                elif has_schedule and not confirmed:
+                    # Surface the confirmation gate; do not run yet.
+                    needs_confirmation = True
+                else:
+                    try:
+                        match_input = build_match_input(event)
+
+                        if len(match_input.participants) < 2:
+                            raise MatchingError(
+                                f"Cannot run matching: event has fewer than 2 "
+                                f"participants (got {len(match_input.participants)})."
+                            )
+
+                        schedule = generate_schedule(match_input)
+                        pids = frozenset(mp.pid for mp in match_input.participants)
+                        violations = validate_schedule(
+                            schedule, pids, num_rounds=event.num_rounds
+                        )
+                        report = build_report(schedule, violations)
+
+                        if action == "lock":
+                            if report.can_lock:
+                                persist_schedule(event, schedule)
+                                schedule_locked = True
+                                has_schedule = True
+                                self.message_user(
+                                    request,
+                                    f"Schedule for '{event.name}' locked and persisted "
+                                    f"({report.total_pairs} pairs across "
+                                    f"{len(report.rounds)} rounds).",
+                                    level=messages.SUCCESS,
+                                )
+                            else:
+                                error_message = (
+                                    f"Cannot lock result: "
+                                    f"{report.violation_count} constraint violation(s) "
+                                    f"were detected. All violations must be zero before "
+                                    f"the schedule can be locked."
+                                )
+                    except MatchingError as exc:
+                        error_message = str(exc)
+                    except Exception as exc:  # noqa: BLE001
+                        error_message = f"Unexpected error during matching: {exc}"
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": f"Matching Report \u2013 {event.name}",
+            "event": event,
+            "report": report,
+            "error_message": error_message,
+            "can_run": can_run,
+            "has_schedule": has_schedule,
+            "schedule_locked": schedule_locked,
+            "needs_confirmation": needs_confirmation,
+            "opts": self.model._meta,
+            "app_label": self.model._meta.app_label,
+        }
+        return TemplateResponse(
+            request,
+            "admin/events/event/matching_report.html",
+            context,
+        )
 
 
 @admin.register(Tag)
@@ -153,13 +451,13 @@ class ParticipantAdmin(admin.ModelAdmin):
         writer = csv.writer(response)
         writer.writerow(
             [
-                "شناسه",
-                "نام و نام خانوادگی",
-                "ایمیل",
-                "وضعیت",
-                "رویداد",
-                "تگ‌ها",
-                "تاریخ ثبت‌نام",
+                "\u0634\u0646\u0627\u0633\u0647",
+                "\u0646\u0627\u0645 \u0648 \u0646\u0627\u0645 \u062e\u0627\u0646\u0648\u0627\u062f\u06af\u06cc",
+                "\u0627\u06cc\u0645\u06cc\u0644",
+                "\u0648\u0636\u0639\u06cc\u062a",
+                "\u0631\u0648\u06cc\u062f\u0627\u062f",
+                "\u062a\u06af\u200c\u0647\u0627",
+                "\u062a\u0627\u0631\u06cc\u062e \u062b\u0628\u062a\u200c\u0646\u0627\u0645",
             ]
         )
 

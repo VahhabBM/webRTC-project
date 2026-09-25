@@ -1,13 +1,39 @@
-"""
-Protocol contract for the WebRTC Event Platform.
+"""Protocol contract for the WebRTC Event Platform."""
 
-This package defines every WebSocket message type, error code, and validation
-rule that the client–server protocol uses.  Future backend and frontend code
-MUST import constants and validators from here rather than hard-coding strings.
+from .media_transport import (
+    ADAPTER_KIND_DIRECT,
+    ADAPTER_KIND_RELAY,
+    DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS,
+    DirectMediaTransport,
+    FailoverMediaTransport,
+    FakeMediaTransport,
+    MediaTransport,
+    MediaTransportConfig,
+    MediaTransportEvent,
+    MediaTransportState,
+    RelayMediaTransport,
+    RoundMediaSession,
+    SharedLocalMedia,
+    TransportStats,
+    fallback_allowed_for_room,
+    resolve_escalation_timeout_ms,
+)
 
-Quick start
------------
->>> from apps.protocol.validators import validate_message
->>> from apps.protocol.schemas import build_message
->>> from apps.protocol.constants import MessageType, ErrorCode, PROTOCOL_VERSION
-"""
+__all__ = [
+    "ADAPTER_KIND_DIRECT",
+    "ADAPTER_KIND_RELAY",
+    "DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS",
+    "DirectMediaTransport",
+    "FailoverMediaTransport",
+    "FakeMediaTransport",
+    "MediaTransport",
+    "MediaTransportConfig",
+    "MediaTransportEvent",
+    "MediaTransportState",
+    "RelayMediaTransport",
+    "RoundMediaSession",
+    "SharedLocalMedia",
+    "TransportStats",
+    "fallback_allowed_for_room",
+    "resolve_escalation_timeout_ms",
+]

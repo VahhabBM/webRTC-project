@@ -14,8 +14,13 @@ from django.views.decorators.csrf import csrf_exempt
 from apps.events.models import Event, Participant, ParticipantTag, Tag
 from apps.registration.services.email_service import EmailService
 
-from .forms import MAX_TAGS, MIN_TAGS, RegistrationError, validate_registration_data
-from .models import EmailVerificationToken, TermsAcceptance
+from .forms import (
+    MAX_TAGS,
+    MIN_TAGS,
+    RegistrationError,
+    validate_registration_data,
+)
+from .models import DeviceCheckLog, EmailVerificationToken, TermsAcceptance
 from .rate_limit import is_rate_limited, record_attempt
 
 logger = logging.getLogger("registration")
@@ -78,11 +83,16 @@ class RegisterView(View):
 
         logger.info(
             "participant registered",
-            extra={"participant_id": str(participant.id), "event_id": str(event.id)},
+            extra={
+                "participant_id": str(participant.id),
+                "event_id": str(event.id),
+            },
         )
         return JsonResponse(
             {
-                "message": "ثبت‌نام شما با موفقیت دریافت شد. لطفاً ایمیل خود را بررسی کنید.",
+                "message": (
+                    "ثبت‌نام شما با موفقیت دریافت شد. لطفاً ایمیل خود را بررسی کنید."
+                ),
                 "email": clean_data["email"],
             },
             status=201,
@@ -162,3 +172,50 @@ class CheckEmailView(View):
     def get(self, request):
         email = request.GET.get("email", "")
         return render(request, "registration/check_email.html", {"email": email})
+
+
+class DeviceCheckView(View):
+    def get(self, request, event_id=None):
+        event = get_object_or_404(Event, id=event_id) if event_id else None
+        return render(
+            request,
+            "registration/device_check.html",
+            {
+                "event": event,
+                "event_id": str(event_id) if event_id else "",
+            },
+        )
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class DeviceCheckReportView(View):
+    def post(self, request, event_id=None):
+        try:
+            payload = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "Invalid payload."}, status=400)
+
+        event = get_object_or_404(Event, id=event_id) if event_id else None
+        client_ip = request.META.get("REMOTE_ADDR")
+        user_agent = request.META.get("HTTP_USER_AGENT", "")
+
+        log_entry = DeviceCheckLog.objects.create(
+            event=event,
+            camera_working=bool(payload.get("camera_working")),
+            mic_working=bool(payload.get("mic_working")),
+            error_type=str(payload.get("error_type", ""))[:64],
+            user_agent=user_agent,
+            is_in_app_browser=bool(payload.get("is_in_app_browser")),
+            ip_address=client_ip,
+        )
+
+        logger.info(
+            "Device check reported",
+            extra={
+                "log_id": str(log_entry.id),
+                "camera": log_entry.camera_working,
+                "mic": log_entry.mic_working,
+                "error": log_entry.error_type,
+            },
+        )
+        return JsonResponse({"status": "recorded", "id": str(log_entry.id)}, status=201)

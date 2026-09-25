@@ -1,0 +1,14 @@
+﻿{% extends "admin/change_form.html" %}
+{% block object-tools-items %}
+  {% if live_monitoring_url %}
+    <li>
+      <a href="{{ live_monitoring_url }}" class="historylink" style="background:#1b4d3e; color:#fff;">Live Monitoring</a>
+    </li>
+  {% endif %}
+  {% if matching_report_url %}
+    <li>
+      <a href="{{ matching_report_url }}" class="historylink">Run Matching Report</a>
+    </li>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}

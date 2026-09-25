@@ -46,6 +46,7 @@ from apps.protocol.schemas import (
     build_server_pong,
     build_server_round_end,
     build_server_round_start,
+    build_server_round_warning,
     build_server_turn_credentials,
     build_server_webrtc_answer,
     build_server_webrtc_offer,
@@ -124,6 +125,7 @@ class TestConstants:
             MessageType.SERVER_PONG,
             MessageType.SERVER_PAIRING,
             MessageType.SERVER_ROUND_START,
+            MessageType.SERVER_ROUND_WARNING,
             MessageType.SERVER_ROUND_END,
             MessageType.SERVER_PARTNER_STATE,
             MessageType.SERVER_WEBRTC_OFFER,
@@ -636,6 +638,26 @@ class TestServerBuilders:
     def test_server_round_end(self):
         msg = build_server_round_end(round_number=2, server_ts=10_000)
         assert msg["type"] == MessageType.SERVER_ROUND_END
+
+    def test_server_round_warning(self):
+        msg = build_server_round_warning(
+            round_number=2,
+            server_ts=9_000,
+            remaining_seconds=30,
+            round_end_ts=12_000,
+        )
+        assert msg["type"] == MessageType.SERVER_ROUND_WARNING
+        assert msg["payload"]["remaining_seconds"] == 30
+        assert msg["payload"]["round_end_ts"] == 12_000
+
+    def test_server_round_warning_rejects_negative_remaining(self):
+        with pytest.raises(ProtocolError):
+            build_server_round_warning(
+                round_number=1,
+                server_ts=9_000,
+                remaining_seconds=-1,
+                round_end_ts=12_000,
+            )
 
     def test_server_partner_state_connected(self):
         msg = build_server_partner_state(

@@ -1,0 +1,203 @@
+﻿{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{% url opts|admin_urlname:'changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+  &rsaquo; <a href="{% url opts|admin_urlname:'change' event.pk %}">{{ event.name }}</a>
+  &rsaquo; Live Monitoring
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <h1>Live Monitoring – {{ event.name }}</h1>
+
+  <!-- پنل کنترل زنده اپراتور (T-40) -->
+  <div class="module" style="background:#fff; border:1px solid #ccc; padding:15px; margin-bottom:20px; border-radius:4px;">
+    <h2>🎛️ Round Controls (T-40)</h2>
+    <p>
+      وضعیت رویداد: <strong>{{ event.get_status_display }}</strong> |
+      راند فعال: <strong>{% if active_round %}راند {{ active_round.number }}{% else %}راندی فعال نیست{% endif %}</strong>
+    </p>
+
+    <div style="display:flex; gap:10px; margin-top:10px; align-items:center;">
+      <form method="post" style="display:inline;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="pause">
+        <button type="submit" class="button" style="background:#d9534f; color:#fff; padding:8px 14px; border:none; border-radius:4px; cursor:pointer;">⏸️ توقف راند (Pause)</button>
+      </form>
+
+      <form method="post" style="display:inline;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="resume">
+        <button type="submit" class="button" style="background:#5cb85c; color:#fff; padding:8px 14px; border:none; border-radius:4px; cursor:pointer;">▶️ ادامه راند (Resume)</button>
+      </form>
+
+      <form method="post" style="display:inline; display:flex; gap:6px; align-items:center;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="extend">
+        <input type="number" name="seconds" value="60" min="10" max="600" step="10" style="width:70px; padding:6px; border:1px solid #ccc; border-radius:4px;">
+        <button type="submit" class="button" style="background:#f0ad4e; color:#fff; padding:8px 14px; border:none; border-radius:4px; cursor:pointer;">⏱️ تمدید راند (Extend)</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- نوار جستجوی شرکت‌کننده (T-41) -->
+  <div class="module" style="background:#f8f9fa; border:1px solid #ddd; padding:15px; margin-bottom:20px; border-radius:4px;">
+    <h2>🔍 جستجوی شرکت‌کننده (پشتیبانی تلفنی)</h2>
+    <form method="get" style="display:flex; gap:10px; align-items:center;">
+      <input type="text" name="q" value="{{ search_query }}" placeholder="جستجو بر اساس نام یا ایمیل..." style="flex:1; padding:8px; font-size:14px; border:1px solid #ccc; border-radius:4px;">
+      <button type="submit" class="button default">جستجو</button>
+      {% if search_query %}
+        <a href="?" class="button">پاک کردن</a>
+      {% endif %}
+    </form>
+
+    {% if search_query %}
+      <div style="margin-top:15px;">
+        <h3>نتایج جستجو برای: "{{ search_query }}"</h3>
+        {% if search_results %}
+          {% for p in search_results %}
+            <div style="border:1px solid #ccc; padding:12px; margin-bottom:10px; background:#fff; border-radius:4px;">
+              <strong>{{ p.display_name }}</strong> ({{ p.email|default:"بدون ایمیل" }}) — 
+              وضعیت فعلی: <span class="badge {{ p.status }}">{{ p.get_status_display }}</span>
+              
+              <h4 style="margin-top:10px; margin-bottom:5px;">تاریخچه اتصالات و قطعی‌ها:</h4>
+              <ul>
+                {% for d in p.disconnection_logs.all %}
+                  <li>
+                    قطع در <strong>{{ d.disconnected_at|date:"H:i:s" }}</strong> | 
+                    دلیل: <span class="badge cause-{{ d.cause }}">{{ d.get_cause_display }}</span>
+                    {% if d.reconnected_at %}| وصل مجدد: {{ d.reconnected_at|date:"H:i:s" }}{% else %}| <span style="color:red;">همچنان قطع</span>{% endif %}
+                  </li>
+                {% empty %}
+                  <li>سابقه‌ای از قطعی ثبت نشده است.</li>
+                {% endfor %}
+              </ul>
+
+              <details style="margin-top:10px;">
+                <summary style="cursor:pointer; color:#0066cc;">📝 ثبت یادداشت رخداد برای این کاربر</summary>
+                <form method="post" style="margin-top:8px;">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="add_incident_note">
+                  <input type="hidden" name="participant_id" value="{{ p.id }}">
+                  <textarea name="note" rows="2" style="width:100%; padding:6px; border:1px solid #ccc; border-radius:4px;" placeholder="علت اعلام‌شده توسط کاربر در تماس تلفنی..." required></textarea>
+                  <button type="submit" class="button default" style="margin-top:5px;">ذخیره یادداشت در گزارش</button>
+                </form>
+              </details>
+            </div>
+          {% endfor %}
+        {% else %}
+          <p>هیچ کاربری با این مشخصات یافت نشد.</p>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- جدول افراد هم‌اکنون قطع‌شده (T-41) -->
+  <div class="module" style="background:#fff; border:1px solid #ccc; padding:15px; margin-bottom:20px; border-radius:4px;">
+    <h2>⚠️ افراد هم‌اکنون قطع‌شده ({{ disconnected_participants.count }})</h2>
+    <table style="width:100%; border-collapse:collapse; text-align:right;">
+      <thead>
+        <tr style="background:#eee;">
+          <th style="padding:8px; border:1px solid #ddd;">شرکت‌کننده</th>
+          <th style="padding:8px; border:1px solid #ddd;">ایمیل</th>
+          <th style="padding:8px; border:1px solid #ddd;">دلیل محتمل قطع</th>
+          <th style="padding:8px; border:1px solid #ddd;">زمان قطع</th>
+          <th style="padding:8px; border:1px solid #ddd;">عملیات اپراتور</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in disconnected_participants %}
+          {% with last_log=p.disconnection_logs.first %}
+          <tr>
+            <td style="padding:8px; border:1px solid #ddd;"><strong>{{ p.display_name }}</strong></td>
+            <td style="padding:8px; border:1px solid #ddd;">{{ p.email|default:"—" }}</td>
+            <td style="padding:8px; border:1px solid #ddd;">
+              {% if last_log %}
+                <span class="badge cause-{{ last_log.cause }}">{{ last_log.get_cause_display }}</span>
+              {% else %}
+                نامشخص
+              {% endif %}
+            </td>
+            <td style="padding:8px; border:1px solid #ddd;">
+              {{ last_log.disconnected_at|date:"H:i:s"|default:"—" }}
+            </td>
+            <td style="padding:8px; border:1px solid #ddd;">
+              <a href="?q={{ p.display_name }}" class="button">تاریخچه و ثبت یادداشت</a>
+            </td>
+          </tr>
+          {% endwith %}
+        {% empty %}
+          <tr>
+            <td colspan="5" style="padding:12px; text-align:center; color:green;">
+              هیچ شرکت‌کننده‌ای در وضعیت قطع ارتباط نیست.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- جدول جفت‌های راند جاری (T-40) -->
+  <div class="module" style="background:#fff; border:1px solid #ccc; padding:15px; margin-bottom:20px; border-radius:4px;">
+    <h2>👥 مکالمات راند فعال ({% if active_round %}{{ pairs|length }}{% else %}0{% endif %})</h2>
+    <table style="width:100%; border-collapse:collapse; text-align:right;">
+      <thead>
+        <tr style="background:#eee;">
+          <th style="padding:8px; border:1px solid #ddd;">شناسه اتاق</th>
+          <th style="padding:8px; border:1px solid #ddd;">شرکت‌کننده اول</th>
+          <th style="padding:8px; border:1px solid #ddd;">شرکت‌کننده دوم</th>
+          <th style="padding:8px; border:1px solid #ddd;">وضعیت</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pair in pairs %}
+        <tr>
+          <td style="padding:8px; border:1px solid #ddd;"><code>{{ pair.room_id }}</code></td>
+          <td style="padding:8px; border:1px solid #ddd;">{{ pair.participant_a.display_name }}</td>
+          <td style="padding:8px; border:1px solid #ddd;">{{ pair.participant_b.display_name }}</td>
+          <td style="padding:8px; border:1px solid #ddd;">{{ pair.get_status_display }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="4" style="padding:12px; text-align:center;">جفتی در این راند وجود ندارد.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- لاگ اقدامات اخیر اپراتور (T-40) -->
+  <div class="module" style="background:#fff; border:1px solid #ccc; padding:15px; border-radius:4px;">
+    <h2>📋 آخرین اقدامات اپراتور</h2>
+    <table style="width:100%; border-collapse:collapse; text-align:right;">
+      <thead>
+        <tr style="background:#eee;">
+          <th style="padding:8px; border:1px solid #ddd;">زمان</th>
+          <th style="padding:8px; border:1px solid #ddd;">اقدام</th>
+          <th style="padding:8px; border:1px solid #ddd;">راند</th>
+          <th style="padding:8px; border:1px solid #ddd;">اپراتور</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in action_logs %}
+        <tr>
+          <td style="padding:8px; border:1px solid #ddd;">{{ log.performed_at|date:"H:i:s" }}</td>
+          <td style="padding:8px; border:1px solid #ddd;"><strong>{{ log.get_action_display }}</strong></td>
+          <td style="padding:8px; border:1px solid #ddd;">{{ log.round.number|default:"—" }}</td>
+          <td style="padding:8px; border:1px solid #ddd;">{{ log.operator|default:"سیستم" }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="4" style="padding:12px; text-align:center;">اقدامی ثبت نشده است.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

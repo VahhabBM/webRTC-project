@@ -7,6 +7,10 @@ import logging
 import secrets
 
 from django.conf import settings
+
+# Example if using django.core.signing:
+from django.core.cache import cache
+from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.db import transaction
 from django.utils import timezone
 
@@ -17,6 +21,10 @@ logger = logging.getLogger(__name__)
 TOKEN_PREFIX = "p1_"
 TOKEN_BYTES = 32
 SESSION_PARTICIPANT_KEY = "participant_id"
+
+
+def participant_session_cache_key(participant_id) -> str:
+    return f"participant:session:{participant_id}"
 
 
 class InvalidJoinToken(Exception):
@@ -85,16 +93,63 @@ def establish_participant_session(request, participant: Participant) -> None:
     request.session.set_expiry(
         getattr(settings, "PARTICIPANT_SESSION_AGE", 60 * 60 * 24 * 30)
     )
+    request.session.save()
+    remember_participant_session(participant.pk, request.session.session_key)
+
+
+def remember_participant_session(participant_id, session_key: str | None) -> None:
+    """T-08/T-34: only the latest personal-link session may use this identity."""
+    if not session_key:
+        return
+    try:
+        cache.set(
+            participant_session_cache_key(participant_id),
+            session_key,
+            timeout=getattr(settings, "PARTICIPANT_SESSION_AGE", 60 * 60 * 24 * 30),
+        )
+    except Exception:
+        logger.exception(
+            "Failed recording current session for participant %s", participant_id
+        )
+
+
+def session_matches_participant(session, participant: Participant) -> bool:
+    try:
+        current = cache.get(participant_session_cache_key(participant.pk))
+    except Exception:
+        logger.exception(
+            "Failed reading current session for participant %s", participant.pk
+        )
+        return True
+    if not current:
+        return True
+    return session.session_key == current
 
 
 def resolve_participant_from_session(session) -> Participant | None:
     participant_id = session.get(SESSION_PARTICIPANT_KEY)
     if not participant_id:
         return None
-    return Participant.objects.select_related("event").filter(pk=participant_id).first()
+    participant = (
+        Participant.objects.select_related("event").filter(pk=participant_id).first()
+    )
+    if participant is None:
+        return None
+    if not session_matches_participant(session, participant):
+        return None
+    return participant
 
 
 def resolve_participant_from_scope(scope) -> Participant | None:
     """T-14 hook: resolve identity from a scope containing Django session data."""
     session = scope.get("session")
     return resolve_participant_from_session(session) if session is not None else None
+
+
+def verify_join_token(token: str, max_age: int = 3600) -> dict | None:
+    signer = TimestampSigner()
+    try:
+        data = signer.unsign_object(token, max_age=max_age)
+        return data
+    except (BadSignature, SignatureExpired):
+        return None

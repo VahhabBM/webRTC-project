@@ -62,6 +62,7 @@ _SERVER_MESSAGE_TYPES: frozenset[str] = frozenset(
         MessageType.SERVER_PONG,
         MessageType.SERVER_PAIRING,
         MessageType.SERVER_ROUND_START,
+        MessageType.SERVER_ROUND_WARNING,
         MessageType.SERVER_ROUND_END,
         MessageType.SERVER_PARTNER_STATE,
         MessageType.SERVER_WEBRTC_OFFER,
@@ -378,6 +379,28 @@ def _validate_server_round_start(payload: dict) -> None:
     )
 
 
+def _validate_server_round_warning(payload: dict) -> None:
+    round_number = _require_int(
+        payload, "round_number", original_type=MessageType.SERVER_ROUND_WARNING
+    )
+    if not (1 <= round_number <= 6):
+        raise ProtocolError(
+            ErrorCode.ERR_INVALID_MESSAGE,
+            "Field 'round_number' must be between 1 and 6",
+            original_type=MessageType.SERVER_ROUND_WARNING,
+            detail={"field": "round_number", "got": round_number},
+        )
+    _require_positive_int(
+        payload, "server_ts", original_type=MessageType.SERVER_ROUND_WARNING
+    )
+    _require_nonneg_int(
+        payload, "remaining_seconds", original_type=MessageType.SERVER_ROUND_WARNING
+    )
+    _require_positive_int(
+        payload, "round_end_ts", original_type=MessageType.SERVER_ROUND_WARNING
+    )
+
+
 def _validate_server_round_end(payload: dict) -> None:
     round_number = _require_int(
         payload, "round_number", original_type=MessageType.SERVER_ROUND_END
@@ -540,6 +563,7 @@ _PAYLOAD_VALIDATORS: dict[str, Any] = {
     MessageType.SERVER_PONG: _validate_server_pong,
     MessageType.SERVER_PAIRING: _validate_server_pairing,
     MessageType.SERVER_ROUND_START: _validate_server_round_start,
+    MessageType.SERVER_ROUND_WARNING: _validate_server_round_warning,
     MessageType.SERVER_ROUND_END: _validate_server_round_end,
     MessageType.SERVER_PARTNER_STATE: _validate_server_partner_state,
     MessageType.SERVER_WEBRTC_OFFER: _validate_server_webrtc_offer,
