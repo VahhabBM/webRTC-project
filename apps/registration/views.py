@@ -100,7 +100,7 @@ class RegisterView(View):
 
     @staticmethod
     def _send_verification_email(participant, token):
-        event_name = getattr(participant.event, "name", "Matching Event")
+        event_name = getattr(participant.event, "name", "رویداد همسان‌گزینی")
         EmailService.send_verification_email(
             recipient_email=participant.email,
             name=participant.display_name,
@@ -125,8 +125,8 @@ class VerifyEmailView(View):
                 request,
                 "registration/token_expired.html",
                 {
-                    "title": "Invalid Link",
-                    "message": "This activation link was not found or has invalid structure.",
+                    "title": "پیوند نامعتبر",
+                    "message": "این پیوند در سامانه یافت نشد یا ساختار آن اشتباه است.",
                 },
                 status=404,
             )
@@ -141,8 +141,8 @@ class VerifyEmailView(View):
                 request,
                 "registration/token_expired.html",
                 {
-                    "title": "Link Expired",
-                    "message": "The 24-hour expiration window has passed or this link was already used.",
+                    "title": "پیوند منقضی یا استفاده‌شده",
+                    "message": "مهلت ۲۴ ساعته این پیوند به پایان رسیده یا قبلاً حساب خود را با آن فعال کرده‌اید.",
                 },
                 status=410,
             )
