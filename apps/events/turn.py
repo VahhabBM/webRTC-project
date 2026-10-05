@@ -1,4 +1,4 @@
-"""STUN/TURN temporary credential generation service (T-28, T-35 & T-36)."""
+"""STUN/TURN temporary credential generation service (T-28, T-35, T-36 & T-49)."""
 
 from __future__ import annotations
 
@@ -36,6 +36,10 @@ class TurnCredentialService:
             getattr(settings, "COTURN_REGION2_SHARED_SECRET", "") or self.shared_secret
         )
 
+        # T-49: the production relay is advertised as a plain `turn:host:port`
+        # UDP URL; staging keeps the explicit `?transport=udp` form (T-35/T-36).
+        self.udp_transport_param = getattr(settings, "COTURN_UDP_TRANSPORT_PARAM", True)
+
         self.ttl = (
             ttl
             if ttl is not None
@@ -46,6 +50,13 @@ class TurnCredentialService:
             raise ImproperlyConfigured(
                 "COTURN_SHARED_SECRET must be configured in settings."
             )
+
+    def _turn_urls(self, domain: str, port: int) -> list[str]:
+        udp_suffix = "?transport=udp" if self.udp_transport_param else ""
+        return [
+            f"turn:{domain}:{port}{udp_suffix}",
+            f"turn:{domain}:{port}?transport=tcp",
+        ]
 
     def generate_credentials(
         self, participant_id: str, ttl: int | None = None
@@ -65,10 +76,7 @@ class TurnCredentialService:
         ice_servers: list[dict[str, Any]] = [
             {"urls": [f"stun:{self.domain}:{self.port}"]},
             {
-                "urls": [
-                    f"turn:{self.domain}:{self.port}?transport=udp",
-                    f"turn:{self.domain}:{self.port}?transport=tcp",
-                ],
+                "urls": self._turn_urls(self.domain, self.port),
                 "username": username,
                 "credential": password_r1,
             },
@@ -92,10 +100,7 @@ class TurnCredentialService:
                 [
                     {"urls": [f"stun:{self.region2_domain}:{self.region2_port}"]},
                     {
-                        "urls": [
-                            f"turn:{self.region2_domain}:{self.region2_port}?transport=udp",
-                            f"turn:{self.region2_domain}:{self.region2_port}?transport=tcp",
-                        ],
+                        "urls": self._turn_urls(self.region2_domain, self.region2_port),
                         "username": username,
                         "credential": password_r2,
                     },
