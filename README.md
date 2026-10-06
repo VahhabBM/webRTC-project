@@ -112,6 +112,14 @@ reboot or restart, the ports to know, how to read `/health/`, where logs live,
 and an "if X happens, do Y" triage table — is in
 [docs/event-day-runbook.md](docs/event-day-runbook.md).
 
+## Production version freeze (T-56)
+
+Once a Git tag is cut for the event server, no new feature or non-critical
+change may be deployed without explicit project-manager approval. The policy,
+the roles (only the server operator cuts tags and deploys them), and the
+rollback path to the previous tag are in
+[docs/production-version-freeze.md](docs/production-version-freeze.md).
+
 ## Message-layer load test (T-44)
 
 Staging/local tool that connects N synthetic T-14 WebSocket clients (acceptance
@@ -220,6 +228,7 @@ patterns.
 │   ├── protocol.md          # WebSocket protocol specification
 │   ├── deployment.md        # T-51 production deployment from a Git tag
 │   ├── event-day-runbook.md # T-55 event-day operator runbook
+│   ├── production-version-freeze.md  # T-56 post-tag freeze policy and rollback
 │   └── message-layer-load-test.md  # T-44 staging load-test CLI
 ├── tools/
 │   └── message_layer_load_test/    # T-44 synthetic client runner (not runtime)
