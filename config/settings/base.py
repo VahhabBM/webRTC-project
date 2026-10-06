@@ -152,7 +152,6 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Participant sessions are server-side Django sessions with a persistent cookie.
 PARTICIPANT_SESSION_AGE = 60 * 60 * 24 * 30
 SESSION_COOKIE_AGE = PARTICIPANT_SESSION_AGE
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
@@ -161,11 +160,7 @@ SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = env_bool("DJANGO_SESSION_COOKIE_SECURE", default=False)
 PARTICIPANT_JOIN_BASE_URL = os.environ.get("PARTICIPANT_JOIN_BASE_URL", "")
 
-# WebSocket protocol policy defaults. T-14 may override these per deployment
-# or event; protocol constants expose the same documented defaults.
 PROTOCOL_RECONNECT_WINDOW_SECONDS = 300
-# Seconds a participant must stay absent before the partner is marked gone (T-34).
-# Kept above the T-33 5–20s recovery window so brief drops are not "partner left".
 PARTNER_ABSENCE_GRACE_SECONDS = env_int("PARTNER_ABSENCE_GRACE_SECONDS", 25)
 PROTOCOL_RATE_LIMIT_MESSAGES_PER_MINUTE = env_int(
     "PROTOCOL_RATE_LIMIT_MESSAGES_PER_MINUTE", 60
@@ -178,31 +173,30 @@ WEBSOCKET_MAX_MESSAGE_BYTES = env_int("WEBSOCKET_MAX_MESSAGE_BYTES", 64 * 1024)
 CLOCK_SYNC_SAMPLE_COUNT = env_int("CLOCK_SYNC_SAMPLE_COUNT", 5)
 CLOCK_SYNC_INTERVAL_SECONDS = env_int("CLOCK_SYNC_INTERVAL_SECONDS", 30)
 CLOCK_SYNC_MAX_RTT_MS = env_int("CLOCK_SYNC_MAX_RTT_MS", 2000)
-# Seconds before Round.ends_at at which T-24 sends server.round_warning.
-# Remaining time is derived from the stored round, not a hardcoded duration.
 ORCHESTRATOR_FINAL_SECONDS = env_int("ORCHESTRATOR_FINAL_SECONDS", 30)
 
-# T-38: empty by default. Set to one Pair.room_id to allow primary→relay
-# fallback for that pair only. Never switches other rooms or the whole event.
 MEDIA_FALLBACK_ROOM_ID = os.environ.get("MEDIA_FALLBACK_ROOM_ID", "")
-
-# T-39: milliseconds to wait for the primary/direct path before escalating
-# THIS pair to the T-38 fallback. Default is defined once in protocol.
 MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS = env_int(
     "MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS",
     DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS,
 )
 
-# --- پیکربندی سرویس ایمیل (تسک 09-T) ---
-EMAIL_BACKEND = os.environ.get(
+# --- پیکربندی کامل و ایمن سرویس ایمیل (تسک 50-T) ---
+EMAIL_BACKEND = env(
     "DJANGO_EMAIL_BACKEND",
-    "django.core.mail.backends.console.EmailBackend",
+    default="django.core.mail.backends.smtp.EmailBackend",
 )
-DEFAULT_FROM_EMAIL = os.environ.get(
+EMAIL_HOST = env("EMAIL_HOST", default="smtp.gmail.com")
+EMAIL_PORT = env_int("EMAIL_PORT", default=587)
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", default=True)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+
+DEFAULT_FROM_EMAIL = env(
     "DEFAULT_FROM_EMAIL",
-    "رویداد همسان‌گزینی <noreply@eventmatching.ir>",
+    default="رویداد همسان‌گزینی <noreply@eventmatching.ir>",
 )
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
 
-# آدرس پایه برای تولید لینک‌های فعال‌سازی و ورود
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:8000")
+# آدرس پایه برای تولید لینک‌های ایمیل بدون هاردکد کردن دامنه
+FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:8000")
