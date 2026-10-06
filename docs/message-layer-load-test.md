@@ -5,12 +5,44 @@ existing T-14 message layer, authenticates them with the real T-08 join
 contract, runs **one** T-24 round transition (including a partner switch),
 and writes machine-readable latency and loss statistics.
 
-This is not a 900-client execution task. The acceptance sample is **50**
-clients. The tool refuses `config.settings.production`.
-
 The implementation lives under `tools/message_layer_load_test/` and a thin
 `message_layer_load_test` management command. It is not imported by the
-WebSocket consumer or orchestrator.
+WebSocket consumer or orchestrator. The tool refuses
+`config.settings.production`.
+
+## Who runs what (T-52)
+
+| Run | Clients | Owner | Where |
+|---|---|---|---|
+| Automated regression | 4 (fakes, no sockets) | Developer / CI | `pytest tests/test_message_layer_load_test.py` |
+| Acceptance sample | 50 | Developer or operator | Local Compose or staging, live ASGI + Redis |
+| **Nominal target** | **900** | **Server operator** | Operator-controlled staging/production-like deployment |
+
+The **nominal target is 900 synthetic clients**. That run is the **server
+operator's responsibility, not the developer's**: it needs operator-sized
+hardware, operator-controlled Redis/Postgres, and an operator-approved
+deployment window. Developers and CI must not attempt it.
+
+Note the real limit shipped in this repo: `validate_client_count()` in
+`tools/message_layer_load_test/provision.py` accepts an **even count between
+`MIN_CLIENT_COUNT` (4) and `MAX_CLIENT_COUNT` (200)** per invocation, and
+raises an explicit error for 900. Those bounds are defined in
+`tools/message_layer_load_test/__init__.py`. Reaching the 900-client nominal
+target therefore requires an explicit decision by the operator to raise
+`MAX_CLIENT_COUNT`; the tool as shipped will not do it on its own, and this
+document does not claim otherwise.
+
+## The exact command
+
+One command produces one result file:
+
+```bash
+python manage.py message_layer_load_test --clients 50 --output ./message-layer-load-test-result.json
+```
+
+Everything else on this page is a variation of that command (Compose,
+staging origin, cleanup). The result file path comes from `--output`; its
+contents are described under [Result JSON](#result-json).
 
 ## What it reuses
 
@@ -35,12 +67,23 @@ not weakened and no extra production-only join endpoint is added.
    cookies are valid for `/ws/events/`.
 4. Staging should be HTTPS (`wss://`). Local Compose uses `http://` / `ws://`.
 
-Optional environment (CLI flags override):
+### Environment variables
 
-```bash
-MESSAGE_LAYER_LOAD_TEST_HTTP_BASE=https://staging.example.com
-MESSAGE_LAYER_LOAD_TEST_WS_URL=wss://staging.example.com/ws/events/
-```
+Variable **names** only — never commit values, and never paste a real
+token, cookie, password, or secret key into this file, into the result
+JSON, or into a shell history that is shared.
+
+| Name | Required | Read by | Purpose |
+|---|---|---|---|
+| `DJANGO_SETTINGS_MODULE` | Required | Django | Must select local or staging settings. The tool aborts on `config.settings.production`. |
+| `MESSAGE_LAYER_LOAD_TEST_HTTP_BASE` | Optional | `runner.default_http_base()` | Default for `--http-base`. Falls back to `http://127.0.0.1:8000`. |
+| `MESSAGE_LAYER_LOAD_TEST_WS_URL` | Optional | `runner.default_ws_url()` | Default for `--ws-url`. Falls back to a value derived from `--http-base`. |
+
+The tool itself defines no other environment variables. It does inherit the
+normal Django/database/Redis configuration of whichever settings module and
+`.env` the process already uses (`DJANGO_SECRET_KEY`, `POSTGRES_*`,
+`REDIS_URL`, …) — see `.env.example` for those names. CLI flags override
+`MESSAGE_LAYER_LOAD_TEST_*`.
 
 ## CLI
 
@@ -119,25 +162,86 @@ want to inspect pairs in admin first.
 
 ## Result JSON
 
-The file is UTF-8 JSON. Tokens, cookies, join URLs, and keys whose names
-contain `token` / `cookie` / `session` / `password` / `secret` /
-`authorization` / `credential` are redacted.
+The file written at `--output` is UTF-8 JSON, indented and key-sorted.
+Tokens, cookies, join URLs, and keys whose names contain `token` / `cookie`
+/ `session` / `password` / `secret` / `authorization` / `credential` are
+redacted before the file is written, so the result file is safe to attach to
+a ticket.
 
-Inspect at least:
+Top-level shape:
 
-- `config.clients` = 50 (or the count you passed)
-- `config.http_base`, `config.ws_url`, `config.event_id`, timestamps
-- `clients.attempted` / `connected` / `handshake_ok` / `failed`
-- `latency_ms` (`min`, `max`, `mean`, `p50`, `p95`, `p99`, `sample_count`)
-- `messages.sent`, `messages.expected`, `messages.received`
-- `messages.lost` / `messages.loss_count` / `messages.loss_rate`
-- `messages.by_type` for `server.hello`, `server.clock_sync`,
-  `server.pairing`, `server.round_start`, `server.round_end`
-- `lifecycle.sequence` showing pairing → ready → round_start → round_end →
-  pairing (round 2)
+```json
+{
+  "task": "T-44",
+  "tool": "message_layer_load_test",
+  "started_at": "...Z",
+  "finished_at": "...Z",
+  "duration_ms": 0,
+  "config": {},
+  "clients": {},
+  "latency_ms": {},
+  "messages": {},
+  "lifecycle": {},
+  "client_snapshots": []
+}
+```
 
-Per-client failures are listed under `clients.failures` and do not abort the
-run. Sockets are closed in a `finally` block.
+### Latency
+
+`latency_ms` holds round-trip times in **milliseconds**, measured from
+`client.clock_sync` send to the matching `server.clock_sync` reply
+(`--clock-sync-samples` samples per client).
+
+| Field | Type | Meaning |
+|---|---|---|
+| `latency_ms.sample_count` | int | Number of RTT samples across all clients |
+| `latency_ms.min` | float \| null | Fastest RTT |
+| `latency_ms.max` | float \| null | Slowest RTT |
+| `latency_ms.mean` | float \| null | Arithmetic mean RTT |
+| `latency_ms.p50` | float \| null | Median RTT |
+| `latency_ms.p95` | float \| null | 95th percentile RTT |
+| `latency_ms.p99` | float \| null | 99th percentile RTT |
+
+Values are `null` when no sample was collected.
+
+### Lost messages
+
+`messages` holds the loss accounting. A message is "lost" when it was
+expected (the tool knows how many `server.*` frames each connected client
+should receive) but never arrived before the timeout.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `messages.sent` | int | `client.*` frames the synthetic clients sent |
+| `messages.expected` | int | `server.*` frames that should have arrived |
+| `messages.received` | int | `server.*` frames that did arrive |
+| `messages.matched_expected` | int | Received frames counted against expectations |
+| `messages.lost` | int | **Lost-message count** = `expected - matched_expected` |
+| `messages.loss_count` | int | Same value as `messages.lost` (alias) |
+| `messages.loss_rate` | float | `lost / expected`, `0.0` when nothing was expected |
+| `messages.by_type` | object | Per message type, the same `expected`/`received`/`lost`/`loss_rate` breakdown |
+| `messages.sent_by_type`, `messages.received_by_type` | object | Raw per-type counters |
+
+`messages.by_type` is keyed by `server.hello`, `server.clock_sync`,
+`server.pairing`, `server.round_start`, and `server.round_end`.
+
+### Everything else
+
+- `config.clients` is the count you passed; `config.http_base`,
+  `config.ws_url`, `config.event_id`, `config.event_name`,
+  `config.round_numbers`, `config.pair_counts`, and the timeout settings
+  record how the run was configured.
+- `clients.attempted` / `authenticated` / `connected` / `handshake_ok` /
+  `failed`, plus `clients.failures[]` with `index`, `participant_id`,
+  `stage`, and a redacted `error`.
+- `lifecycle.sequence` shows pairing → ready → round_start → round_end →
+  pairing (round 2); `lifecycle.broadcasts[]` records each orchestrator
+  broadcast.
+- `client_snapshots[]` repeats `sent` / `expected` / `received` / `lost` /
+  `latency_sample_count` per client.
+
+Per-client failures do not abort the run. Sockets are closed in a `finally`
+block.
 
 ## Focused automated tests
 
@@ -147,8 +251,15 @@ ruff check tools tests/test_message_layer_load_test.py apps/events/management/co
 ruff format --check tools tests/test_message_layer_load_test.py apps/events/management/commands/message_layer_load_test.py
 ```
 
-Do **not** run the 50-client command in CI. It needs a live ASGI server,
-Redis, and staging/local data.
+`test_small_client_run_writes_latency_and_loss_result_file` drives the
+`message_layer_load_test` management command end to end with **4** clients
+over in-memory fakes and asserts the `--output` file contains the
+`latency_ms` and `messages.lost` / `messages.loss_count` fields documented
+above. It opens no sockets and needs no server.
+
+Do **not** run the 50-client or 900-client command in CI. Both need a live
+ASGI server, Redis, and staging/local data; 900 is operator-owned (see
+[Who runs what](#who-runs-what-t-52)).
 
 ## T-30 regression (manual, before merge)
 
