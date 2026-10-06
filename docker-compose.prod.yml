@@ -1,0 +1,65 @@
+# Production stack (T-51).
+#
+# Used standalone, never combined with docker-compose.yml:
+#
+#   docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+#
+# Differences from the development docker-compose.yml:
+#   * web runs Daphne (ASGI), never `manage.py runserver`
+#   * web is published on 127.0.0.1 only, behind the production reverse proxy
+#   * db and redis publish no host ports at all
+#   * no source bind mount; the image is built from the checked-out Git tag
+#   * APP_GIT_TAG tags the built image so the running tag is verifiable
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: webrtc-project:${APP_GIT_TAG:?APP_GIT_TAG must be set to the deployed Git tag}
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    # Only the local reverse proxy may reach Daphne.
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - static_files:/app/staticfiles
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # The entrypoint waits for PostgreSQL and Redis and applies migrations first.
+    command: daphne -b 0.0.0.0 -p 8000 config.asgi:application
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    # No `ports:` — PostgreSQL stays on the internal Compose network.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # No `ports:` — Redis stays on the internal Compose network.
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
+  static_files:
