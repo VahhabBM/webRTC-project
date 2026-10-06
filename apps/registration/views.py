@@ -64,22 +64,32 @@ class RegisterView(View):
         except RegistrationError as exc:
             return JsonResponse({"error": exc.message, "code": exc.code}, status=400)
 
-        with transaction.atomic():
-            participant = Participant.objects.create(
-                event=event,
-                display_name=clean_data["display_name"],
-                email=clean_data["email"],
-            )
-            ParticipantTag.objects.bulk_create(
-                ParticipantTag(participant=participant, tag=tag)
-                for tag in clean_data["tags"]
-            )
-            TermsAcceptance.objects.create(
-                participant=participant, ip_address=client_ip
-            )
-            token = EmailVerificationToken.create_for(participant)
+        try:
+            with transaction.atomic():
+                participant = Participant.objects.create(
+                    event=event,
+                    display_name=clean_data["display_name"],
+                    email=clean_data["email"],
+                )
+                ParticipantTag.objects.bulk_create(
+                    ParticipantTag(participant=participant, tag=tag)
+                    for tag in clean_data["tags"]
+                )
+                TermsAcceptance.objects.create(
+                    participant=participant, ip_address=client_ip
+                )
+                token = EmailVerificationToken.create_for(participant)
 
-        self._send_verification_email(participant, token)
+                self._send_verification_email(participant, token)
+
+        except RuntimeError as mail_err:
+            logger.error(f"Email dispatch failed: {mail_err}")
+            return JsonResponse(
+                {
+                    "error": "ثبت‌نام انجام شد اما در ارسال ایمیل تأیید خطایی رخ داد. لطفاً بعداً تلاش کنید."
+                },
+                status=500,
+            )
 
         logger.info(
             "participant registered",
