@@ -105,6 +105,13 @@ environment variable names, Daphne behind the reverse proxy, migrations, static
 files, health checks, and tag-to-tag updates — is documented end to end in
 [docs/deployment.md](docs/deployment.md).
 
+## Event-day operation (T-55)
+
+Running a live event on an already-deployed server — what to open, what not to
+reboot or restart, the ports to know, how to read `/health/`, where logs live,
+and an "if X happens, do Y" triage table — is in
+[docs/event-day-runbook.md](docs/event-day-runbook.md).
+
 ## Message-layer load test (T-44)
 
 Staging/local tool that connects N synthetic T-14 WebSocket clients (acceptance
@@ -212,6 +219,7 @@ patterns.
 ├── docs/
 │   ├── protocol.md          # WebSocket protocol specification
 │   ├── deployment.md        # T-51 production deployment from a Git tag
+│   ├── event-day-runbook.md # T-55 event-day operator runbook
 │   └── message-layer-load-test.md  # T-44 staging load-test CLI
 ├── tools/
 │   └── message_layer_load_test/    # T-44 synthetic client runner (not runtime)
