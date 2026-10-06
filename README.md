@@ -48,6 +48,11 @@ From the repository root:
 docker compose up --build
 ```
 
+`docker-compose.yml` is the **development** stack only: it runs
+`manage.py runserver`, publishes the PostgreSQL and Redis ports, and bind-mounts
+the working tree. For production use `docker-compose.prod.yml` and follow
+[docs/deployment.md](docs/deployment.md).
+
 The app is available at http://localhost:8000/
 
 Health check: http://localhost:8000/health/
@@ -92,6 +97,13 @@ Apply formatting:
 ```bash
 docker compose exec web ruff format .
 ```
+
+## Production deployment (T-51)
+
+Deploying a specific Git tag to a production server — tag checkout, production
+environment variable names, Daphne behind the reverse proxy, migrations, static
+files, health checks, and tag-to-tag updates — is documented end to end in
+[docs/deployment.md](docs/deployment.md).
 
 ## Message-layer load test (T-44)
 
@@ -199,6 +211,7 @@ patterns.
 │   └── asgi.py
 ├── docs/
 │   ├── protocol.md          # WebSocket protocol specification
+│   ├── deployment.md        # T-51 production deployment from a Git tag
 │   └── message-layer-load-test.md  # T-44 staging load-test CLI
 ├── tools/
 │   └── message_layer_load_test/    # T-44 synthetic client runner (not runtime)
@@ -206,7 +219,8 @@ patterns.
 │   └── entrypoint.sh        # wait for Postgres, migrate, then start
 ├── tests/
 │   └── test_protocol.py     # protocol contract tests (114 cases)
-├── docker-compose.yml
+├── docker-compose.yml       # development stack
+├── docker-compose.prod.yml  # production stack (Daphne, no exposed DB ports)
 ├── Dockerfile
 ├── manage.py
 ├── pyproject.toml           # pytest + Ruff
