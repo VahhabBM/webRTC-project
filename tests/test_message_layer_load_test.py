@@ -51,7 +51,11 @@ from tools.message_layer_load_test.provision import (
     validate_client_count,
 )
 from tools.message_layer_load_test.report import strip_secrets, write_result_json
-from tools.message_layer_load_test.runner import LoadTestRunner, default_ws_url
+from tools.message_layer_load_test.runner import (
+    LoadTestRunner,
+    default_ws_url,
+    run_load_test,
+)
 from tools.message_layer_load_test.ws_client import SyntheticClient
 
 
@@ -490,3 +494,63 @@ def test_provision_creates_two_rounds_with_distinct_pairs():
 def test_management_command_rejects_odd_client_count():
     with pytest.raises(CommandError):
         call_command("message_layer_load_test", clients=3)
+
+
+def test_small_client_run_writes_latency_and_loss_result_file(tmp_path, monkeypatch):
+    """T-52: the documented single command produces the documented result file."""
+    from tools.message_layer_load_test import cli as cli_module
+
+    registry: list[FakeSocket] = []
+    fixture = _fake_fixture(4)
+
+    def authenticator(http_base, token, **kwargs):
+        del http_base, kwargs
+        return {
+            "session_cookie": f"session-{token}",
+            "participant_id": str(uuid4()),
+            "event_id": fixture.event_id,
+            "display_name": "ok",
+        }
+
+    async def socket_factory(url, cookie, **kwargs):
+        del url, cookie, kwargs
+        return FakeSocket(registry)
+
+    async def run_with_fakes(**options):
+        return await run_load_test(
+            **options,
+            provisioner=lambda count, event_name=None: fixture,
+            broadcaster_factory=lambda event_id: FakeBroadcaster(event_id, registry),
+            authenticator=authenticator,
+            socket_factory=socket_factory,
+        )
+
+    monkeypatch.setattr(cli_module, "run_load_test", run_with_fakes)
+
+    output = tmp_path / "message-layer-load-test-result.json"
+    call_command(
+        "message_layer_load_test",
+        clients=4,
+        output=str(output),
+        connect_concurrency=2,
+        clock_sync_samples=2,
+        handshake_timeout=2.0,
+        lifecycle_timeout=2.0,
+        settle_seconds=0.0,
+    )
+
+    data = json.loads(output.read_text(encoding="utf-8"))
+    assert data["config"]["clients"] == 4
+
+    latency = data["latency_ms"]
+    assert latency["sample_count"] == 8
+    for field in ("min", "max", "mean", "p50", "p95", "p99"):
+        assert isinstance(latency[field], int | float)
+
+    messages = data["messages"]
+    for field in ("sent", "expected", "received", "lost", "loss_count"):
+        assert isinstance(messages[field], int)
+    assert messages["expected"] > 0
+    assert messages["lost"] == messages["loss_count"] == 0
+    assert messages["loss_rate"] == 0.0
+    assert messages["by_type"][MessageType.SERVER_PAIRING]["lost"] == 0
