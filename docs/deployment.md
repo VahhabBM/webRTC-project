@@ -8,6 +8,9 @@ exist in this repository: `Dockerfile`, `docker/entrypoint.sh`,
 Nothing here requires oral instructions, and nothing here contains a secret
 value. Only variable **names** are documented; the values live on the server.
 
+Running an event on an already-deployed server is a separate document:
+[docs/event-day-runbook.md](event-day-runbook.md) (T-55).
+
 > Development uses `docker-compose.yml` (Django `runserver`, published database
 > and Redis ports, source bind mount). **That file must never be used in
 > production.** Production uses `docker-compose.prod.yml` exclusively.
