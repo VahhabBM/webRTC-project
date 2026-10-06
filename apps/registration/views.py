@@ -85,8 +85,10 @@ class RegisterView(View):
         except RuntimeError as mail_err:
             logger.error(f"Email dispatch failed: {mail_err}")
             return JsonResponse(
-                {"error": "ثبت‌نام انجام شد اما در ارسال ایمیل تأیید خطایی رخ داد. لطفاً بعداً تلاش کنید."},
-                status=500
+                {
+                    "error": "ثبت‌نام انجام شد اما در ارسال ایمیل تأیید خطایی رخ داد. لطفاً بعداً تلاش کنید."
+                },
+                status=500,
             )
 
         logger.info(
