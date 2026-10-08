@@ -2,6 +2,9 @@
 .env
 *.env
 !.env.example
+.env.production
+.env.prod
+.env.local
 
 # Python
 __pycache__/
@@ -29,6 +32,9 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 message-layer-load-test-result.json
+# Load-test result files written to a custom --output path.
+*load-test-result*.json
+t52-result-*.json
 
 # Django
 *.log
