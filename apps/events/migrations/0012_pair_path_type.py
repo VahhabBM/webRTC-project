@@ -4,15 +4,19 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('events', '0011_participantincidentnote_disconnectionlog'),
+        ("events", "0011_participantincidentnote_disconnectionlog"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='pair',
-            name='path_type',
-            field=models.CharField(choices=[('direct', 'Direct'), ('turn', 'TURN')], default='direct', help_text='Path type for the pair (direct/turn)', max_length=10),
+            model_name="pair",
+            name="path_type",
+            field=models.CharField(
+                choices=[("direct", "Direct"), ("turn", "TURN")],
+                default="direct",
+                help_text="Path type for the pair (direct/turn)",
+                max_length=10,
+            ),
         ),
     ]

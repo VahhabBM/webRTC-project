@@ -15,9 +15,7 @@ class Command(BaseCommand):
         turn_share = (turn_count / total * 100) if total > 0 else 0
 
         self.stdout.write(
-            self.style.SUCCESS(
-                f"Direct Paths: {direct_count} ({direct_share:.1f}%)"
-            )
+            self.style.SUCCESS(f"Direct Paths: {direct_count} ({direct_share:.1f}%)")
         )
         self.stdout.write(
             self.style.SUCCESS(f"TURN Paths: {turn_count} ({turn_share:.1f}%)")

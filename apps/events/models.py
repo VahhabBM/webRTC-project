@@ -301,6 +301,7 @@ class Pair(models.Model):
             f"Pair({self.room_id}: {self.participant_a_id} - {self.participant_b_id})"
         )
 
+
 class EventTransitionLog(models.Model):
     """Audit record for every Event status transition (T-22).
 
@@ -477,6 +478,3 @@ class ParticipantIncidentNote(models.Model):
             f"Note on {self.participant.display_name} at "
             f"{self.created_at:%Y-%m-%d %H:%M}"
         )
-
-
-
