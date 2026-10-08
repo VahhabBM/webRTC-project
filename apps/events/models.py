@@ -204,6 +204,10 @@ class Round(models.Model):
 
 
 class Pair(models.Model):
+    class PathType(models.TextChoices):
+        DIRECT = "direct", "Direct"
+        TURN = "turn", "TURN"
+
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="pairs")
     round = models.ForeignKey(Round, on_delete=models.CASCADE, related_name="pairs")
@@ -218,6 +222,14 @@ class Pair(models.Model):
     )
     room_id = models.CharField(max_length=100, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    # T-53: Path Type Tracking (Direct vs TURN)
+    path_type = models.CharField(
+        max_length=10,
+        choices=PathType.choices,
+        default=PathType.DIRECT,
+        help_text="Path type for the pair (direct/turn)",
+    )
 
     # T-37: Connection Path Telemetry
     connection_type_a = models.CharField(
