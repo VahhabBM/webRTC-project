@@ -1,15 +1,15 @@
 {% extends "emails/base_email.html" %}
 
 {% block content %}
-  <h2>تأیید ایمیل و تکمیل ثبت‌نام</h2>
-  <p>سلام {{ name }} عزیز،</p>
-  <p>از ثبت‌نام شما در رویداد «{{ event_title }}» متشکریم. جهت فعال‌سازی حساب و نهایی‌سازی حضور خود، روی دکمه زیر کلیک کنید:</p>
+<h2>Email Verification & Registration Completion</h2>
+<p>Hello dear {{ name }},</p>
+<p>Thank you for registering for the event "{{ event_title }}". To activate your account and finalize your attendance, click the button below:</p>
 
-  <div style="text-align: center;">
-    <a href="{{ action_url }}" class="btn-action">تأیید ایمیل و فعال‌سازی</a>
-  </div>
+<div style="text-align: center; margin: 30px 0;">
+    <a href="{{ action_url }}" class="btn-action" style="background-color: #007bff; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Verify Email & Activate</a>
+</div>
 
-  <p>این پیوند تا <strong>{{ expiration_hours }} ساعت</strong> دیگر معتبر خواهد بود.</p>
-  <p>اگر دکمه برای شما باز نشد، پیوند زیر را در مرورگر وارد کنید:</p>
-  <p class="raw-link">{{ action_url }}</p>
+<p>This link will remain valid for another <strong>{{ expiration_hours }} hours</strong>.</p>
+<p>If the button does not work, paste the following link into your browser:</p>
+<p class="raw-link" style="word-break: break-all; color: #666; font-size: 12px;">{{ action_url }}</p>
 {% endblock %}
