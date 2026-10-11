@@ -352,7 +352,11 @@
             </div>
 
             <div class="tag-meta-bar">
-              <span>Select {{ min_tags }} to {{ max_tags }} topics:</span>
+              {% if unique_tags %}
+                <span>Select exactly 1 topic:</span>
+              {% else %}
+                <span>Select {{ min_tags }} to {{ max_tags }} topics:</span>
+              {% endif %}
               <span class="tag-counter"><span id="selected-count">0</span> / {{ max_tags }}</span>
             </div>
 
@@ -417,6 +421,7 @@
   (function() {
     const MIN_TAGS = {{ min_tags }};
     const MAX_TAGS = {{ max_tags }};
+    const UNIQUE_TAGS = {{ unique_tags|yesno:"true,false" }};
     const selectedTagIds = new Set();
 
     const form = document.getElementById('reg-form');
@@ -446,17 +451,37 @@
       if (!chip) return;
 
       const tagId = chip.getAttribute('data-id');
-      if (selectedTagIds.has(tagId)) {
-        selectedTagIds.delete(tagId);
-        chip.classList.remove('selected');
-      } else {
-        if (selectedTagIds.size >= MAX_TAGS) {
-          showError('tags-error', `You can select up to ${MAX_TAGS} topics.`);
-          return;
+
+      if (UNIQUE_TAGS) {
+        // Radio-like: deselect whatever is already selected, then select the tapped chip.
+        if (selectedTagIds.has(tagId)) {
+          // Allow toggling off so the user can change their mind.
+          selectedTagIds.delete(tagId);
+          chip.classList.remove('selected');
+        } else {
+          // Deselect any previously selected chip.
+          selectedTagIds.forEach(function(prevId) {
+            const prevChip = tagsContainer.querySelector('[data-id="' + prevId + '"]');
+            if (prevChip) prevChip.classList.remove('selected');
+          });
+          selectedTagIds.clear();
+          selectedTagIds.add(tagId);
+          chip.classList.add('selected');
+          hideError('tags-error');
         }
-        selectedTagIds.add(tagId);
-        chip.classList.add('selected');
-        hideError('tags-error');
+      } else {
+        if (selectedTagIds.has(tagId)) {
+          selectedTagIds.delete(tagId);
+          chip.classList.remove('selected');
+        } else {
+          if (selectedTagIds.size >= MAX_TAGS) {
+            showError('tags-error', `You can select up to ${MAX_TAGS} topics.`);
+            return;
+          }
+          selectedTagIds.add(tagId);
+          chip.classList.add('selected');
+          hideError('tags-error');
+        }
       }
 
       updateTagChipsState();

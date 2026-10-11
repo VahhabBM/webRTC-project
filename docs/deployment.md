@@ -11,6 +11,11 @@ value. Only variable **names** are documented; the values live on the server.
 Running an event on an already-deployed server is a separate document:
 [docs/event-day-runbook.md](event-day-runbook.md) (T-55).
 
+Who may cut a tag, and what may be deployed at all once a tag exists, is
+[docs/production-version-freeze.md](production-version-freeze.md) (T-56). After
+the freeze starts, every procedure in this document needs explicit
+project-manager approval first.
+
 > Development uses `docker-compose.yml` (Django `runserver`, published database
 > and Redis ports, source bind mount). **That file must never be used in
 > production.** Production uses `docker-compose.prod.yml` exclusively.
@@ -324,7 +329,9 @@ docker compose --env-file .env.production -f docker-compose.prod.yml exec web \
 Steps 3–6 are the only difference between a first deployment and an update;
 `.env.production` and the `postgres_data` / `redis_data` volumes are preserved.
 
-**Rollback:** repeat the same procedure with the previous tag. Note that a
+**Rollback:** repeat the same procedure with the previous tag — the condensed
+operator version is
+[docs/production-version-freeze.md](production-version-freeze.md) §4. Note that a
 rollback does not revert applied migrations — restore the dump from step 2 if
 the newer tag introduced schema changes that the older tag cannot read.
 

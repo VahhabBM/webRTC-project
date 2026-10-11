@@ -7,6 +7,9 @@ exist in this repository.
 - **Deploying, updating, or rolling back is out of scope here.** That is
   [docs/deployment.md](deployment.md) (T-51) and is the single source of truth
   for it. Do not deploy during an event.
+- **After a tag is cut, nothing new is deployed without project-manager
+  approval.** That policy, the roles, and the rollback paragraph are
+  [docs/production-version-freeze.md](production-version-freeze.md) (T-56).
 - **This runbook contains no secret values.** Variable names only.
 - **This runbook is not validated by deploying to a server.** Walking through
   the checks on the live server is the operator's job, before the event starts.
