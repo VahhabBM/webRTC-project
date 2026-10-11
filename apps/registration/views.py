@@ -119,6 +119,11 @@ def check_email_view(request):
     return JsonResponse({"exists": exists}, status=200)
 
 
+def device_check_view(request):
+    """View to render the device check page."""
+    return render(request, "registration/device_check.html")
+
+
 def device_check_report_view(request):
     """API endpoint to receive device check telemetry."""
     return JsonResponse({"status": "received"}, status=200)
@@ -126,4 +131,5 @@ def device_check_report_view(request):
 
 # Aliases for URL routing compatibility
 CheckEmailView = check_email_view
+DeviceCheckView = device_check_view
 DeviceCheckReportView = device_check_report_view
