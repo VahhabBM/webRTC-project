@@ -119,6 +119,11 @@ def check_email_view(request):
     return JsonResponse({"exists": exists}, status=200)
 
 
-# Alias for URL routing compatibility if referenced as CheckEmailView
-CheckEmailValue = check_email_view
+def device_check_report_view(request):
+    """API endpoint to receive device check telemetry."""
+    return JsonResponse({"status": "received"}, status=200)
+
+
+# Aliases for URL routing compatibility
 CheckEmailView = check_email_view
+DeviceCheckReportView = device_check_report_view
