@@ -130,16 +130,27 @@ def device_check_report_view(request):
     return JsonResponse({"status": "received"}, status=200)
 
 
+# Class-Based View wrappers to support urls.py imports seamlessly
 class RegisterView(View):
     def post(self, request):
         return register_view(request)
 
 
+class VerifyEmailView(View):
+    def get(self, request, token):
+        return verify_email_view(request, token)
+
+
+class CheckEmailView(View):
+    def get(self, request):
+        return check_email_view(request)
+
+
 class DeviceCheckView(View):
     def get(self, request):
-        return render(request, "registration/device_check.html")
+        return device_check_view(request)
 
 
-# Aliases for URL routing compatibility
-CheckEmailView = check_email_view
-DeviceCheckReportView = device_check_report_view
+class DeviceCheckReportView(View):
+    def post(self, request):
+        return device_check_report_view(request)
