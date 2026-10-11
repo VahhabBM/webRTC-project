@@ -412,6 +412,7 @@ class DisconnectionCause(models.TextChoices):
     TAB_CLOSED = "tab_closed", "Tab Closed"
     PERMISSION_DENIED = "permission_denied", "Media Permission Denied"
 
+
 class DisconnectionLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     event = models.ForeignKey(

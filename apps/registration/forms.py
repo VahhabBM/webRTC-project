@@ -1,5 +1,3 @@
-
-
 MIN_TAGS = 1
 MAX_TAGS = 5
 
@@ -23,7 +21,9 @@ def validate_registration_payload(data):
         raise RegistrationError("Please enter your name.", code="missing_name")
 
     if not email or "@" not in email:
-        raise RegistrationError("Please enter a valid email address.", code="invalid_email")
+        raise RegistrationError(
+            "Please enter a valid email address.", code="invalid_email"
+        )
 
     if not terms_accepted:
         raise RegistrationError(

@@ -45,18 +45,24 @@ def register_view(request):
         )
     except Exception:
         return JsonResponse(
-            {"error": "Registration completed, but failed to send the verification email. Please try again later."},
+            {
+                "error": "Registration completed, but failed to send the verification email. Please try again later."
+            },
             status=500,
         )
 
     return JsonResponse(
-        {"message": "Your registration has been successfully received. Please check your email."},
+        {
+            "message": "Your registration has been successfully received. Please check your email."
+        },
         status=201,
     )
 
 
 def verify_email_view(request, token):
-    is_json_request = request.headers.get("Accept") == "application/json" or request.path.startswith("/api/")
+    is_json_request = request.headers.get(
+        "Accept"
+    ) == "application/json" or request.path.startswith("/api/")
 
     try:
         token_obj = EmailVerificationToken.objects.get(token=token)
@@ -75,7 +81,9 @@ def verify_email_view(request, token):
 
     if token_obj.is_expired or token_obj.is_used:
         if is_json_request:
-            return JsonResponse({"error": "This link has expired or has already been used."}, status=410)
+            return JsonResponse(
+                {"error": "This link has expired or has already been used."}, status=410
+            )
         return render(
             request,
             "registration/error.html",
@@ -94,6 +102,8 @@ def verify_email_view(request, token):
     participant.save()
 
     if is_json_request:
-        return JsonResponse({"message": "Your registration has been successfully verified."}, status=200)
+        return JsonResponse(
+            {"message": "Your registration has been successfully verified."}, status=200
+        )
 
     return render(request, "registration/success.html", {"participant": participant})
