@@ -2,6 +2,7 @@ import json
 
 from django.http import JsonResponse
 from django.shortcuts import render
+from django.views import View
 
 from apps.registration.forms import RegistrationError, validate_registration_payload
 from apps.registration.models import EmailVerificationToken, Participant
@@ -129,7 +130,11 @@ def device_check_report_view(request):
     return JsonResponse({"status": "received"}, status=200)
 
 
+class DeviceCheckView(View):
+    def get(self, request):
+        return render(request, "registration/device_check.html")
+
+
 # Aliases for URL routing compatibility
 CheckEmailView = check_email_view
-DeviceCheckView = device_check_view
 DeviceCheckReportView = device_check_report_view
