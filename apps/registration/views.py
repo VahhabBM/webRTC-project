@@ -130,6 +130,11 @@ def device_check_report_view(request):
     return JsonResponse({"status": "received"}, status=200)
 
 
+class RegisterView(View):
+    def post(self, request):
+        return register_view(request)
+
+
 class DeviceCheckView(View):
     def get(self, request):
         return render(request, "registration/device_check.html")
