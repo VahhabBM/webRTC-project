@@ -187,7 +187,10 @@ def test_http_endpoint_rejects_multiple_tags_when_unique_tags_enabled(client: Cl
         }
     )
 
-    with patch("apps.registration.views.EmailService.send_verification_email"):
+    with (
+        patch("apps.registration.views.EmailService.send_verification_email"),
+        patch("apps.registration.views.is_rate_limited", return_value=False),
+    ):
         response = client.post(
             f"/registration/events/{event.id}/register/",
             data=payload,
@@ -215,7 +218,10 @@ def test_http_endpoint_accepts_single_tag_when_unique_tags_enabled(client: Clien
         }
     )
 
-    with patch("apps.registration.views.EmailService.send_verification_email"):
+    with (
+        patch("apps.registration.views.EmailService.send_verification_email"),
+        patch("apps.registration.views.is_rate_limited", return_value=False),
+    ):
         response = client.post(
             f"/registration/events/{event.id}/register/",
             data=payload,
@@ -244,7 +250,10 @@ def test_http_endpoint_still_allows_multiple_tags_when_unique_tags_disabled(
         }
     )
 
-    with patch("apps.registration.views.EmailService.send_verification_email"):
+    with (
+        patch("apps.registration.views.EmailService.send_verification_email"),
+        patch("apps.registration.views.is_rate_limited", return_value=False),
+    ):
         response = client.post(
             f"/registration/events/{event.id}/register/",
             data=payload,
