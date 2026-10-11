@@ -20,7 +20,6 @@ def register_view(request):
     except RegistrationError as e:
         return JsonResponse({"error": e.message, "code": e.code}, status=400)
 
-    # Check for duplicate email in the same context if needed
     email = payload["email"]
     if Participant.objects.filter(email=email).exists():
         return JsonResponse(
@@ -37,7 +36,6 @@ def register_view(request):
         )
         token_obj = EmailVerificationToken.objects.create(participant=participant)
 
-        # Send verification email
         EmailService.send_verification_email(
             recipient_email=email,
             name=participant.display_name,
@@ -82,7 +80,8 @@ def verify_email_view(request, token):
     if token_obj.is_expired or token_obj.is_used:
         if is_json_request:
             return JsonResponse(
-                {"error": "This link has expired or has already been used."}, status=410
+                {"error": "This link has expired or has already been used."},
+                status=410,
             )
         return render(
             request,
@@ -103,7 +102,23 @@ def verify_email_view(request, token):
 
     if is_json_request:
         return JsonResponse(
-            {"message": "Your registration has been successfully verified."}, status=200
+            {"message": "Your registration has been successfully verified."},
+            status=200,
         )
 
     return render(request, "registration/success.html", {"participant": participant})
+
+
+def check_email_view(request):
+    """API endpoint to check if an email is already registered."""
+    email = request.GET.get("email", "").strip()
+    if not email:
+        return JsonResponse({"error": "Email parameter is required."}, status=400)
+
+    exists = Participant.objects.filter(email=email).exists()
+    return JsonResponse({"exists": exists}, status=200)
+
+
+# Alias for URL routing compatibility if referenced as CheckEmailView
+CheckEmailValue = check_email_view
+CheckEmailView = check_email_view
