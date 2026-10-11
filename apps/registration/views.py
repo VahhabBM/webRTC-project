@@ -2,6 +2,7 @@ import json
 
 from django.http import JsonResponse
 from django.shortcuts import render
+from django.utils import timezone
 from django.views import View
 
 from apps.registration.forms import RegistrationError, validate_registration_payload
@@ -9,7 +10,7 @@ from apps.registration.models import EmailVerificationToken, Participant
 from apps.registration.services.email_service import EmailService
 
 
-def register_view(request):
+def register_view(request, event_id=None):
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed."}, status=405)
 
@@ -22,7 +23,10 @@ def register_view(request):
         return JsonResponse({"error": e.message, "code": e.code}, status=400)
 
     email = payload["email"]
-    if Participant.objects.filter(email=email).exists():
+    query = Participant.objects.filter(email=email)
+    if event_id:
+        query = query.filter(event_id=event_id)
+    if query.exists():
         return JsonResponse(
             {
                 "error": "This email is already registered for this event. You can request a verification link resend."
@@ -32,6 +36,7 @@ def register_view(request):
 
     try:
         participant = Participant.objects.create(
+            event_id=event_id if event_id else None,
             display_name=payload["display_name"],
             email=email,
         )
@@ -78,7 +83,16 @@ def verify_email_view(request, token):
             status=404,
         )
 
-    if token_obj.is_expired or token_obj.is_used:
+    # Check token expiration safely
+    is_expired = getattr(
+        token_obj,
+        "is_expired",
+        token_obj.expires_at < timezone.now()
+        if hasattr(token_obj, "expires_at")
+        else False,
+    )
+
+    if is_expired or token_obj.is_used:
         if is_json_request:
             return JsonResponse(
                 {"error": "This link has expired or has already been used."},
@@ -120,37 +134,40 @@ def check_email_view(request):
     return JsonResponse({"exists": exists}, status=200)
 
 
-def device_check_view(request):
+def device_check_view(request, event_id=None):
     """View to render the device check page."""
-    return render(request, "registration/device_check.html")
+    return render(request, "registration/device_check.html", {"event_id": event_id})
 
 
-def device_check_report_view(request):
+def device_check_report_view(request, event_id=None):
     """API endpoint to receive device check telemetry."""
-    return JsonResponse({"status": "received"}, status=200)
+    return JsonResponse({"status": "received"}, status=201)
 
 
-# Class-Based View wrappers to support urls.py imports seamlessly
+# Class-Based View wrappers accepting event_id and extra kwargs
 class RegisterView(View):
-    def post(self, request):
-        return register_view(request)
+    def get(self, request, event_id=None, *args, **kwargs):
+        return render(request, "registration/register.html", {"event_id": event_id})
+
+    def post(self, request, event_id=None, *args, **kwargs):
+        return register_view(request, event_id=event_id)
 
 
 class VerifyEmailView(View):
-    def get(self, request, token):
+    def get(self, request, token, *args, **kwargs):
         return verify_email_view(request, token)
 
 
 class CheckEmailView(View):
-    def get(self, request):
+    def get(self, request, *args, **kwargs):
         return check_email_view(request)
 
 
 class DeviceCheckView(View):
-    def get(self, request):
-        return device_check_view(request)
+    def get(self, request, event_id=None, *args, **kwargs):
+        return device_check_view(request, event_id=event_id)
 
 
 class DeviceCheckReportView(View):
-    def post(self, request):
-        return device_check_report_view(request)
+    def post(self, request, event_id=None, *args, **kwargs):
+        return device_check_report_view(request, event_id=event_id)

@@ -76,6 +76,15 @@ class Event(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     scoring_weights = models.JSONField(default=_default_scoring_weights)
+    unique_tags = models.BooleanField(
+        default=False,
+        verbose_name="Unique tag selection",
+        help_text=(
+            "When enabled, each participant can select only one tag for this event. "
+            "Use this for age ranges or other mutually exclusive categories. "
+            "When disabled, the existing multiple-tag behavior remains unchanged."
+        ),
+    )
 
     class Meta:
         ordering = ("-start_time",)

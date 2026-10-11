@@ -31,7 +31,15 @@ def validate_registration_payload(data):
             code="terms_not_accepted",
         )
 
-    if not (MIN_TAGS <= len(tag_ids) <= MAX_TAGS):
+    # When unique_tags is enabled the event restricts each participant to
+    # exactly one tag; otherwise the global MIN/MAX bounds apply.
+    if getattr(event, "unique_tags", False):
+        if len(tag_ids) != 1:
+            raise RegistrationError(
+                "این رویداد فقط یک علاقه‌مندی را مجاز می‌داند. لطفاً دقیقاً یک مورد انتخاب کنید.",
+                code="invalid_tag_count",
+            )
+    elif not (MIN_TAGS <= len(tag_ids) <= MAX_TAGS):
         raise RegistrationError(
             f"Please select between {MIN_TAGS} and {MAX_TAGS} interests.",
             code="invalid_tag_count",
