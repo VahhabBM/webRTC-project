@@ -408,10 +408,9 @@ class OperatorActionLog(models.Model):
 
 
 class DisconnectionCause(models.TextChoices):
-    NETWORK = "network", "خطای شبکه / Network"
-    TAB_CLOSED = "tab_closed", "بستن برگه / Tab Closed"
-    PERMISSION_DENIED = "permission_denied", "رد مجوز مدیا / Permission Denied"
-
+    NETWORK = "network", "Network Error"
+    TAB_CLOSED = "tab_closed", "Tab Closed"
+    PERMISSION_DENIED = "permission_denied", "Media Permission Denied"
 
 class DisconnectionLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
