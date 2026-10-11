@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import csv
 
+from django import forms
 from django.contrib import admin, messages
+from django.core.exceptions import ValidationError
 from django.db.models import Count, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect
@@ -58,6 +60,53 @@ _MATCHING_RUNNABLE_STATES = frozenset(
 )
 
 
+class EventAdminForm(forms.ModelForm):
+    """ModelForm for Event that validates the unique_tags toggle.
+
+    Prevents enabling unique_tags on an existing event when one or more of its
+    participants already have more than one tag selected.  Silently modifying
+    existing participant data is intentionally avoided; the admin must resolve
+    the conflict manually before enabling the restriction.
+    """
+
+    class Meta:
+        model = Event
+        fields = "__all__"
+
+    def clean(self):
+        cleaned = super().clean()
+        # Only validate when the instance already exists in the DB
+        # (i.e. we are editing, not creating).
+        if not self.instance.pk:
+            return cleaned
+
+        enabling_unique = cleaned.get("unique_tags", False)
+        was_unique = (
+            Event.objects.filter(pk=self.instance.pk)
+            .values_list("unique_tags", flat=True)
+            .first()
+        )
+
+        # Only block when the admin is turning the flag ON for the first time.
+        if enabling_unique and not was_unique:
+            # Find participants in this event that have more than one tag.
+            multi_tag_participants = (
+                ParticipantTag.objects.filter(participant__event=self.instance)
+                .values("participant_id")
+                .annotate(tag_count=Count("id"))
+                .filter(tag_count__gt=1)
+            )
+            if multi_tag_participants.exists():
+                count = multi_tag_participants.count()
+                raise ValidationError(
+                    f"Cannot enable 'Unique tag selection': {count} participant(s) in "
+                    f"this event already have more than one tag selected. "
+                    f"Remove the extra tags from those participants first, "
+                    f"then enable this setting."
+                )
+        return cleaned
+
+
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin):
     list_display = (
@@ -75,6 +124,8 @@ class EventAdmin(admin.ModelAdmin):
     search_fields = ("name", "description")
     ordering = ("-start_time",)
 
+    form = EventAdminForm
+
     fields = (
         "name",
         "description",
@@ -83,6 +134,7 @@ class EventAdmin(admin.ModelAdmin):
         "num_rounds",
         "round_duration",
         "break_duration",
+        "unique_tags",
     )
 
     # Override the change-form template to inject custom tool buttons.
