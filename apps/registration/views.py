@@ -31,6 +31,8 @@ class RegisterView(View):
     def get(self, request, event_id):
         event = get_object_or_404(Event, id=event_id)
         tags = Tag.objects.all().order_by("name")
+        unique_tags = getattr(event, "unique_tags", False)
+        effective_max = 1 if unique_tags else MAX_TAGS
         return render(
             request,
             "registration/register.html",
@@ -38,7 +40,8 @@ class RegisterView(View):
                 "event": event,
                 "tags": tags,
                 "min_tags": MIN_TAGS,
-                "max_tags": MAX_TAGS,
+                "max_tags": effective_max,
+                "unique_tags": unique_tags,
             },
         )
 
