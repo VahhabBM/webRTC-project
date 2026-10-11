@@ -7,7 +7,7 @@ from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_POST, require_safe
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
@@ -30,6 +30,12 @@ from apps.protocol.media_transport import DEFAULT_MEDIA_FALLBACK_ESCALATION_TIME
 def get_authenticated_participant(request: HttpRequest) -> Participant | None:
     """دریافت شرکت‌کننده احراز هویت شده از روی سشن."""
     return resolve_participant_from_session(request.session)
+
+
+@require_safe
+def landing_page(request: HttpRequest) -> HttpResponse:
+    """Render the Meetakk public landing page at the root URL."""
+    return render(request, "events/landing.html")
 
 
 @require_GET

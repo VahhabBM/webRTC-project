@@ -1,0 +1,469 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Meetakk brings people together in structured, multi-round online meeting sessions. Meet your partner, complete the round, and keep connecting.">
+  <title>Meetakk — Meaningful connections. One round at a time.</title>
+  <link rel="stylesheet" href="{% static 'events/css/landing.css' %}">
+</head>
+<body></body>
+
+<a class="skip-link" href="#main-content">Skip to main content</a>
+
+<!-- NAV -->
+<header>
+  <nav class="nav" aria-label="Main navigation">
+    <div class="container nav__inner">
+
+      <a href="/" class="wordmark" aria-label="Meetakk — home">
+        <svg class="wordmark__icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+          <rect width="32" height="32" rx="8" fill="url(#wm-grad)"/>
+          <path d="M8 22V10l8 7 8-7v12" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <defs>
+            <linearGradient id="wm-grad" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#3b82f6"/>
+              <stop offset="1" stop-color="#7c3aed"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <span class="wordmark__text">Meet<em>akk</em></span>
+      </a>
+
+      <div class="nav__links" id="nav-links">
+        <a href="#how-it-works" class="nav__link">How it works</a>
+        <a href="#features" class="nav__link">Features</a>
+        <a href="#showcase" class="nav__link">Product</a>
+        <a href="#join" class="btn btn-sm btn-primary nav__cta">Join an event</a>
+      </div>
+
+      <button class="nav__toggle" id="nav-toggle" aria-expanded="false" aria-controls="nav-drawer" aria-label="Open navigation menu">
+        <span class="hamburger-bar"></span>
+        <span class="hamburger-bar"></span>
+        <span class="hamburger-bar"></span>
+      </button>
+    </div>
+
+    <div class="nav__drawer" id="nav-drawer" role="navigation" aria-label="Mobile navigation">
+      <a href="#how-it-works" class="nav__link">How it works</a>
+      <a href="#features" class="nav__link">Features</a>
+      <a href="#showcase" class="nav__link">Product</a>
+      <a href="#join" class="btn btn-primary">Join an event</a>
+    </div>
+  </nav>
+</header>
+
+<!-- MAIN -->
+<main id="main-content">
+
+  <!-- HERO -->
+  <section class="hero" aria-labelledby="hero-headline">
+    <div class="hero__glow hero__glow--blue" aria-hidden="true"></div>
+    <div class="hero__glow hero__glow--violet" aria-hidden="true"></div>
+
+    <div class="container hero__inner">
+
+      <!-- Copy -->
+      <div class="hero__content">
+        <span class="hero__eyebrow">
+          <span class="hero__eyebrow-dot" aria-hidden="true"></span>
+          Structured speed-meeting platform
+        </span>
+
+        <h1 class="hero__headline" id="hero-headline">
+          Meaningful connections.<br>
+          <span class="gradient-text">One round at a time.</span>
+        </h1>
+
+        <p class="hero__sub">
+          Meetakk brings people together in live, browser-based video sessions — pairing each participant with a new partner per round, automatically, through your entire event.
+        </p>
+
+        <div class="hero__actions">
+          <a href="#join" class="btn btn-primary">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M2 8h12M8 2l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Join an event
+          </a>
+          <a href="#how-it-works" class="btn btn-ghost">See how it works</a>
+        </div>
+      </div>
+
+      <!-- Visual mockup -->
+      <div class="hero__visual" aria-hidden="true">
+        <div class="session-mockup">
+
+          <!-- Window chrome -->
+          <div class="session-mockup__header">
+            <span class="dot dot--red"></span>
+            <span class="dot dot--amber"></span>
+            <span class="dot dot--green"></span>
+            <span class="session-mockup__title">Meetakk — Call Room</span>
+            <span class="round-badge">Round 2 of 5</span>
+          </div>
+
+          <!-- Video grid -->
+          <div class="mockup-videos">
+            <div class="mockup-video mockup-video--local">
+              <div class="mockup-video__avatar" role="presentation">
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+                  <circle cx="20" cy="16" r="8" fill="#3b82f6" fill-opacity="0.7"/>
+                  <path d="M6 36c0-7.732 6.268-14 14-14s14 6.268 14 14" fill="#3b82f6" fill-opacity="0.35"/>
+                </svg>
+              </div>
+              <span class="mockup-video__label">You</span>
+            </div>
+            <div class="mockup-video mockup-video--remote">
+              <div class="mockup-video__avatar" role="presentation">
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+                  <circle cx="20" cy="16" r="8" fill="#7c3aed" fill-opacity="0.7"/>
+                  <path d="M6 36c0-7.732 6.268-14 14-14s14 6.268 14 14" fill="#7c3aed" fill-opacity="0.35"/>
+                </svg>
+              </div>
+              <span class="mockup-video__label">Partner</span>
+            </div>
+          </div>
+
+          <!-- Timer -->
+          <div class="mockup-timer">
+            <svg class="timer-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-label="Timer">
+              <circle cx="8" cy="9" r="6" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M8 6v3l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M6 1h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            <span class="timer-label">Time remaining</span>
+            <span class="timer-value">04:23</span>
+          </div>
+
+          <!-- Partner info -->
+          <div class="mockup-partner">
+            <div class="partner-avatar" aria-hidden="true">SR</div>
+            <div class="partner-info">
+              <div class="partner-name">Sara Rezaei</div>
+              <div class="partner-tag">Product Design · UX Research</div>
+            </div>
+          </div>
+
+          <!-- Round progress -->
+          <div class="round-progress" role="progressbar" aria-label="Event progress: round 2 of 5" aria-valuenow="2" aria-valuemin="1" aria-valuemax="5">
+            <span class="progress-dot progress-dot--done"></span>
+            <span class="progress-dot progress-dot--active"></span>
+            <span class="progress-dot"></span>
+            <span class="progress-dot"></span>
+            <span class="progress-dot"></span>
+            <span class="progress-label">2 / 5 rounds</span>
+          </div>
+
+        </div>
+      </div><!-- /.hero__visual -->
+
+    </div><!-- /.container -->
+  </section><!-- /.hero -->
+
+  <!-- HOW IT WORKS -->
+  <section class="section" id="how-it-works" aria-labelledby="how-title">
+    <div class="container">
+      <div class="section__header">
+        <p class="section-label">Process</p>
+        <h2 class="section__title" id="how-title">Three steps to a great event</h2>
+        <p class="section__sub">
+          Meetakk handles the logistics so you can focus on the conversation.
+        </p>
+      </div>
+
+      <ol class="steps">
+        <li class="step">
+          <div class="step__number" aria-hidden="true">1</div>
+          <h3 class="step__title">Join with your invite link</h3>
+          <p class="step__desc">
+            Event organizers send participants a personal invite link. Click it or enter your token to authenticate directly in the browser — no account required.
+          </p>
+        </li>
+        <li class="step">
+          <div class="step__number" aria-hidden="true">2</div>
+          <h3 class="step__title">Meet your matched partner</h3>
+          <p class="step__desc">
+            When the round starts, Meetakk pairs you with a compatible partner based on your selected interests. Your live video session begins automatically.
+          </p>
+        </li>
+        <li class="step">
+          <div class="step__number" aria-hidden="true">3</div>
+          <h3 class="step__title">Continue through every round</h3>
+          <p class="step__desc">
+            After each timed round, the platform advances automatically to your next pairing. You stay on the same page — no refreshing, no manual steps.
+          </p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="section features-bg" id="features" aria-labelledby="feat-title">
+    <div class="container">
+      <div class="section__header">
+        <p class="section-label">Capabilities</p>
+        <h2 class="section__title" id="feat-title">Built for structured networking</h2>
+        <p class="section__sub">
+          Every feature is designed around the rhythm of a real speed-meeting event.
+        </p>
+      </div>
+
+      <div class="features-grid">
+
+        <article class="feature-card">
+          <div class="feature-icon feature-icon--blue" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+              <path d="M11 2a9 9 0 1 0 0 18A9 9 0 0 0 11 2Z" stroke="currentColor" stroke-width="1.75"/>
+              <path d="M11 6v5l3 2" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">Structured multi-round sessions</h3>
+          <p class="feature-desc">
+            Events run in sequential timed rounds. Each round is scheduled and orchestrated server-side so all participants stay perfectly in sync without manual coordination.
+          </p>
+        </article>
+
+        <article class="feature-card">
+          <div class="feature-icon feature-icon--violet" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+              <circle cx="8" cy="7" r="3" stroke="currentColor" stroke-width="1.75"/>
+              <circle cx="14" cy="15" r="3" stroke="currentColor" stroke-width="1.75"/>
+              <path d="M11 10l3 2" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">Interest-based partner matching</h3>
+          <p class="feature-desc">
+            Participants select interest tags at registration. The matching engine uses those tags to pair people with complementary or shared interests across every round.
+          </p>
+        </article>
+
+        <article class="feature-card">
+          <div class="feature-icon feature-icon--teal" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+              <rect x="2" y="5" width="18" height="13" rx="2" stroke="currentColor" stroke-width="1.75"/>
+              <path d="M9 9l4 2.5L9 14V9Z" fill="currentColor"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">Browser-based live video</h3>
+          <p class="feature-desc">
+            Video runs entirely in the browser via WebRTC — no app installation needed. Both direct peer connections and relay (TURN) paths are supported for reliable connectivity.
+          </p>
+        </article>
+
+        <article class="feature-card">
+          <div class="feature-icon feature-icon--green" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+              <path d="M2 11c2-4 6-7 9-7s7 3 9 7c-2 4-6 7-9 7s-7-3-9-7Z" stroke="currentColor" stroke-width="1.75"/>
+              <path d="M4 4l14 14" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+              <circle cx="11" cy="11" r="2.5" stroke="currentColor" stroke-width="1.75"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">Automatic reconnection recovery</h3>
+          <p class="feature-desc">
+            Temporary drops in connectivity are handled gracefully. The client reconnects to the WebSocket and resumes ICE negotiation within a configurable grace window.
+          </p>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- PRODUCT SHOWCASE -->
+  <section class="section" id="showcase" aria-labelledby="showcase-title">
+    <div class="container showcase__inner">
+
+      <div class="showcase__content">
+        <p class="section-label">Product</p>
+        <h2 class="showcase__headline" id="showcase-title">
+          The call room keeps you focused on the person, not the platform.
+        </h2>
+        <p class="showcase__body">
+          During a round you see your partner's live video, a countdown timer, their name and interest tags, and a round-progress indicator. When the round ends, the platform moves you forward automatically.
+        </p>
+        <div class="showcase__pills">
+          <span class="pill">Live video</span>
+          <span class="pill">Round timer</span>
+          <span class="pill">Partner card</span>
+          <span class="pill">Auto-advance</span>
+          <span class="pill">No app install</span>
+        </div>
+      </div>
+
+      <div class="showcase__visual" aria-hidden="true">
+        <div class="dashboard-mockup">
+
+          <div class="dashboard-mockup__topbar">
+            <span class="dot dot--red"></span>
+            <span class="dot dot--amber"></span>
+            <span class="dot dot--green"></span>
+            <span style="margin-left:0.5rem; font-size:0.8rem; color:var(--muted); font-weight:600;">Meetakk Events</span>
+            <span class="status-pill">Live</span>
+          </div>
+
+          <div class="event-row">
+            <span class="event-dot event-dot--active"></span>
+            <div class="event-info">
+              <div class="event-name">Tech Founders Mixer</div>
+              <div class="event-meta">Round 3 of 6 · 48 participants</div>
+            </div>
+            <span class="event-badge event-badge--live">Live</span>
+          </div>
+
+          <div class="event-row">
+            <span class="event-dot event-dot--next"></span>
+            <div class="event-info">
+              <div class="event-name">Design Community Meetup</div>
+              <div class="event-meta">Starts in 18 min · 32 participants</div>
+            </div>
+            <span class="event-badge event-badge--soon">Soon</span>
+          </div>
+
+          <div class="event-row">
+            <span class="event-dot event-dot--waiting"></span>
+            <div class="event-info">
+              <div class="event-name">Startup Ecosystem Roundtable</div>
+              <div class="event-meta">Scheduled · 5 rounds</div>
+            </div>
+            <span class="event-badge event-badge--waiting">Upcoming</span>
+          </div>
+
+          <div class="event-row">
+            <span class="event-dot event-dot--waiting"></span>
+            <div class="event-info">
+              <div class="event-name">Remote Teams Workshop</div>
+              <div class="event-meta">Scheduled · 4 rounds</div>
+            </div>
+            <span class="event-badge event-badge--waiting">Upcoming</span>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- JOIN (Token entry) -->
+  <section class="join-section" id="join" aria-labelledby="join-title">
+    <div class="container">
+      <div class="join-card">
+
+        <h2 class="join-card__headline" id="join-title">
+          Ready to join your event?
+        </h2>
+        <p class="join-card__sub">
+          Participants receive a personal invite token from their event organizer. Paste it below to authenticate and enter your session.
+        </p>
+
+        <form class="token-form" id="join-form" novalidate aria-label="Join with invite token">
+          <label for="token-input" class="sr-only">Your invite token</label>
+          <input
+            id="token-input"
+            class="token-input"
+            type="text"
+            name="token"
+            placeholder="Paste your invite token here…"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
+            aria-required="true"
+            aria-describedby="join-note"
+          >
+          <button type="submit" class="btn btn-primary btn-sm token-submit">
+            Join now
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M2 7h10M7 2l5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </form>
+
+        <p class="join-note" id="join-note">
+          Tokens are provided by your event organizer.
+          If you need to register for an upcoming event, use the registration link included in your invitation email.
+        </p>
+
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- FOOTER -->
+<footer class="footer">
+  <div class="container footer__inner">
+
+    <a href="/" class="wordmark" aria-label="Meetakk — home">
+      <svg class="wordmark__icon" width="24" height="24" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <rect width="32" height="32" rx="8" fill="url(#wm-grad-f)"/>
+        <path d="M8 22V10l8 7 8-7v12" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+        <defs>
+          <linearGradient id="wm-grad-f" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#3b82f6"/>
+            <stop offset="1" stop-color="#7c3aed"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <span class="wordmark__text">Meet<em>akk</em></span>
+    </a>
+
+    <nav class="footer__links" aria-label="Footer navigation">
+      <a href="#how-it-works" class="footer__link">How it works</a>
+      <a href="#features" class="footer__link">Features</a>
+      <a href="#join" class="footer__link">Join an event</a>
+      <a href="/health/" class="footer__link">Status</a>
+    </nav>
+
+    <p class="footer__copy">&copy; Meetakk</p>
+
+  </div>
+</footer>
+
+<!-- Minimal JS: mobile nav toggle + join form routing -->
+<script>
+(function () {
+  'use strict';
+
+  // Mobile nav toggle
+  var toggle = document.getElementById('nav-toggle');
+  var drawer = document.getElementById('nav-drawer');
+  if (toggle && drawer) {
+    toggle.addEventListener('click', function () {
+      var isOpen = drawer.classList.toggle('is-open');
+      toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    });
+    // Close drawer when a link inside it is clicked
+    drawer.querySelectorAll('a').forEach(function (link) {
+      link.addEventListener('click', function () {
+        drawer.classList.remove('is-open');
+        toggle.setAttribute('aria-expanded', 'false');
+      });
+    });
+  }
+
+  // Join-token form: navigate to /join/<token>/
+  var form = document.getElementById('join-form');
+  if (form) {
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var input = document.getElementById('token-input');
+      var token = input ? input.value.trim() : '';
+      if (!token) {
+        input.focus();
+        return;
+      }
+      // Sanitise: allow only safe URL characters (alphanumeric + - _ .)
+      if (!/^[A-Za-z0-9\-_.]+$/.test(token)) {
+        input.setCustomValidity('Token contains invalid characters.');
+        input.reportValidity();
+        return;
+      }
+      input.setCustomValidity('');
+      window.location.href = '/join/' + encodeURIComponent(token) + '/';
+    });
+  }
+})();
+</script>
+
+</body>
+</html>
