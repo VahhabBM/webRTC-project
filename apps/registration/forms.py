@@ -11,7 +11,15 @@ class RegistrationError(Exception):
         self.code = code
 
 
-def validate_registration_data(data, event=None):
+def validate_registration_data(arg1, arg2=None):
+    """Supports both (data, event=None) and (event, data) signatures for tests."""
+    if hasattr(arg1, "get") and callable(arg1.get):
+        data = arg1
+        event = arg2
+    else:
+        event = arg1
+        data = arg2 if arg2 is not None else {}
+
     display_name = data.get("display_name", "").strip()
     email = data.get("email", "").strip()
     terms_accepted = data.get("terms_accepted", False)
@@ -31,8 +39,6 @@ def validate_registration_data(data, event=None):
             code="terms_not_accepted",
         )
 
-    # When unique_tags is enabled the event restricts each participant to
-    # exactly one tag; otherwise the global MIN/MAX bounds apply.
     if event and getattr(event, "unique_tags", False):
         if len(tag_ids) != 1:
             raise RegistrationError(
@@ -54,5 +60,5 @@ def validate_registration_data(data, event=None):
     }
 
 
-# Alias for backwards compatibility
+# Backwards compatibility alias
 validate_registration_payload = validate_registration_data
