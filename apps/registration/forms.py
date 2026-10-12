@@ -11,7 +11,7 @@ class RegistrationError(Exception):
         self.code = code
 
 
-def validate_registration_payload(data, event=None):
+def validate_registration_data(data, event=None):
     display_name = data.get("display_name", "").strip()
     email = data.get("email", "").strip()
     terms_accepted = data.get("terms_accepted", False)
@@ -31,11 +31,20 @@ def validate_registration_payload(data, event=None):
             code="terms_not_accepted",
         )
 
-    if not (MIN_TAGS <= len(tag_ids) <= MAX_TAGS):
-        raise RegistrationError(
-            f"Please select between {MIN_TAGS} and {MAX_TAGS} interests.",
-            code="invalid_tag_count",
-        )
+    # When unique_tags is enabled the event restricts each participant to
+    # exactly one tag; otherwise the global MIN/MAX bounds apply.
+    if event and getattr(event, "unique_tags", False):
+        if len(tag_ids) != 1:
+            raise RegistrationError(
+                "You must select exactly one interest for this event.",
+                code="invalid_tag_count",
+            )
+    else:
+        if not (MIN_TAGS <= len(tag_ids) <= MAX_TAGS):
+            raise RegistrationError(
+                f"Please select between {MIN_TAGS} and {MAX_TAGS} interests.",
+                code="invalid_tag_count",
+            )
 
     return {
         "display_name": display_name,
@@ -43,3 +52,7 @@ def validate_registration_payload(data, event=None):
         "tag_ids": tag_ids,
         "terms_accepted": terms_accepted,
     }
+
+
+# Alias for backwards compatibility
+validate_registration_payload = validate_registration_data
