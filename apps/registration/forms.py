@@ -23,7 +23,9 @@ def validate_registration_data(event, data):
 
     accepted_terms = data.get("accepted_terms", True)
     if not accepted_terms:
-        raise RegistrationError("You must accept the terms and conditions.", "terms_not_accepted")
+        raise RegistrationError(
+            "You must accept the terms and conditions.", "terms_not_accepted"
+        )
 
     tag_ids = data.get("tag_ids") or data.get("tags") or []
     if len(tag_ids) > 5:
@@ -32,7 +34,9 @@ def validate_registration_data(event, data):
     # Check unique tags rule if event requires it
     if event and getattr(event, "unique_tags", False):
         if len(tag_ids) != 1:
-            raise RegistrationError("Exactly one tag must be selected.", "invalid_tag_count")
+            raise RegistrationError(
+                "Exactly one tag must be selected.", "invalid_tag_count"
+            )
 
     # Optional age validation if provided
     age = data.get("age")
@@ -42,7 +46,9 @@ def validate_registration_data(event, data):
             if age < 18 or age > 100:
                 raise ValueError()
         except (TypeError, ValueError):
-            raise RegistrationError("Valid age (at least 18) is required.", "invalid_age")
+            raise RegistrationError(
+                "Valid age (at least 18) is required.", "invalid_age"
+            )
     else:
         age = None
 
