@@ -33,6 +33,13 @@
             text-transform: uppercase;
             letter-spacing: 1px;
         }
+        .event-title-header {
+            text-align: center;
+            color: #7d6b52;
+            font-size: 16px;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
         p.subtitle {
             text-align: center;
             color: #7d6b52;
@@ -80,7 +87,7 @@
         }
         .whatsapp-box select {
             border: none;
-            width: 100px;
+            width: 110px;
             background: #f9f9f9;
             padding: 10px;
             border-right: 1px solid #ccc;
@@ -143,6 +150,9 @@
 
 <div class="card">
     <h1>Speed Dating Registration</h1>
+    {% if event %}
+        <div class="event-title-header">{{ event.name }}</div>
+    {% endif %}
     <p class="subtitle">Join us for an exciting evening of connections!<br>Fill out the form below to register.</p>
 
     <form id="registrationForm">
@@ -153,7 +163,7 @@
 
         <div class="form-group">
             <label>Age:</label>
-            <input type="number" id="age" name="age" placeholder="Enter age number (e.g., 25)" min="18" max="100" required>
+            <input type="number" id="age" name="age" placeholder="Enter age number (e.g., 25)" min="18" max="100">
         </div>
 
         <div class="form-group">
@@ -184,12 +194,12 @@
             <div class="whatsapp-box">
                 <select id="countryCode">
                     <option value="+64" selected>🇳🇿 +64 (NZ)</option>
-                    <option value="+49">🇩🇪 +49 (Germany)</option>
+                    <option value="+49">🇩🇪 +49 (DE)</option>
                     <option value="+44">🇬🇧 +44 (UK)</option>
-                    <option value="+1">🇺🇸 +1 (USA)</option>
-                    <option value="+61">🇦🇺 +61 (Australia)</option>
+                    <option value="+1">🇺🇸 +1 (US)</option>
+                    <option value="+61">🇦🇺 +61 (AU)</option>
                 </select>
-                <input type="text" id="whatsappNumber" placeholder="WhatsApp number with country code" required>
+                <input type="text" id="whatsappNumber" placeholder="WhatsApp number" required>
             </div>
         </div>
 
@@ -224,9 +234,11 @@
         const rawPhone = document.getElementById('whatsappNumber').value.trim();
         const fullWhatsapp = countryCode + ' ' + rawPhone;
 
+        const ageInput = document.getElementById('age').value.trim();
+
         const payload = {
             display_name: document.getElementById('displayName').value.trim(),
-            age: parseInt(document.getElementById('age').value, 10),
+            age: ageInput ? parseInt(ageInput, 10) : null,
             gender: document.querySelector('input[name="gender"]:checked').value,
             want_to_date: document.querySelector('input[name="want_to_date"]:checked').value,
             email: document.getElementById('email').value.trim(),
@@ -235,7 +247,7 @@
         };
 
         try {
-            const response = await fetch(window.location.href, {
+            const response = await window.fetch(window.location.href, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

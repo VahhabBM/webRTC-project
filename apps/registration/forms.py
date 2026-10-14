@@ -23,25 +23,28 @@ def validate_registration_data(event, data):
 
     accepted_terms = data.get("accepted_terms", True)
     if not accepted_terms:
-        raise RegistrationError(
-            "You must accept the terms and conditions.", "terms_not_accepted"
-        )
+        raise RegistrationError("You must accept the terms and conditions.", "terms_not_accepted")
 
     tag_ids = data.get("tag_ids") or data.get("tags") or []
     if len(tag_ids) > 5:
         raise RegistrationError("Too many tags selected.", "invalid_tag_count")
 
+    # Check unique tags rule if event requires it
+    if event and getattr(event, "unique_tags", False):
+        if len(tag_ids) != 1:
+            raise RegistrationError("Exactly one tag must be selected.", "invalid_tag_count")
+
     # Optional age validation if provided
     age = data.get("age")
-    if age is not None:
+    if age is not None and age != "":
         try:
             age = int(age)
             if age < 18 or age > 100:
                 raise ValueError()
         except (TypeError, ValueError):
-            raise RegistrationError(
-                "Valid age (at least 18) is required.", "invalid_age"
-            )
+            raise RegistrationError("Valid age (at least 18) is required.", "invalid_age")
+    else:
+        age = None
 
     gender = data.get("gender", "Other/Prefer Not to Say")
     want_to_date = data.get("want_to_date", "Any")
@@ -55,5 +58,6 @@ def validate_registration_data(event, data):
         "email": email,
         "whatsapp": whatsapp,
         "tag_ids": tag_ids,
+        "tags": tag_ids,
         "accepted_terms": accepted_terms,
     }
