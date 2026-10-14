@@ -28,7 +28,7 @@ from apps.protocol.media_transport import DEFAULT_MEDIA_FALLBACK_ESCALATION_TIME
 
 
 def get_authenticated_participant(request: HttpRequest) -> Participant | None:
-    """دریافت شرکت‌کننده احراز هویت شده از روی سشن."""
+    """Retrieve authenticated participant from the session."""
     return resolve_participant_from_session(request.session)
 
 
@@ -40,7 +40,7 @@ def landing_page(request: HttpRequest) -> HttpResponse:
 
 @require_GET
 def join_participant(request: HttpRequest, token: str) -> JsonResponse:
-    """احراز هویت شرکت‌کننده از طریق Join Token با تفکیک خطاهای 400 و 410."""
+    """Authenticate participant using Join Token with distinct 400 and 410 error handling."""
     try:
         participant = authenticate_join_token(token)
     except InvalidJoinToken:
@@ -80,13 +80,13 @@ def join_participant(request: HttpRequest, token: str) -> JsonResponse:
     )
 
 
-# Alias برای حفظ سازگاری
+# Alias for backward compatibility
 join_view = join_participant
 
 
 @require_GET
 def current_participant(request: HttpRequest) -> JsonResponse:
-    """دریافت اطلاعات شرکت‌کننده جاری در سشن."""
+    """Retrieve current authenticated participant details from session."""
     participant = get_authenticated_participant(request)
     if not participant:
         return JsonResponse(
@@ -106,13 +106,13 @@ def current_participant(request: HttpRequest) -> JsonResponse:
     )
 
 
-# Alias برای حفظ سازگاری
+# Alias for backward compatibility
 participant_me_view = current_participant
 
 
 @require_GET
 def clock_sync_page(request: HttpRequest) -> HttpResponse:
-    """ویوی رندر صفحه همگام‌سازی ساعت."""
+    """Render the clock synchronization page."""
     participant = get_authenticated_participant(request)
     if not participant:
         return JsonResponse(
@@ -124,7 +124,7 @@ def clock_sync_page(request: HttpRequest) -> HttpResponse:
 
 @require_GET
 def video_room_page(request: HttpRequest) -> HttpResponse:
-    """ویوی رندر اتاق گفت‌وگوی تصویری و استخراج آخرین جفت اختصاص‌یافته."""
+    """Render video chat room view and extract the latest assigned pair."""
     participant = get_authenticated_participant(request)
     if not participant:
         return JsonResponse(
@@ -173,13 +173,13 @@ def video_room_page(request: HttpRequest) -> HttpResponse:
     )
 
 
-# Alias برای حفظ سازگاری
+# Alias for backward compatibility
 video_room_view = video_room_page
 
 
 @require_GET
 def ice_servers_view(request: HttpRequest) -> JsonResponse:
-    """اندپوینت دریافت کانفیگ RTCIceServer و کریدنPage موقت TURN (تسک T-28)."""
+    """Endpoint to retrieve RTCIceServer configuration and temporary TURN credentials (T-28)."""
     participant = get_authenticated_participant(request)
     if not participant:
         return JsonResponse(
@@ -198,7 +198,7 @@ def ice_servers_view(request: HttpRequest) -> JsonResponse:
 
 
 class TurnCredentialsAPIView(APIView):
-    """بازگرداندن اعتبارنامه‌های منقضاشونده اتصال به سرور کمکی TURN."""
+    """Return expiring credentials for connecting to the TURN auxiliary server."""
 
     permission_classes = [IsAuthenticated]
 
@@ -216,8 +216,8 @@ class TurnCredentialsAPIView(APIView):
 @require_POST
 def submit_connection_report(request: HttpRequest) -> JsonResponse:
     """
-    ثبت نوع اتصال و زمان برقراری به میلی‌ثانیه برای هر طرف جفت (T-37).
-    فاقد هرگونه توکن یا اطلاعات هویتی؛ اعتبارسنجی منحصراً از سشن شرکت‌کننده انجام می‌شود.
+    Record connection type and establishment time in milliseconds for each side of a pair (T-37).
+    No tokens or identifying info; validation is performed exclusively via participant session.
     """
     participant = get_authenticated_participant(request)
     if not participant:
@@ -265,7 +265,7 @@ def submit_connection_report(request: HttpRequest) -> JsonResponse:
             status=400,
         )
 
-    # به‌روزرسانی اتمیک بدون Lock Contention برای مقیاس‌پذیری راندهای سنگین (تا ۹۰۵ جفت)
+    # Atomic update without lock contention to support heavy round scaling (up to 905 pairs)
     updated_a = Pair.objects.filter(
         room_id=room_id,
         participant_a=participant,

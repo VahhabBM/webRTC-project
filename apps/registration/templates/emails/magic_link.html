@@ -1,15 +1,15 @@
 {% extends "emails/base_email.html" %}
 
 {% block content %}
-  <h2>پیوند اختصاصی ورود به رویداد</h2>
-  <p>سلام {{ name }} عزیز،</p>
-  <p>پیوند ورود بدون رمز عبور شما برای رویداد «{{ event_title }}» ایجاد شد. برای ورود به محیط رویداد، روی دکمه زیر کلیک کنید:</p>
+<h2>Exclusive Event Login Link</h2>
+<p>Hello dear {{ name }},</p>
+<p>Your passwordless login link for the event "{{ event_title }}" has been generated. Click the button below to enter the event environment:</p>
 
-  <div style="text-align: center;">
-    <a href="{{ action_url }}" class="btn-action">ورود به محیط رویداد</a>
-  </div>
+<div style="text-align: center; margin: 30px 0;">
+    <a href="{{ action_url }}" class="btn-action" style="background-color: #28a745; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Enter Event Environment</a>
+</div>
 
-  <p>⚠️ این پیوند مختص شماست؛ لطفاً آن را در اختیار افراد دیگر قرار ندهید.</p>
-  <p>پیوند جایگزین:</p>
-  <p class="raw-link">{{ action_url }}</p>
+<p>⚠️ This link is strictly personal; please do not share it with others.</p>
+<p>Alternative link:</p>
+<p class="raw-link" style="word-break: break-all; color: #666; font-size: 12px;">{{ action_url }}</p>
 {% endblock %}
