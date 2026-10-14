@@ -6,7 +6,7 @@ from django.test import Client
 def test_django_project_loads():
     assert settings.configured
     assert settings.TIME_ZONE == "UTC"
-    assert settings.LANGUAGE_CODE == "fa-ir"
+    assert settings.LANGUAGE_CODE == "en-us"
     assert settings.USE_TZ is True
 
 
