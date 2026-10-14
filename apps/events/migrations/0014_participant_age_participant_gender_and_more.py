@@ -4,35 +4,43 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('events', '0013_merge_unique_tags_and_pair_path_type'),
+        ("events", "0013_merge_unique_tags_and_pair_path_type"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='participant',
-            name='age',
+            model_name="participant",
+            name="age",
             field=models.IntegerField(blank=True, null=True),
         ),
         migrations.AddField(
-            model_name='participant',
-            name='gender',
-            field=models.CharField(default='Other/Prefer Not to Say', max_length=50),
+            model_name="participant",
+            name="gender",
+            field=models.CharField(default="Other/Prefer Not to Say", max_length=50),
         ),
         migrations.AddField(
-            model_name='participant',
-            name='want_to_date',
-            field=models.CharField(default='Any', max_length=50),
+            model_name="participant",
+            name="want_to_date",
+            field=models.CharField(default="Any", max_length=50),
         ),
         migrations.AddField(
-            model_name='participant',
-            name='whatsapp',
+            model_name="participant",
+            name="whatsapp",
             field=models.CharField(blank=True, max_length=50, null=True),
         ),
         migrations.AlterField(
-            model_name='disconnectionlog',
-            name='cause',
-            field=models.CharField(choices=[('network', 'Network Error'), ('tab_closed', 'Tab Closed'), ('permission_denied', 'Media Permission Denied')], db_index=True, default='network', max_length=32),
+            model_name="disconnectionlog",
+            name="cause",
+            field=models.CharField(
+                choices=[
+                    ("network", "Network Error"),
+                    ("tab_closed", "Tab Closed"),
+                    ("permission_denied", "Media Permission Denied"),
+                ],
+                db_index=True,
+                default="network",
+                max_length=32,
+            ),
         ),
     ]

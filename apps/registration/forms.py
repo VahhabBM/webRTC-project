@@ -23,7 +23,9 @@ def validate_registration_data(event, data):
 
     accepted_terms = data.get("accepted_terms", True)
     if not accepted_terms:
-        raise RegistrationError("You must accept the terms and conditions.", "terms_not_accepted")
+        raise RegistrationError(
+            "You must accept the terms and conditions.", "terms_not_accepted"
+        )
 
     tag_ids = data.get("tag_ids") or data.get("tags") or []
     if len(tag_ids) > 5:
@@ -37,7 +39,9 @@ def validate_registration_data(event, data):
             if age < 18 or age > 100:
                 raise ValueError()
         except (TypeError, ValueError):
-            raise RegistrationError("Valid age (at least 18) is required.", "invalid_age")
+            raise RegistrationError(
+                "Valid age (at least 18) is required.", "invalid_age"
+            )
 
     gender = data.get("gender", "Other/Prefer Not to Say")
     want_to_date = data.get("want_to_date", "Any")
