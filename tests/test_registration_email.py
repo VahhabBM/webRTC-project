@@ -45,7 +45,9 @@ class RegistrationEmailTestCase(TestCase):
         self.assertIn("activate", email_body.lower())
 
         # 3. Verify token creation and account activation via verification URL
-        participant = Participant.objects.get(email="test@example.com", event=self.event)
+        participant = Participant.objects.get(
+            email="test@example.com", event=self.event
+        )
         token_obj = EmailVerificationToken.objects.get(participant=participant)
 
         verify_url = reverse("registration:verify-email", args=[token_obj.token])

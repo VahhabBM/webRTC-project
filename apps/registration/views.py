@@ -119,10 +119,9 @@ def register_view(request, event_id=None):
 
 
 def verify_email_view(request, token):
-    is_json_request = (
-        request.headers.get("Accept") == "application/json"
-        or request.path.startswith("/api/")
-    )
+    is_json_request = request.headers.get(
+        "Accept"
+    ) == "application/json" or request.path.startswith("/api/")
 
     try:
         token_obj = EmailVerificationToken.objects.get(token=token)
@@ -247,10 +246,9 @@ def verify_email_view(request, token):
 def check_email_view(request):
     """Renders the 'Check Your Inbox' page or returns JSON if requested via API."""
     email = request.GET.get("email", "").strip()
-    is_json_request = (
-        request.headers.get("Accept") == "application/json"
-        or request.path.startswith("/api/")
-    )
+    is_json_request = request.headers.get(
+        "Accept"
+    ) == "application/json" or request.path.startswith("/api/")
     if is_json_request:
         if not email:
             return JsonResponse({"error": "Email parameter is required."}, status=400)
