@@ -81,6 +81,10 @@ def register_view(request, event_id=None):
             event=event,
             display_name=payload["display_name"],
             email=email,
+            age=payload.get("age"),
+            gender=payload.get("gender", "Other/Prefer Not to Say"),
+            want_to_date=payload.get("want_to_date", "Any"),
+            whatsapp=payload.get("whatsapp", ""),
         )
         tag_ids = payload.get("tag_ids") or payload.get("tags") or []
         if tag_ids and hasattr(participant, "tags"):

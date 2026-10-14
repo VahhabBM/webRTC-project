@@ -110,6 +110,10 @@ class Tag(models.Model):
 
 class Participant(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    age = models.IntegerField(null=True, blank=True)
+    gender = models.CharField(max_length=50, default="Other/Prefer Not to Say")
+    want_to_date = models.CharField(max_length=50, default="Any")
+    whatsapp = models.CharField(max_length=50, blank=True, null=True)
     event = models.ForeignKey(
         Event, on_delete=models.CASCADE, related_name="participants"
     )
