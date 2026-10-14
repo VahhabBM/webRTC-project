@@ -203,6 +203,20 @@
             </div>
         </div>
 
+        {% if tags %}
+        <div class="form-group">
+            <label>Interests / Tags:</label>
+            <input type="text" id="tagSearch" class="tag-search" placeholder="Search interests..." style="margin-bottom: 8px;">
+            <div class="checkbox-group">
+                {% for tag in tags %}
+                    <label>
+                        <input type="checkbox" name="tag_ids" value="{{ tag.id }}"> {{ tag.name }}
+                    </label>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
         <div class="form-group">
             <label>Payment:</label>
             <div class="payment-icons">
@@ -235,6 +249,9 @@
         const fullWhatsapp = countryCode + ' ' + rawPhone;
 
         const ageInput = document.getElementById('age').value.trim();
+        
+        const selectedTags = Array.from(document.querySelectorAll('input[name="tag_ids"]:checked'))
+            .map(el => el.value);
 
         const payload = {
             display_name: document.getElementById('displayName').value.trim(),
@@ -243,6 +260,7 @@
             want_to_date: document.querySelector('input[name="want_to_date"]:checked').value,
             email: document.getElementById('email').value.trim(),
             whatsapp: fullWhatsapp,
+            tag_ids: selectedTags,
             accepted_terms: true
         };
 
