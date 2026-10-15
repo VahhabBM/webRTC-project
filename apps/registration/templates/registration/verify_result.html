@@ -15,7 +15,11 @@
     </p>
 
     <div style="background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 14px; padding: 18px; font-size: 0.9rem; color: #065f46; line-height: 1.6;">
-      🎯 Your access link to the 1-on-1 networking rounds will be emailed before the event starts.
+      {% if access_link_email_sent %}
+        🎯 Your personal access link has been emailed to you. Use it to enter the event room.
+      {% else %}
+        Your registration is verified, but we could not send the event access email. Please contact the event organizer.
+      {% endif %}
     </div>
   </div>
 {% endblock %}

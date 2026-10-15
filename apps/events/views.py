@@ -5,7 +5,7 @@ import json
 from django.conf import settings
 from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_safe
 from rest_framework import status
@@ -39,7 +39,7 @@ def landing_page(request: HttpRequest) -> HttpResponse:
 
 
 @require_GET
-def join_participant(request: HttpRequest, token: str) -> JsonResponse:
+def join_participant(request: HttpRequest, token: str) -> HttpResponse:
     """Authenticate participant using Join Token with distinct 400 and 410 error handling."""
     try:
         participant = authenticate_join_token(token)
@@ -68,6 +68,8 @@ def join_participant(request: HttpRequest, token: str) -> JsonResponse:
 
     establish_participant_session(request, participant)
     invalidate_participant_sockets(participant.pk)
+    if "text/html" in request.headers.get("Accept", "").lower():
+        return redirect("video-room")
     return JsonResponse(
         {
             "authenticated": True,
