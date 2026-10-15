@@ -156,6 +156,7 @@
     <p class="subtitle">Join us for an exciting evening of connections!<br>Fill out the form below to register.</p>
 
     <form id="registrationForm">
+        {% csrf_token %}
         <div class="form-group">
             <label>Full Name:</label>
             <input type="text" id="displayName" name="display_name" placeholder="Navn Name" required>
@@ -252,6 +253,7 @@
         
         const selectedTags = Array.from(document.querySelectorAll('input[name="tag_ids"]:checked'))
             .map(el => el.value);
+        const csrfToken = document.querySelector('[name="csrfmiddlewaretoken"]').value;
 
         const payload = {
             display_name: document.getElementById('displayName').value.trim(),
@@ -269,16 +271,20 @@
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRFToken': csrfToken
                 },
                 body: JSON.stringify(payload)
             });
 
-            const data = await response.json();
+            const contentType = response.headers.get('content-type') || '';
+            const data = contentType.includes('application/json')
+                ? await response.json()
+                : {};
             if (response.ok) {
                 window.location.href = `/registration/check-email/?email=${encodeURIComponent(payload.email)}`;
             } else {
-                errorDiv.textContent = data.error || 'Registration failed. Please check your inputs.';
+                errorDiv.textContent = data.error || `Registration failed (HTTP ${response.status}). Please try again.`;
                 errorDiv.style.display = 'block';
             }
         } catch (err) {
