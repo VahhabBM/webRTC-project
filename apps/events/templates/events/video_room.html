@@ -80,7 +80,6 @@
     .meta-row { display: flex; gap: 1.5rem; margin-top: 0.5rem; font-size: 0.85rem; color: var(--muted); }
 
     .videos { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-    @media (max-width: 640px) { .videos { grid-template-columns: 1fr; } }
     .video-card {
       background: var(--surface);
       border-radius: 10px;
@@ -98,6 +97,123 @@
       transform: scaleX(-1);
     }
     #remoteVideo { transform: none; }
+
+    /* ── Mobile-only PiP video layout ──────────────────────────────────────
+       On viewports ≤640 px the remote feed is large/primary and the local
+       feed is a small floating thumbnail.  Tapping either card swaps them.
+       The .is-swapped class is toggled by video_swap.js — no WebRTC,
+       MediaStream, or track state is touched.
+       Desktop (>640 px): none of these rules apply; the two-column grid
+       above is preserved exactly as before.
+    ────────────────────────────────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .videos {
+        display: block;
+        position: relative;
+        aspect-ratio: 16 / 10;
+        background: #000;
+        border-radius: 10px;
+        overflow: hidden;
+        gap: 0;
+      }
+
+      .video-card {
+        position: absolute;
+        background: transparent;
+        padding: 0;
+        border-radius: 0;
+        overflow: hidden;
+        text-align: left;
+      }
+
+      /* Remote (partner) is the large primary view by default */
+      .video-card[data-video="remote"] {
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 1;
+        cursor: default;
+      }
+
+      /* Local (you) is the small PiP thumbnail by default */
+      .video-card[data-video="local"] {
+        bottom: 0.75rem;
+        right: 0.75rem;
+        width: 28%;
+        aspect-ratio: 3 / 4;
+        top: auto;
+        left: auto;
+        z-index: 2;
+        cursor: pointer;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+        border: 2px solid rgba(255, 255, 255, 0.25);
+      }
+
+      /* Swapped: local becomes large primary */
+      .videos.is-swapped .video-card[data-video="local"] {
+        top: 0;
+        left: 0;
+        bottom: auto;
+        right: auto;
+        width: 100%;
+        height: 100%;
+        z-index: 1;
+        cursor: default;
+        border-radius: 0;
+        box-shadow: none;
+        border: none;
+        aspect-ratio: auto;
+      }
+
+      /* Swapped: remote becomes small PiP thumbnail */
+      .videos.is-swapped .video-card[data-video="remote"] {
+        top: auto;
+        left: auto;
+        bottom: 0.75rem;
+        right: 0.75rem;
+        width: 28%;
+        aspect-ratio: 3 / 4;
+        height: auto;
+        z-index: 2;
+        cursor: pointer;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+        border: 2px solid rgba(255, 255, 255, 0.25);
+      }
+
+      /* Videos fill their card completely */
+      .video-card video {
+        width: 100%;
+        height: 100%;
+        max-height: none;
+        object-fit: cover;
+      }
+
+      /* Hide the h3 label in the PiP thumbnail; show it in the primary view */
+      .video-card[data-video="local"] h3,
+      .videos.is-swapped .video-card[data-video="remote"] h3 {
+        display: none;
+      }
+
+      .video-card[data-video="remote"] h3,
+      .videos.is-swapped .video-card[data-video="local"] h3 {
+        position: absolute;
+        top: 0.5rem;
+        left: 0.75rem;
+        margin: 0;
+        z-index: 3;
+        font-size: 0.8rem;
+        color: rgba(255, 255, 255, 0.85);
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+      }
+
+      /* Hide quality banner when remote is the PiP thumbnail */
+      .videos.is-swapped #qualityBanner {
+        display: none !important;
+      }
+    }
 
     .status-footer {
       margin-top: 1rem;
@@ -206,11 +322,11 @@
   </div>
 
   <div class="videos">
-    <div class="video-card">
+    <div class="video-card" data-video="local">
       <h3>You</h3>
       <video id="localVideo" autoplay playsinline muted></video>
     </div>
-    <div class="video-card">
+    <div class="video-card" data-video="remote">
       <h3>Partner</h3>
       <div id="qualityBanner" class="quality-banner" hidden></div>
       <video id="remoteVideo" autoplay playsinline></video>
@@ -241,6 +357,7 @@
 
   <script type="module">
     import { CallRoomController, CallRoomPhase } from '/static/events/js/call_room.js';
+    import { initVideoSwap } from '/static/events/js/video_swap.js';
 
     const WARNING_THRESHOLD_SECONDS = {{ warning_threshold_seconds }};
     const params = new URLSearchParams(window.location.search);
@@ -354,6 +471,7 @@
     }
 
     init();
+    initVideoSwap(document.querySelector('.videos'));
   </script>
 </body>
 </html>
