@@ -315,6 +315,34 @@ class Pair(models.Model):
         )
 
 
+class PairInterest(models.Model):
+    """Private, time-limited contact-sharing choices for one completed pair."""
+
+    pair = models.OneToOneField(Pair, on_delete=models.CASCADE, related_name="interest")
+    participant_a_interested = models.BooleanField(null=True, blank=True)
+    participant_a_responded_at = models.DateTimeField(null=True, blank=True)
+    participant_b_interested = models.BooleanField(null=True, blank=True)
+    participant_b_responded_at = models.DateTimeField(null=True, blank=True)
+    email_sent_to_a_at = models.DateTimeField(null=True, blank=True)
+    email_sent_to_b_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def is_mutual(self) -> bool:
+        return (
+            self.participant_a_interested is True
+            and self.participant_b_interested is True
+        )
+
+    def response_for(self, participant) -> bool | None:
+        if participant.pk == self.pair.participant_a_id:
+            return self.participant_a_interested
+        if participant.pk == self.pair.participant_b_id:
+            return self.participant_b_interested
+        raise ValueError("Participant is not part of this pair")
+
+
 class EventTransitionLog(models.Model):
     """Audit record for every Event status transition (T-22).
 

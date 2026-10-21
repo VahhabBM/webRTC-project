@@ -243,7 +243,7 @@ Sent: Immediately after the WebSocket connection opens. MUST be the first messag
 
 #### `server.hello`
 
-Direction: **Server → Client**  
+Direction: **Server → Client**
 Sent: In response to a valid `client.hello`.
 
 | Field | Type | Required | Description |
@@ -360,7 +360,7 @@ Direction: **Server → Client**
 
 #### `server.pairing`
 
-Direction: **Server → Client**  
+**Direction:** Server → Client
 Sent: Before each round, when the server has computed the pairings.
 
 | Field | Type | Required | Description |
@@ -419,7 +419,7 @@ participant as not-ready, but does not delay `server.round_start`.
 
 #### `server.round_start`
 
-Direction: **Server → Client**  
+Direction: **Server → Client**
 Sent: At the moment the round begins (may be slightly after `round_start_ts` in `server.pairing`).
 
 | Field | Type | Required | Description |
@@ -444,7 +444,7 @@ Sent: At the moment the round begins (may be slightly after `round_start_ts` in 
 
 #### `server.round_warning`
 
-Direction: **Server → Client**  
+Direction: **Server → Client**
 Sent: During an active round, when remaining time until the authoritative
 `Round.ends_at` is at or below the configured final-seconds threshold
 (deployment default 30 s). This is an additive T-24 message; it does **not**
@@ -494,6 +494,47 @@ Sent: When the round ends. Clients MUST stop WebRTC media and clear signalling s
   }
 }
 ```
+
+#### `server.interest_prompt`
+
+Direction: **Server → Client**
+Sent privately to each member of a pair after its round ends. The participant
+has until `deadline_ts` (30 seconds after the stored round end) to submit one
+choice to the authenticated HTTP endpoint. A contact-sharing email is sent to
+each participant only after both choices are yes.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `round_number` | integer | yes | The completed round. Range: 1–6. |
+| `room_id` | string | yes | The completed pair's room identifier. |
+| `partner_display_name` | string | yes | The partner's display name. |
+| `server_ts` | integer | yes | Server Unix timestamp in ms when this prompt was sent. |
+| `deadline_ts` | integer | yes | Server Unix timestamp in ms when the 30-second choice window closes. |
+| `own_response` | boolean or null | yes | This participant's saved choice, if already submitted. |
+| `mutual` | boolean | yes | True only when both participants chose yes. |
+| `email_pending` | boolean | yes | True when a mutual choice exists but at least one email still needs delivery. |
+
+```json
+{
+  "type": "server.interest_prompt",
+  "version": 1,
+  "payload": {
+    "round_number": 1,
+    "room_id": "room-0042",
+    "partner_display_name": "Sara",
+    "server_ts": 1700000540000,
+    "deadline_ts": 1700000570000,
+    "own_response": null,
+    "mutual": false,
+    "email_pending": false
+  }
+}
+```
+
+The client submits `room_id`, `round_number`, and a boolean `interested` to
+`POST /api/round-interest/` using its authenticated session and CSRF token.
+Choices are immutable and validated against the pair and server-side deadline.
+The partner's individual choice is never disclosed.
 
 ---
 
@@ -968,7 +1009,8 @@ The legal sequence is: connect → session resolution → `client.hello` →
 `server.hello` → event waiting → `server.pairing` → optional
 `server.turn_credentials` → `client.ready` (repeatable) → scheduler-driven
 `server.round_start` → signalling/partner-state updates → optional
-`server.round_warning` → `server.round_end` → next pairing or
+`server.round_warning` → `server.round_end` → optional private
+`server.interest_prompt` → next pairing or
 `server.event_end` → graceful close. Before `server.hello`, only
 `client.hello` is legal. Clock sync/ping are legal after authentication.
 Signalling is legal only for the authenticated participant's active Pair and

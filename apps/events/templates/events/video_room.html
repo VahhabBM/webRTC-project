@@ -139,6 +139,41 @@
       border-radius: 8px;
       margin-bottom: 1rem;
     }
+    [hidden] { display: none !important; }
+    .interest-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      background: rgb(2 6 23 / 78%);
+    }
+    .interest-dialog {
+      width: min(100%, 460px);
+      padding: 1.5rem;
+      border: 1px solid #475569;
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
+    }
+    .interest-dialog h2 { margin: 0 0 0.75rem; font-size: 1.25rem; }
+    .interest-dialog p { color: var(--muted); }
+    .interest-countdown { color: var(--warning); font-weight: 700; }
+    .interest-status { min-height: 1.5rem; color: var(--text) !important; }
+    .interest-actions { display: flex; flex-wrap: wrap; gap: 0.65rem; }
+    .interest-actions button {
+      border: 0;
+      border-radius: 7px;
+      padding: 0.65rem 0.9rem;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .interest-yes { background: var(--success); color: white; }
+    .interest-no, .interest-close, .interest-retry { background: #475569; color: white; }
+    .interest-actions button:disabled { cursor: wait; opacity: 0.65; }
   </style>
 </head>
 <body>
@@ -184,6 +219,26 @@
 
   <p id="statusFooter" class="status-footer">Connecting…</p>
 
+  <div id="interestDialog" class="interest-backdrop" hidden>
+    <section class="interest-dialog" role="dialog" aria-modal="true" aria-labelledby="interestTitle">
+      <h2 id="interestTitle">Would you like to stay in touch with <span id="interestPartnerName"></span>?</h2>
+      <p>
+        You have <span class="interest-countdown"><span id="interestCountdown">30</span> seconds</span>
+        to choose. If you both say yes, we will email each of you the other person's contact details.
+      </p>
+      <p id="interestStatus" class="interest-status" aria-live="polite"></p>
+      <div id="interestChoiceButtons" class="interest-actions">
+        <button id="interestYesButton" class="interest-yes" type="button">Yes, share our contact details</button>
+        <button id="interestNoButton" class="interest-no" type="button">No, thanks</button>
+      </div>
+      <div class="interest-actions">
+        <button id="interestRetryButton" class="interest-retry" type="button" hidden>Retry contact email</button>
+        <button id="interestCloseButton" class="interest-close" type="button" hidden>Close</button>
+      </div>
+    </section>
+  </div>
+  <form id="interestCsrfForm" hidden>{% csrf_token %}</form>
+
   <script type="module">
     import { CallRoomController, CallRoomPhase } from '/static/events/js/call_room.js';
 
@@ -217,11 +272,36 @@
         errorBanner: document.getElementById('mediaErrorBanner'),
         partnerGoneBanner: document.getElementById('partnerGoneBanner'),
         statusFooter: document.getElementById('statusFooter'),
+        interestDialog: document.getElementById('interestDialog'),
+        interestPartnerName: document.getElementById('interestPartnerName'),
+        interestCountdown: document.getElementById('interestCountdown'),
+        interestStatus: document.getElementById('interestStatus'),
+        interestChoiceButtons: document.getElementById('interestChoiceButtons'),
+        interestYesButton: document.getElementById('interestYesButton'),
+        interestNoButton: document.getElementById('interestNoButton'),
+        interestRetryButton: document.getElementById('interestRetryButton'),
+        interestCloseButton: document.getElementById('interestCloseButton'),
       },
       fetchIceServers: async () => {
         const res = await fetch('/api/ice-servers/');
         if (!res.ok) throw new Error('ICE servers unavailable');
         return res.json();
+      },
+      submitInterest: async (choice) => {
+        const csrfToken = document.querySelector(
+          '#interestCsrfForm [name="csrfmiddlewaretoken"]',
+        )?.value;
+        const response = await fetch('{% url "submit-round-interest" %}', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken || '',
+          },
+          body: JSON.stringify(choice),
+        });
+        const result = await response.json().catch(() => ({}));
+        return { ...result, ok: response.ok };
       },
       onPhaseChange: (phase) => {
         const footer = document.getElementById('statusFooter');
@@ -242,6 +322,23 @@
         }
       },
     });
+
+    document.getElementById('interestYesButton').addEventListener(
+      'click',
+      () => controller.submitInterestChoice(true),
+    );
+    document.getElementById('interestNoButton').addEventListener(
+      'click',
+      () => controller.submitInterestChoice(false),
+    );
+    document.getElementById('interestRetryButton').addEventListener(
+      'click',
+      () => controller.retryInterestEmail(),
+    );
+    document.getElementById('interestCloseButton').addEventListener(
+      'click',
+      () => controller.dismissInterestPrompt(),
+    );
 
     async function init() {
       const meRes = await fetch('/participant/me/');

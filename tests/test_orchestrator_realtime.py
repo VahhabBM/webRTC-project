@@ -240,6 +240,66 @@ def test_event_wide_messages_use_event_group(setup_round):
 
 
 @pytest.mark.django_db
+def test_round_end_sends_private_interest_prompts_to_each_pair_member(setup_round):
+    event = setup_round["event"]
+    round_obj = setup_round["r1"]
+    layer = RecordingChannelLayer()
+    orch = OrchestratorRealtime(event, channel_layer=layer)
+
+    result = orch.broadcast_round_end(
+        round_obj, now=round_obj.ends_at + timedelta(seconds=1)
+    )
+
+    prompts = [
+        (group, message)
+        for group, message in layer.messages
+        if message["message"]["type"] == MessageType.SERVER_INTEREST_PROMPT
+    ]
+    assert result["interest_prompts_delivered"] == 4
+    assert len(prompts) == 4
+    assert {group for group, _message in prompts} == {
+        participant_channel_group(setup_round[name].pk)
+        for name in ("p1", "p2", "p3", "p4")
+    }
+    assert all(
+        message["message"]["payload"]["deadline_ts"]
+        == datetime_to_unix_ms(round_obj.ends_at + timedelta(seconds=30))
+        for _group, message in prompts
+    )
+    assert all(
+        message["message"]["payload"]["own_response"] is None
+        for _group, message in prompts
+    )
+
+
+@pytest.mark.django_db
+def test_final_round_interest_prompt_is_replayed_before_event_end(setup_round):
+    event = setup_round["event"]
+    final_round = setup_round["r2"]
+    pair = _pair(
+        event,
+        final_round,
+        setup_round["p1"],
+        setup_round["p3"],
+        "room-final-pair",
+    )
+    now = final_round.ends_at + timedelta(seconds=1)
+
+    messages = OrchestratorRealtime(event).reconnect_snapshot_messages(
+        setup_round["p1"], now=now
+    )
+
+    assert [message["type"] for message in messages] == [
+        MessageType.SERVER_INTEREST_PROMPT,
+        MessageType.SERVER_EVENT_END,
+    ]
+    assert messages[0]["payload"]["room_id"] == pair.room_id
+    assert messages[0]["payload"]["deadline_ts"] == datetime_to_unix_ms(
+        final_round.ends_at + timedelta(seconds=30)
+    )
+
+
+@pytest.mark.django_db
 def test_pairing_includes_partner_tags(setup_round):
     tag = Tag.objects.create(name="music")
     setup_round["p2"].tags.add(tag)
@@ -443,7 +503,8 @@ def test_dispatch_lifecycle_order_pairing_start_warning_end_event(setup_round):
 
     orch.dispatch(now=r1.ends_at + timedelta(seconds=1))
     types = [msg["type"] for msg in _envelopes(layer)]
-    assert types == [MessageType.SERVER_ROUND_END]
+    assert types[0] == MessageType.SERVER_ROUND_END
+    assert types.count(MessageType.SERVER_INTEREST_PROMPT) == 4
     layer.messages.clear()
 
     last = Round.objects.get(event=event, number=event.num_rounds)
@@ -451,6 +512,34 @@ def test_dispatch_lifecycle_order_pairing_start_warning_end_event(setup_round):
     types = [msg["type"] for msg in _envelopes(layer)]
     assert types[-1] == MessageType.SERVER_EVENT_END
     assert MessageType.SERVER_ROUND_END in types
+
+
+@pytest.mark.django_db
+def test_dispatch_emits_previous_round_end_when_break_is_short(setup_round):
+    event = setup_round["event"]
+    event.break_duration = timedelta()
+    event.save(update_fields=["break_duration"])
+    RoundScheduler(event).persist_schedule()
+    first_round = Round.objects.get(event=event, number=1)
+    second_round = Round.objects.get(event=event, number=2)
+    _pair(
+        event,
+        second_round,
+        setup_round["p1"],
+        setup_round["p3"],
+        "room-r2-a",
+    )
+    layer = RecordingChannelLayer()
+    orch = OrchestratorRealtime(event, channel_layer=layer)
+
+    result = orch.dispatch(now=second_round.starts_at + timedelta(seconds=1))
+
+    types = [message["type"] for message in _envelopes(layer)]
+    assert result["phase"] == "in_round"
+    assert types[0] == MessageType.SERVER_ROUND_END
+    assert types.count(MessageType.SERVER_INTEREST_PROMPT) == 4
+    assert MessageType.SERVER_ROUND_START in types
+    assert first_round.ends_at == second_round.starts_at
 
 
 @pytest.mark.django_db

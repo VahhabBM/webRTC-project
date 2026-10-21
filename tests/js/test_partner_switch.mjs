@@ -349,6 +349,64 @@ test("call room keeps one stream and local preview across three rounds", async (
   assert.ok(stream.getTracks().every((track) => track.readyState === "ended"));
 });
 
+test("call room records a private, time-limited mutual-interest choice", async () => {
+  const dialog = { hidden: true };
+  const partnerName = { textContent: "" };
+  const countdown = { textContent: "" };
+  const status = { textContent: "" };
+  const choices = { hidden: false };
+  const yesButton = { disabled: false };
+  const noButton = { disabled: false };
+  const retryButton = { hidden: true, disabled: false };
+  const closeButton = { hidden: true };
+  let submitted = null;
+  const controller = new CallRoomController({
+    myParticipantId: "participant-a",
+    now: () => 1_000,
+    elements: {
+      interestDialog: dialog,
+      interestPartnerName: partnerName,
+      interestCountdown: countdown,
+      interestStatus: status,
+      interestChoiceButtons: choices,
+      interestYesButton: yesButton,
+      interestNoButton: noButton,
+      interestRetryButton: retryButton,
+      interestCloseButton: closeButton,
+    },
+    submitInterest: async (choice) => {
+      submitted = choice;
+      return { ok: true, mutual: true, email_pending: false };
+    },
+  });
+
+  controller._onInterestPrompt({
+    room_id: "room-a",
+    round_number: 1,
+    partner_display_name: "Emilia",
+    server_ts: 1_000,
+    deadline_ts: 31_000,
+    own_response: null,
+  });
+  assert.equal(dialog.hidden, false);
+  assert.equal(partnerName.textContent, "Emilia");
+  assert.equal(countdown.textContent, "30");
+
+  await controller.submitInterestChoice(true);
+  assert.deepEqual(submitted, {
+    room_id: "room-a",
+    round_number: 1,
+    interested: true,
+  });
+  assert.equal(choices.hidden, true);
+  assert.equal(closeButton.hidden, false);
+  assert.match(status.textContent, /check your email/i);
+
+  controller.dismissInterestPrompt();
+  assert.equal(dialog.hidden, true);
+  controller.disconnect();
+});
+
 test("partner-switch failure shows an error and does not stop the session media", async () => {
   const stream = new FakeStream([new FakeTrack("audio"), new FakeTrack("video")]);
   const localVideo = { srcObject: stream };

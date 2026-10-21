@@ -8,6 +8,7 @@ from .views import (
     join_participant,
     landing_page,
     submit_connection_report,
+    submit_round_interest,
     video_room_page,
 )
 
@@ -30,5 +31,10 @@ urlpatterns = [
         "api/telemetry/connection/",
         submit_connection_report,
         name="submit-connection-report",
+    ),
+    path(
+        "api/round-interest/",
+        submit_round_interest,
+        name="submit-round-interest",
     ),
 ]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from django.conf import settings
 from django.db.models import Q
@@ -21,10 +22,13 @@ from apps.events.auth import (
     establish_participant_session,
     resolve_participant_from_session,
 )
+from apps.events.interest import PairInterestError, submit_pair_interest
 from apps.events.models import ConnectionType, Pair, Participant
 from apps.events.orchestrator import invalidate_participant_sockets
 from apps.events.turn import TurnCredentialService, generate_ice_servers
 from apps.protocol.media_transport import DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS
+
+logger = logging.getLogger(__name__)
 
 
 def get_authenticated_participant(request: HttpRequest) -> Participant | None:
@@ -110,6 +114,56 @@ def current_participant(request: HttpRequest) -> JsonResponse:
 
 # Alias for backward compatibility
 participant_me_view = current_participant
+
+
+@require_POST
+def submit_round_interest(request: HttpRequest) -> JsonResponse:
+    """Record a participant's private contact-sharing choice for one pair."""
+    participant = get_authenticated_participant(request)
+    if participant is None:
+        return JsonResponse({"error": {"code": "authentication_required"}}, status=401)
+
+    try:
+        payload = json.loads(request.body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"error": {"code": "invalid_json"}}, status=400)
+    if not isinstance(payload, dict):
+        return JsonResponse({"error": {"code": "invalid_payload"}}, status=400)
+
+    room_id = payload.get("room_id")
+    round_number = payload.get("round_number")
+    interested = payload.get("interested")
+    if (
+        not isinstance(room_id, str)
+        or not room_id.strip()
+        or len(room_id) > 100
+        or isinstance(round_number, bool)
+        or not isinstance(round_number, int)
+        or round_number < 1
+        or not isinstance(interested, bool)
+    ):
+        return JsonResponse({"error": {"code": "invalid_payload"}}, status=400)
+
+    try:
+        result = submit_pair_interest(
+            participant=participant,
+            room_id=room_id,
+            round_number=round_number,
+            interested=interested,
+        )
+    except PairInterestError as exc:
+        return JsonResponse(
+            {"error": {"code": exc.code, "message": str(exc)}},
+            status=exc.status_code,
+        )
+    except Exception:
+        logger.exception(
+            "Failed saving contact-sharing choice for participant %s",
+            participant.pk,
+        )
+        return JsonResponse({"error": {"code": "internal_error"}}, status=500)
+
+    return JsonResponse(result)
 
 
 @require_GET

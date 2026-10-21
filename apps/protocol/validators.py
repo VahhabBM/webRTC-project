@@ -64,6 +64,7 @@ _SERVER_MESSAGE_TYPES: frozenset[str] = frozenset(
         MessageType.SERVER_ROUND_START,
         MessageType.SERVER_ROUND_WARNING,
         MessageType.SERVER_ROUND_END,
+        MessageType.SERVER_INTEREST_PROMPT,
         MessageType.SERVER_PARTNER_STATE,
         MessageType.SERVER_WEBRTC_OFFER,
         MessageType.SERVER_WEBRTC_ANSWER,
@@ -417,6 +418,50 @@ def _validate_server_round_end(payload: dict) -> None:
     )
 
 
+def _validate_server_interest_prompt(payload: dict) -> None:
+    _require_nonempty_str(
+        payload, "room_id", original_type=MessageType.SERVER_INTEREST_PROMPT
+    )
+    round_number = _require_int(
+        payload, "round_number", original_type=MessageType.SERVER_INTEREST_PROMPT
+    )
+    if not (1 <= round_number <= 6):
+        raise ProtocolError(
+            ErrorCode.ERR_INVALID_MESSAGE,
+            "Field 'round_number' must be between 1 and 6",
+            original_type=MessageType.SERVER_INTEREST_PROMPT,
+            detail={"field": "round_number", "got": round_number},
+        )
+    _require_nonempty_str(
+        payload,
+        "partner_display_name",
+        original_type=MessageType.SERVER_INTEREST_PROMPT,
+    )
+    _require_positive_int(
+        payload, "server_ts", original_type=MessageType.SERVER_INTEREST_PROMPT
+    )
+    _require_positive_int(
+        payload, "deadline_ts", original_type=MessageType.SERVER_INTEREST_PROMPT
+    )
+    if (
+        "own_response" in payload
+        and payload["own_response"] is not None
+        and not isinstance(payload["own_response"], bool)
+    ):
+        raise ProtocolError(
+            ErrorCode.ERR_INVALID_MESSAGE,
+            "Optional field 'own_response' must be a boolean or null",
+            original_type=MessageType.SERVER_INTEREST_PROMPT,
+        )
+    for field in ("mutual", "email_pending"):
+        if field in payload and not isinstance(payload[field], bool):
+            raise ProtocolError(
+                ErrorCode.ERR_INVALID_MESSAGE,
+                f"Optional field '{field}' must be a boolean",
+                original_type=MessageType.SERVER_INTEREST_PROMPT,
+            )
+
+
 def _validate_server_partner_state(payload: dict) -> None:
     _require_nonempty_str(
         payload, "partner_id", original_type=MessageType.SERVER_PARTNER_STATE
@@ -565,6 +610,7 @@ _PAYLOAD_VALIDATORS: dict[str, Any] = {
     MessageType.SERVER_ROUND_START: _validate_server_round_start,
     MessageType.SERVER_ROUND_WARNING: _validate_server_round_warning,
     MessageType.SERVER_ROUND_END: _validate_server_round_end,
+    MessageType.SERVER_INTEREST_PROMPT: _validate_server_interest_prompt,
     MessageType.SERVER_PARTNER_STATE: _validate_server_partner_state,
     MessageType.SERVER_WEBRTC_OFFER: _validate_server_webrtc_offer,
     MessageType.SERVER_WEBRTC_ANSWER: _validate_server_webrtc_answer,

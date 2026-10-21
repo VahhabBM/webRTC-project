@@ -41,6 +41,7 @@ from apps.protocol.schemas import (
     build_server_event_end,
     build_server_hello,
     build_server_ice_candidate,
+    build_server_interest_prompt,
     build_server_pairing,
     build_server_partner_state,
     build_server_pong,
@@ -638,6 +639,30 @@ class TestServerBuilders:
     def test_server_round_end(self):
         msg = build_server_round_end(round_number=2, server_ts=10_000)
         assert msg["type"] == MessageType.SERVER_ROUND_END
+
+    def test_server_interest_prompt(self):
+        msg = build_server_interest_prompt(
+            round_number=2,
+            room_id="room-2",
+            partner_display_name="Alex",
+            server_ts=10_000,
+            deadline_ts=40_000,
+        )
+        msg_type, payload = validate_message(json.dumps(msg))
+        assert msg_type == MessageType.SERVER_INTEREST_PROMPT
+        assert payload["deadline_ts"] == 40_000
+        assert payload["own_response"] is None
+
+    def test_server_interest_prompt_rejects_invalid_response(self):
+        with pytest.raises(ProtocolError):
+            build_server_interest_prompt(
+                round_number=1,
+                room_id="room-1",
+                partner_display_name="Alex",
+                server_ts=10_000,
+                deadline_ts=40_000,
+                own_response="yes",
+            )
 
     def test_server_round_warning(self):
         msg = build_server_round_warning(

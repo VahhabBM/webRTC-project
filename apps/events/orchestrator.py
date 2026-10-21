@@ -26,11 +26,13 @@ from django.core.cache import cache
 from django.db.models import Q
 from django.utils import timezone
 
+from apps.events.interest import INTEREST_RESPONSE_WINDOW
 from apps.events.models import Event, Pair, Round
 from apps.events.scheduler import EventPhase, RoundScheduler
 from apps.protocol.constants import EventEndReason, MessageType, PartnerState
 from apps.protocol.schemas import (
     build_server_event_end,
+    build_server_interest_prompt,
     build_server_pairing,
     build_server_partner_state,
     build_server_round_end,
@@ -358,17 +360,25 @@ class OrchestratorRealtime:
         self, round_obj: Round, *, now: datetime | None = None
     ) -> dict:
         """Send ``server.round_end`` to every active connection for the event."""
-        server_ts = self._server_ts_ms(now)
+        current = self._now(now)
+        server_ts = self._server_ts_ms(current)
         message = build_server_round_end(
             round_number=round_obj.number, server_ts=server_ts
         )
         group = select_event_broadcast_group(self.event)
         delivered = 1 if self._publish(group, message) else 0
+        prompt_deliveries = sum(
+            1 if self._publish(prompt_group, prompt_message) else 0
+            for prompt_group, prompt_message in self.interest_prompt_jobs(
+                round_obj, now=current
+            )
+        )
         return {
             "type": MessageType.SERVER_ROUND_END,
             "round_number": round_obj.number,
             "group": group,
             "delivered": delivered,
+            "interest_prompts_delivered": prompt_deliveries,
             "server_ts": server_ts,
         }
 
@@ -408,6 +418,23 @@ class OrchestratorRealtime:
         scheduler = RoundScheduler(self.event)
         phase, active_round, remaining = scheduler.get_current_phase(current)
         sent: list[str] = []
+
+        if active_round and phase in (EventPhase.PRECONNECT, EventPhase.IN_ROUND):
+            previous_round = (
+                Round.objects.filter(
+                    event_id=self.event.pk,
+                    number__lt=active_round.number,
+                    ends_at__lte=current,
+                    ends_at__gte=current - INTEREST_RESPONSE_WINDOW,
+                )
+                .order_by("-number")
+                .first()
+            )
+            if previous_round and self._send_once(
+                f"r{previous_round.number}:round_end",
+                lambda: self.broadcast_round_end(previous_round, now=current),
+            ):
+                sent.append(MessageType.SERVER_ROUND_END)
 
         if phase == EventPhase.PRECONNECT and active_round:
             if self._send_once(
@@ -488,8 +515,11 @@ class OrchestratorRealtime:
         current = self._now(now)
         scheduler = RoundScheduler(self.event)
         phase, active_round, _remaining = scheduler.get_current_phase(current)
+        messages = self.interest_prompt_messages_for_participant(
+            participant, now=current
+        )
         if phase == EventPhase.COMPLETED:
-            return [
+            return messages + [
                 build_server_event_end(
                     reason=EventEndReason.COMPLETED,
                     server_ts=self._server_ts_ms(current),
@@ -499,7 +529,7 @@ class OrchestratorRealtime:
             EventPhase.PRECONNECT,
             EventPhase.IN_ROUND,
         ):
-            return []
+            return messages
 
         pid = str(participant.pk)
         recipients = [
@@ -508,10 +538,10 @@ class OrchestratorRealtime:
             if recipient.participant_id == pid
         ]
         if not recipients:
-            return []
+            return messages
 
         recipient = recipients[0]
-        messages = [self._pairing_message(recipient, active_round)]
+        messages.append(self._pairing_message(recipient, active_round))
         if phase == EventPhase.IN_ROUND:
             messages.append(
                 build_server_round_start(
@@ -521,6 +551,82 @@ class OrchestratorRealtime:
                 )
             )
         return messages
+
+    def interest_prompt_jobs(
+        self, round_obj: Round, *, now: datetime | None = None
+    ) -> list[tuple[str, dict]]:
+        """Build private prompts for each participant in a just-ended pair."""
+        current = self._now(now)
+        deadline = round_obj.ends_at + INTEREST_RESPONSE_WINDOW
+        if current < round_obj.ends_at or current > deadline:
+            return []
+
+        pairs = Pair.objects.filter(
+            round_id=round_obj.pk, event_id=self.event.pk
+        ).select_related(
+            "participant_a",
+            "participant_b",
+            "interest",
+        )
+        jobs = []
+        for pair in pairs:
+            choice = getattr(pair, "interest", None)
+            for participant, partner, is_a in (
+                (pair.participant_a, pair.participant_b, True),
+                (pair.participant_b, pair.participant_a, False),
+            ):
+                own_response = None
+                own_email_sent = False
+                if choice is not None:
+                    if is_a:
+                        own_response = choice.participant_a_interested
+                        own_email_sent = choice.email_sent_to_a_at is not None
+                    else:
+                        own_response = choice.participant_b_interested
+                        own_email_sent = choice.email_sent_to_b_at is not None
+
+                if own_response is False:
+                    continue
+                mutual = bool(choice and choice.is_mutual)
+                if mutual and own_email_sent:
+                    continue
+                prompt = build_server_interest_prompt(
+                    round_number=round_obj.number,
+                    room_id=pair.room_id,
+                    partner_display_name=partner.display_name,
+                    server_ts=self._server_ts_ms(current),
+                    deadline_ts=datetime_to_unix_ms(deadline),
+                    own_response=own_response,
+                    mutual=mutual,
+                    email_pending=mutual and not own_email_sent,
+                )
+                jobs.append((participant_channel_group(participant.pk), prompt))
+        return jobs
+
+    def interest_prompt_messages_for_participant(
+        self, participant, *, now: datetime | None = None
+    ) -> list[dict]:
+        """Return any still-open interest prompt for one reconnecting participant."""
+        current = self._now(now)
+        latest_round = (
+            Round.objects.filter(
+                event_id=self.event.pk,
+                ends_at__lte=current,
+                ends_at__gte=current - INTEREST_RESPONSE_WINDOW,
+            )
+            .order_by("-number")
+            .first()
+        )
+        if latest_round is None:
+            return []
+        group = participant_channel_group(participant.pk)
+        return [
+            message
+            for job_group, message in self.interest_prompt_jobs(
+                latest_round, now=current
+            )
+            if job_group == group
+        ]
 
     def partner_presence_jobs(
         self, participant, state: str, *, now: datetime | None = None
@@ -614,17 +720,23 @@ class OrchestratorRealtime:
     async def abroadcast_round_end(
         self, round_obj: Round, *, now: datetime | None = None
     ) -> dict:
-        server_ts = self._server_ts_ms(now)
+        current = self._now(now)
+        server_ts = self._server_ts_ms(current)
         message = build_server_round_end(
             round_number=round_obj.number, server_ts=server_ts
         )
         group = select_event_broadcast_group(self.event)
         delivered = 1 if await self._apublish(group, message) else 0
+        prompt_jobs = await database_sync_to_async(self.interest_prompt_jobs)(
+            round_obj, now=current
+        )
+        prompt_deliveries = await self.abroadcast_prepared(prompt_jobs)
         return {
             "type": MessageType.SERVER_ROUND_END,
             "round_number": round_obj.number,
             "group": group,
             "delivered": delivered,
+            "interest_prompts_delivered": prompt_deliveries,
             "server_ts": server_ts,
         }
 

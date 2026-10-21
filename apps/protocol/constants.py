@@ -103,6 +103,9 @@ class MessageType(StrEnum):
     #: Server → Client.  Authoritative signal that a round has ended.
     SERVER_ROUND_END = "server.round_end"
 
+    #: Server → Client. Offers a private, time-limited contact-sharing choice.
+    SERVER_INTEREST_PROMPT = "server.interest_prompt"
+
     # ------------------------------------------------------------------
     # Partner state
     # ------------------------------------------------------------------

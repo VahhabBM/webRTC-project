@@ -182,6 +182,31 @@ def build_server_round_end(*, round_number: int, server_ts: int) -> dict:
     )
 
 
+def build_server_interest_prompt(
+    *,
+    round_number: int,
+    room_id: str,
+    partner_display_name: str,
+    server_ts: int,
+    deadline_ts: int,
+    own_response: bool | None = None,
+    mutual: bool = False,
+    email_pending: bool = False,
+) -> dict:
+    """Build a private, server-timed contact-sharing prompt."""
+    return build_message(
+        MessageType.SERVER_INTEREST_PROMPT,
+        round_number=round_number,
+        room_id=room_id,
+        partner_display_name=partner_display_name,
+        server_ts=server_ts,
+        deadline_ts=deadline_ts,
+        own_response=own_response,
+        mutual=mutual,
+        email_pending=email_pending,
+    )
+
+
 def build_server_partner_state(*, partner_id: str, state: str, server_ts: int) -> dict:
     """Build a ``server.partner_state`` message."""
     return build_message(
