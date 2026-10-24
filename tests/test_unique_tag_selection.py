@@ -64,6 +64,7 @@ def _registration_payload(**overrides) -> dict:
     base = {
         "display_name": "Test User",
         "email": "testuser@example.com",
+        "age": 25,
         "tag_ids": [],
         "accepted_terms": True,
     }
@@ -182,6 +183,7 @@ def test_http_endpoint_rejects_multiple_tags_when_unique_tags_enabled(client: Cl
         {
             "display_name": "Carol",
             "email": "carol@example.com",
+            "age": 25,
             "tag_ids": [str(tag1.id), str(tag2.id)],
             "accepted_terms": True,
         }
@@ -213,6 +215,7 @@ def test_http_endpoint_accepts_single_tag_when_unique_tags_enabled(client: Clien
         {
             "display_name": "Dave",
             "email": "dave@example.com",
+            "age": 25,
             "tag_ids": [str(tag.id)],
             "accepted_terms": True,
         }
@@ -245,6 +248,7 @@ def test_http_endpoint_still_allows_multiple_tags_when_unique_tags_disabled(
         {
             "display_name": "Eve",
             "email": "eve@example.com",
+            "age": 25,
             "tag_ids": [str(tag1.id), str(tag2.id)],
             "accepted_terms": True,
         }

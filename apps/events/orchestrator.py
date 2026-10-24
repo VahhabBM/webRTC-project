@@ -576,20 +576,16 @@ class OrchestratorRealtime:
                 (pair.participant_b, pair.participant_a, False),
             ):
                 own_response = None
-                own_email_sent = False
                 if choice is not None:
-                    if is_a:
-                        own_response = choice.participant_a_interested
-                        own_email_sent = choice.email_sent_to_a_at is not None
-                    else:
-                        own_response = choice.participant_b_interested
-                        own_email_sent = choice.email_sent_to_b_at is not None
+                    own_response = (
+                        choice.participant_a_interested
+                        if is_a
+                        else choice.participant_b_interested
+                    )
 
                 if own_response is False:
                     continue
                 mutual = bool(choice and choice.is_mutual)
-                if mutual and own_email_sent:
-                    continue
                 prompt = build_server_interest_prompt(
                     round_number=round_obj.number,
                     room_id=pair.room_id,
@@ -598,35 +594,95 @@ class OrchestratorRealtime:
                     deadline_ts=datetime_to_unix_ms(deadline),
                     own_response=own_response,
                     mutual=mutual,
-                    email_pending=mutual and not own_email_sent,
+                    partner_whatsapp=(partner.whatsapp or "") if mutual else None,
                 )
                 jobs.append((participant_channel_group(participant.pk), prompt))
         return jobs
 
+    def interest_result_jobs(
+        self, pair: Pair, *, now: datetime | None = None
+    ) -> list[tuple[str, dict]]:
+        """Build private mutual-consent results with each partner's WhatsApp."""
+        choice = getattr(pair, "interest", None)
+        if choice is None or not choice.is_mutual:
+            return []
+
+        current = self._now(now)
+        deadline = pair.round.ends_at + INTEREST_RESPONSE_WINDOW
+        jobs = []
+        for participant, partner in (
+            (pair.participant_a, pair.participant_b),
+            (pair.participant_b, pair.participant_a),
+        ):
+            message = build_server_interest_prompt(
+                round_number=pair.round.number,
+                room_id=pair.room_id,
+                partner_display_name=partner.display_name,
+                server_ts=self._server_ts_ms(current),
+                deadline_ts=datetime_to_unix_ms(deadline),
+                own_response=True,
+                mutual=True,
+                partner_whatsapp=partner.whatsapp or "",
+            )
+            jobs.append((participant_channel_group(participant.pk), message))
+        return jobs
+
+    def broadcast_interest_result(
+        self, pair: Pair, *, now: datetime | None = None
+    ) -> int:
+        """Send mutual WhatsApp-sharing results only to the two pair members."""
+        jobs = self.interest_result_jobs(pair, now=now)
+        return sum(self._publish(group, message) for group, message in jobs)
+
     def interest_prompt_messages_for_participant(
         self, participant, *, now: datetime | None = None
     ) -> list[dict]:
-        """Return any still-open interest prompt for one reconnecting participant."""
+        """Replay open prompts and mutually approved contact details privately."""
         current = self._now(now)
-        latest_round = (
-            Round.objects.filter(
-                event_id=self.event.pk,
-                ends_at__lte=current,
-                ends_at__gte=current - INTEREST_RESPONSE_WINDOW,
-            )
-            .order_by("-number")
-            .first()
-        )
-        if latest_round is None:
-            return []
         group = participant_channel_group(participant.pk)
-        return [
-            message
-            for job_group, message in self.interest_prompt_jobs(
-                latest_round, now=current
+        messages_by_key = {}
+
+        mutual_pairs = (
+            Pair.objects.filter(
+                event_id=self.event.pk,
+                interest__participant_a_interested=True,
+                interest__participant_b_interested=True,
+                round__ends_at__lte=current,
             )
-            if job_group == group
-        ]
+            .filter(Q(participant_a=participant) | Q(participant_b=participant))
+        ).select_related("participant_a", "participant_b", "round", "interest")
+        for pair in mutual_pairs:
+            participant_is_a = pair.participant_a_id == participant.pk
+            partner = pair.participant_b if participant_is_a else pair.participant_a
+            prompt = build_server_interest_prompt(
+                round_number=pair.round.number,
+                room_id=pair.room_id,
+                partner_display_name=partner.display_name,
+                server_ts=self._server_ts_ms(current),
+                deadline_ts=datetime_to_unix_ms(
+                    pair.round.ends_at + INTEREST_RESPONSE_WINDOW
+                ),
+                own_response=True,
+                mutual=True,
+                partner_whatsapp=partner.whatsapp or "",
+            )
+            messages_by_key[f"{pair.round.number}:{pair.room_id}"] = prompt
+
+        recent_rounds = Round.objects.filter(
+            event_id=self.event.pk,
+            ends_at__lte=current,
+            ends_at__gte=current - INTEREST_RESPONSE_WINDOW,
+        ).order_by("number")
+        for round_obj in recent_rounds:
+            for job_group, message in self.interest_prompt_jobs(
+                round_obj, now=current
+            ):
+                if job_group == group:
+                    payload = message["payload"]
+                    messages_by_key.setdefault(
+                        f"{payload['round_number']}:{payload['room_id']}", message
+                    )
+        return list(messages_by_key.values())
 
     def partner_presence_jobs(
         self, participant, state: str, *, now: datetime | None = None

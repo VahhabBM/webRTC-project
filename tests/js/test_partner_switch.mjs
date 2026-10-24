@@ -353,11 +353,21 @@ test("call room records a private, time-limited mutual-interest choice", async (
   const dialog = { hidden: true };
   const partnerName = { textContent: "" };
   const countdown = { textContent: "" };
+  const countdownWrap = { hidden: false };
   const status = { textContent: "" };
+  const contact = { hidden: true };
+  const contactLink = {
+    hidden: true,
+    textContent: "",
+    href: "",
+    removeAttribute(name) {
+      delete this[name];
+    },
+  };
+  const contactMissing = { hidden: true };
   const choices = { hidden: false };
   const yesButton = { disabled: false };
   const noButton = { disabled: false };
-  const retryButton = { hidden: true, disabled: false };
   const closeButton = { hidden: true };
   let submitted = null;
   const controller = new CallRoomController({
@@ -367,16 +377,23 @@ test("call room records a private, time-limited mutual-interest choice", async (
       interestDialog: dialog,
       interestPartnerName: partnerName,
       interestCountdown: countdown,
+      interestCountdownWrap: countdownWrap,
       interestStatus: status,
+      interestContact: contact,
+      interestContactLink: contactLink,
+      interestContactMissing: contactMissing,
       interestChoiceButtons: choices,
       interestYesButton: yesButton,
       interestNoButton: noButton,
-      interestRetryButton: retryButton,
       interestCloseButton: closeButton,
     },
     submitInterest: async (choice) => {
       submitted = choice;
-      return { ok: true, mutual: true, email_pending: false };
+      return {
+        ok: true,
+        mutual: true,
+        partner_whatsapp: "+1 202 555 0102",
+      };
     },
   });
 
@@ -400,7 +417,10 @@ test("call room records a private, time-limited mutual-interest choice", async (
   });
   assert.equal(choices.hidden, true);
   assert.equal(closeButton.hidden, false);
-  assert.match(status.textContent, /check your email/i);
+  assert.match(status.textContent, /whatsapp/i);
+  assert.equal(contact.hidden, false);
+  assert.equal(contactLink.textContent, "+1 202 555 0102");
+  assert.equal(contactLink.href, "https://wa.me/12025550102");
 
   controller.dismissInterestPrompt();
   assert.equal(dialog.hidden, true);

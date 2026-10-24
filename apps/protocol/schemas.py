@@ -191,9 +191,9 @@ def build_server_interest_prompt(
     deadline_ts: int,
     own_response: bool | None = None,
     mutual: bool = False,
-    email_pending: bool = False,
+    partner_whatsapp: str | None = None,
 ) -> dict:
-    """Build a private, server-timed contact-sharing prompt."""
+    """Build a private, server-timed WhatsApp-sharing prompt or result."""
     return build_message(
         MessageType.SERVER_INTEREST_PROMPT,
         round_number=round_number,
@@ -203,7 +203,7 @@ def build_server_interest_prompt(
         deadline_ts=deadline_ts,
         own_response=own_response,
         mutual=mutual,
-        email_pending=email_pending,
+        partner_whatsapp=partner_whatsapp if mutual else None,
     )
 
 

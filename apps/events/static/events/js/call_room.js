@@ -1272,7 +1272,9 @@ export class CallRoomController {
     }
 
     const promptId = `${roundNumber}:${roomId}`;
-    this._interestPrompts.set(promptId, {
+    const previous = this._interestPrompts.get(promptId) || {};
+    const prompt = {
+      ...previous,
       ...payload,
       room_id: roomId,
       round_number: roundNumber,
@@ -1283,9 +1285,17 @@ export class CallRoomController {
           ? payload.own_response
           : null,
       mutual: Boolean(payload.mutual),
-      email_pending: Boolean(payload.email_pending),
-    });
-    this._showNextInterestPrompt();
+      partner_whatsapp:
+        typeof payload.partner_whatsapp === "string"
+          ? payload.partner_whatsapp
+          : null,
+    };
+    this._interestPrompts.set(promptId, prompt);
+    if (this._activeInterestPromptId === promptId) {
+      this._renderInterestPrompt(promptId, prompt);
+    } else {
+      this._showNextInterestPrompt();
+    }
   }
 
   _showNextInterestPrompt() {
@@ -1294,21 +1304,32 @@ export class CallRoomController {
     }
 
     const now = this._now() + (this.clockSync.offsetMs || 0);
-    const next = [...this._interestPrompts.entries()]
-      .filter(([, prompt]) => prompt.deadline_ts >= now)
-      .sort((a, b) => a[1].deadline_ts - b[1].deadline_ts)[0];
-    if (!next) {
-      for (const [promptId, prompt] of this._interestPrompts) {
-        if (prompt.deadline_ts < now) {
-          this._interestPrompts.delete(promptId);
-        }
+    for (const [promptId, prompt] of this._interestPrompts) {
+      if (!prompt.mutual && prompt.deadline_ts < now) {
+        this._interestPrompts.delete(promptId);
       }
+    }
+    const next = [...this._interestPrompts.entries()]
+      .filter(([, prompt]) => prompt.mutual || prompt.deadline_ts >= now)
+      .sort((a, b) => {
+        const aHasOpenWindow = !a[1].mutual && a[1].deadline_ts >= now;
+        const bHasOpenWindow = !b[1].mutual && b[1].deadline_ts >= now;
+        if (aHasOpenWindow !== bHasOpenWindow) return aHasOpenWindow ? -1 : 1;
+        return a[1].deadline_ts - b[1].deadline_ts;
+      })[0];
+    if (!next) {
       return;
     }
 
     const [promptId, prompt] = next;
+    this._renderInterestPrompt(promptId, prompt);
+  }
+
+  _renderInterestPrompt(promptId, prompt) {
+    if (this._activeInterestPromptId !== promptId) {
+      this._interestSubmitting = false;
+    }
     this._activeInterestPromptId = promptId;
-    this._interestSubmitting = false;
     if (this.elements.interestDialog) {
       this.elements.interestDialog.hidden = false;
     }
@@ -1318,30 +1339,48 @@ export class CallRoomController {
     }
 
     const hasResponded = prompt.own_response !== null;
-    const canRetryEmail = prompt.mutual && prompt.email_pending;
     if (this.elements.interestChoiceButtons) {
-      this.elements.interestChoiceButtons.hidden = hasResponded;
-    }
-    if (this.elements.interestRetryButton) {
-      this.elements.interestRetryButton.hidden = !canRetryEmail;
+      this.elements.interestChoiceButtons.hidden = hasResponded || prompt.mutual;
     }
     if (this.elements.interestCloseButton) {
-      this.elements.interestCloseButton.hidden = !hasResponded;
+      this.elements.interestCloseButton.hidden = !hasResponded && !prompt.mutual;
+    }
+    if (this.elements.interestCountdownWrap) {
+      this.elements.interestCountdownWrap.hidden = prompt.mutual;
     }
     if (this.elements.interestStatus) {
       this.elements.interestStatus.textContent = prompt.mutual
-        ? "You both want to stay in touch. Check your email for contact details."
+        ? "You both said yes. You can now contact each other on WhatsApp."
         : hasResponded
-          ? "Your choice is saved. If you both choose yes, you will receive an email."
-          : "If you both choose yes, we will email each of you the other person's contact details.";
+          ? "Your choice is saved. If you both say yes, your WhatsApp numbers will appear here."
+          : "If you both say yes, your WhatsApp numbers will be shared here.";
     }
-    if (this.elements.interestRetryButton && canRetryEmail) {
-      this.elements.interestStatus.textContent =
-        "You both chose yes, but the contact email is still pending. You can retry now.";
+    if (this.elements.interestContact) {
+      this.elements.interestContact.hidden = !prompt.mutual;
+    }
+    if (this.elements.interestContactLink) {
+      const phone = String(prompt.partner_whatsapp || "").trim();
+      const digits = phone.replace(/\D/g, "");
+      this.elements.interestContactLink.textContent = phone;
+      this.elements.interestContactLink.hidden = !digits;
+      if (digits) {
+        this.elements.interestContactLink.href = `https://wa.me/${digits}`;
+      } else {
+        this.elements.interestContactLink.removeAttribute("href");
+      }
+    }
+    if (this.elements.interestContactMissing) {
+      this.elements.interestContactMissing.hidden = Boolean(
+        String(prompt.partner_whatsapp || "").replace(/\D/g, ""),
+      );
     }
 
-    this._startInterestCountdown();
-    this._tickInterestCountdown();
+    if (prompt.mutual) {
+      this._stopInterestCountdown();
+    } else {
+      this._startInterestCountdown();
+      this._tickInterestCountdown();
+    }
   }
 
   _startInterestCountdown() {
@@ -1372,6 +1411,10 @@ export class CallRoomController {
       this._finishInterestPrompt();
       return;
     }
+    if (prompt.mutual) {
+      this._stopInterestCountdown();
+      return;
+    }
 
     const remainingMs = Math.max(
       0,
@@ -1383,15 +1426,18 @@ export class CallRoomController {
       );
     }
     if (remainingMs === 0) {
+      if (this._interestSubmitting) {
+        if (this.elements.interestStatus) {
+          this.elements.interestStatus.textContent = "Saving your choice…";
+        }
+        return;
+      }
       if (this.elements.interestStatus) {
         this.elements.interestStatus.textContent =
           "This choice window has ended.";
       }
       if (this.elements.interestChoiceButtons) {
         this.elements.interestChoiceButtons.hidden = true;
-      }
-      if (this.elements.interestRetryButton) {
-        this.elements.interestRetryButton.hidden = true;
       }
       this._finishInterestPrompt();
     }
@@ -1424,23 +1470,8 @@ export class CallRoomController {
       }
       prompt.own_response = Boolean(interested);
       prompt.mutual = Boolean(result.mutual);
-      prompt.email_pending = Boolean(result.email_pending);
-      if (this.elements.interestChoiceButtons) {
-        this.elements.interestChoiceButtons.hidden = true;
-      }
-      if (this.elements.interestRetryButton) {
-        this.elements.interestRetryButton.hidden = !prompt.email_pending;
-      }
-      if (this.elements.interestCloseButton) {
-        this.elements.interestCloseButton.hidden = false;
-      }
-      if (this.elements.interestStatus) {
-        this.elements.interestStatus.textContent = prompt.mutual
-          ? prompt.email_pending
-            ? "You both chose yes, but the contact email is still pending. You can retry now."
-            : "You both want to stay in touch. Check your email for contact details."
-          : "Your choice is saved. If you both choose yes, you will receive an email.";
-      }
+      prompt.partner_whatsapp = result.partner_whatsapp || null;
+      this._renderInterestPrompt(this._activeInterestPromptId, prompt);
     } catch (error) {
       if (this.elements.interestStatus) {
         this.elements.interestStatus.textContent =
@@ -1449,49 +1480,6 @@ export class CallRoomController {
       this._setInterestButtonsDisabled(false);
     } finally {
       this._interestSubmitting = false;
-    }
-  }
-
-  async retryInterestEmail() {
-    const prompt = this._interestPrompts.get(this._activeInterestPromptId);
-    if (!prompt || !prompt.mutual || !prompt.email_pending || this._interestSubmitting) {
-      return;
-    }
-    this._interestSubmitting = true;
-    if (this.elements.interestRetryButton) {
-      this.elements.interestRetryButton.disabled = true;
-    }
-    if (this.elements.interestStatus) {
-      this.elements.interestStatus.textContent = "Retrying the contact email…";
-    }
-    try {
-      const result = await this._submitInterest({
-        room_id: prompt.room_id,
-        round_number: prompt.round_number,
-        interested: true,
-      });
-      if (!result || result.ok === false) {
-        throw new Error(result?.error?.message || "The email could not be sent.");
-      }
-      prompt.email_pending = Boolean(result.email_pending);
-      if (this.elements.interestRetryButton) {
-        this.elements.interestRetryButton.hidden = !prompt.email_pending;
-      }
-      if (this.elements.interestStatus) {
-        this.elements.interestStatus.textContent = prompt.email_pending
-          ? "The contact email is still pending. Please try again shortly."
-          : "The contact email has been sent. Check your inbox.";
-      }
-    } catch (error) {
-      if (this.elements.interestStatus) {
-        this.elements.interestStatus.textContent =
-          error.message || "The email could not be sent. Please try again.";
-      }
-    } finally {
-      this._interestSubmitting = false;
-      if (this.elements.interestRetryButton) {
-        this.elements.interestRetryButton.disabled = false;
-      }
     }
   }
 

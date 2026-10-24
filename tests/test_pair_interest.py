@@ -87,7 +87,7 @@ def _submit(client, *, room_id, interested, round_number=1):
 
 
 @pytest.mark.django_db
-def test_contact_details_are_emailed_only_after_both_choose_yes(matched_pair):
+def test_whatsapp_details_are_revealed_only_after_both_choose_yes(matched_pair):
     _event, _round_obj, pair, first, second = matched_pair
     first_client = _authenticated_client(first)
     second_client = _authenticated_client(second)
@@ -96,27 +96,20 @@ def test_contact_details_are_emailed_only_after_both_choose_yes(matched_pair):
     assert first_response.status_code == 200
     assert first_response.json()["recorded"] is True
     assert first_response.json()["mutual"] is False
+    assert first_response.json()["partner_whatsapp"] is None
     assert mail.outbox == []
 
     second_response = _submit(second_client, room_id=pair.room_id, interested=True)
     assert second_response.status_code == 200
     assert second_response.json()["mutual"] is True
-    assert second_response.json()["email_pending"] is False
-    assert len(mail.outbox) == 2
-
-    messages = {message.to[0]: message for message in mail.outbox}
-    assert set(messages) == {first.email, second.email}
-    assert "Emilia" in messages[first.email].body
-    assert second.email in messages[first.email].body
-    assert second.whatsapp in messages[first.email].body
-    assert "Alex" in messages[second.email].body
-    assert first.email in messages[second.email].body
-    assert first.whatsapp in messages[second.email].body
-    assert all("You both want to stay in touch" in item.subject for item in mail.outbox)
+    assert second_response.json()["partner_display_name"] == "Alex"
+    assert second_response.json()["partner_whatsapp"] == first.whatsapp
+    assert mail.outbox == []
 
     repeated = _submit(second_client, room_id=pair.room_id, interested=True)
     assert repeated.status_code == 200
-    assert len(mail.outbox) == 2
+    assert repeated.json()["partner_whatsapp"] == first.whatsapp
+    assert mail.outbox == []
 
 
 @pytest.mark.django_db
@@ -132,6 +125,7 @@ def test_no_contact_details_are_shared_if_either_person_says_no(matched_pair):
 
     assert response.status_code == 200
     assert response.json()["mutual"] is False
+    assert response.json()["partner_whatsapp"] is None
     assert mail.outbox == []
     choice = PairInterest.objects.get(pair=pair)
     assert choice.response_for(first) is True
@@ -185,24 +179,8 @@ def test_choice_window_is_enforced_by_server_clock(matched_pair):
 
 
 @pytest.mark.django_db
-def test_contact_email_failure_can_be_retried_without_resending_successful_email(
-    matched_pair, monkeypatch
-):
+def test_no_contact_email_is_sent_after_mutual_yes(matched_pair):
     _event, _round_obj, pair, first, second = matched_pair
-    import apps.events.interest as interest_service
-
-    sent_to = []
-
-    def send_email(**kwargs):
-        recipient = kwargs["recipient_email"]
-        if recipient == second.email and sent_to.count(recipient) == 0:
-            sent_to.append(recipient)
-            raise RuntimeError("temporary email failure")
-        sent_to.append(recipient)
-
-    monkeypatch.setattr(
-        interest_service.EmailService, "send_mutual_interest_email", send_email
-    )
     submit_pair_interest(
         participant=first,
         room_id=pair.room_id,
@@ -215,14 +193,6 @@ def test_contact_email_failure_can_be_retried_without_resending_successful_email
         round_number=1,
         interested=True,
     )
-    assert result["email_pending"] is True
-
-    retried = submit_pair_interest(
-        participant=second,
-        room_id=pair.room_id,
-        round_number=1,
-        interested=True,
-    )
-    assert retried["email_pending"] is False
-    assert sent_to.count(first.email) == 1
-    assert sent_to.count(second.email) == 2
+    assert result["mutual"] is True
+    assert result["partner_whatsapp"] == first.whatsapp
+    assert mail.outbox == []

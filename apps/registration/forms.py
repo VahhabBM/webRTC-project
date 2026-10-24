@@ -1,3 +1,6 @@
+from decimal import Decimal, InvalidOperation
+
+
 class RegistrationError(Exception):
     def __init__(self, message, code="invalid_data"):
         self.message = message
@@ -27,31 +30,36 @@ def validate_registration_data(event, data):
             "You must accept the terms and conditions.", "terms_not_accepted"
         )
 
+    tag_selection_provided = "tag_ids" in data or "tags" in data
     tag_ids = data.get("tag_ids") or data.get("tags") or []
     if len(tag_ids) > 5:
         raise RegistrationError("Too many tags selected.", "invalid_tag_count")
 
     # Check unique tags rule if event requires it
-    if event and getattr(event, "unique_tags", False):
+    if event and getattr(event, "unique_tags", False) and tag_selection_provided:
         if len(tag_ids) != 1:
             raise RegistrationError(
                 "Exactly one tag must be selected.", "invalid_tag_count"
             )
 
-    # Optional age validation if provided
     age = data.get("age")
-    if age is not None and age != "":
-        try:
-            age = int(age)
-            if age < 18 or age > 100:
-                raise ValueError()
-        except (TypeError, ValueError):
-            raise RegistrationError(
-                "Valid age (at least 18) is required.", "invalid_age"
-            )
-    else:
-        age = None
-
+    if age is None or (isinstance(age, str) and not age.strip()):
+        raise RegistrationError(
+            "Age is required. Registration is only available to people aged 18 or older.",
+            "age_required",
+        )
+    try:
+        age_value = Decimal(str(age).strip())
+        if not age_value.is_finite() or age_value != age_value.to_integral_value():
+            raise InvalidOperation
+        age = int(age_value)
+    except (InvalidOperation, TypeError, ValueError):
+        raise RegistrationError("Enter a valid age.", "invalid_age")
+    if age < 18:
+        raise RegistrationError(
+            "Registration is only available to people aged 18 or older.",
+            "age_restricted",
+        )
     gender = data.get("gender", "Other/Prefer Not to Say")
     want_to_date = data.get("want_to_date", "Any")
     whatsapp = data.get("whatsapp", "")

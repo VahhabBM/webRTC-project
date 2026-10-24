@@ -26,6 +26,7 @@ class RegistrationEmailTestCase(TestCase):
         payload = {
             "display_name": "Test User",
             "email": "test@example.com",
+            "age": 29,
             "tag_ids": [str(self.tag.id)],
             "accepted_terms": True,
         }

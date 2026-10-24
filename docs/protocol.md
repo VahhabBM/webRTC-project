@@ -500,8 +500,9 @@ Sent: When the round ends. Clients MUST stop WebRTC media and clear signalling s
 Direction: **Server → Client**
 Sent privately to each member of a pair after its round ends. The participant
 has until `deadline_ts` (30 seconds after the stored round end) to submit one
-choice to the authenticated HTTP endpoint. A contact-sharing email is sent to
-each participant only after both choices are yes.
+choice to the authenticated HTTP endpoint. If both choices are yes, each
+participant privately receives the other participant's WhatsApp number over
+their authenticated participant channel. No post-session contact email is sent.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -512,7 +513,7 @@ each participant only after both choices are yes.
 | `deadline_ts` | integer | yes | Server Unix timestamp in ms when the 30-second choice window closes. |
 | `own_response` | boolean or null | yes | This participant's saved choice, if already submitted. |
 | `mutual` | boolean | yes | True only when both participants chose yes. |
-| `email_pending` | boolean | yes | True when a mutual choice exists but at least one email still needs delivery. |
+| `partner_whatsapp` | string or null | yes | Present only after mutual yes; this participant's partner's WhatsApp number. |
 
 ```json
 {
@@ -526,7 +527,7 @@ each participant only after both choices are yes.
     "deadline_ts": 1700000570000,
     "own_response": null,
     "mutual": false,
-    "email_pending": false
+    "partner_whatsapp": null
   }
 }
 ```
@@ -534,7 +535,8 @@ each participant only after both choices are yes.
 The client submits `room_id`, `round_number`, and a boolean `interested` to
 `POST /api/round-interest/` using its authenticated session and CSRF token.
 Choices are immutable and validated against the pair and server-side deadline.
-The partner's individual choice is never disclosed.
+The partner's individual choice is never disclosed. WhatsApp numbers are
+disclosed privately only after both participants choose yes.
 
 ---
 

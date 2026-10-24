@@ -1,3 +1,4 @@
+{% load static %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -23,7 +24,14 @@
       color: var(--text);
       padding: 1.5rem 1rem 2rem;
     }
-    h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+    .room-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .room-logo { display: block; width: 132px; height: auto; border-radius: 6px; }
+    h1 { font-size: 1.4rem; margin: 0; }
     .top-bar {
       display: flex;
       flex-wrap: wrap;
@@ -278,6 +286,8 @@
     .interest-dialog p { color: var(--muted); }
     .interest-countdown { color: var(--warning); font-weight: 700; }
     .interest-status { min-height: 1.5rem; color: var(--text) !important; }
+    .interest-contact { margin: 1rem 0; padding: 0.85rem; border-radius: 8px; background: #0f172a; color: var(--text) !important; overflow-wrap: anywhere; }
+    .interest-contact a { color: #93c5fd; font-weight: 700; }
     .interest-actions { display: flex; flex-wrap: wrap; gap: 0.65rem; }
     .interest-actions button {
       border: 0;
@@ -288,13 +298,16 @@
       cursor: pointer;
     }
     .interest-yes { background: var(--success); color: white; }
-    .interest-no, .interest-close, .interest-retry { background: #475569; color: white; }
+    .interest-no, .interest-close { background: #475569; color: white; }
     .interest-actions button:disabled { cursor: wait; opacity: 0.65; }
   </style>
 </head>
 <body>
 
-  <h1>Call Room</h1>
+  <header class="room-header">
+    <img class="room-logo" src="{% static 'events/images/meetakk-logo.jpg' %}" alt="Meetakk">
+    <h1>Call Room</h1>
+  </header>
 
   <div id="eventEndedBanner" class="event-ended-banner">
     <strong>Event ended.</strong> Thank you for participating.
@@ -339,16 +352,19 @@
     <section class="interest-dialog" role="dialog" aria-modal="true" aria-labelledby="interestTitle">
       <h2 id="interestTitle">Would you like to stay in touch with <span id="interestPartnerName"></span>?</h2>
       <p>
-        You have <span class="interest-countdown"><span id="interestCountdown">30</span> seconds</span>
-        to choose. If you both say yes, we will email each of you the other person's contact details.
+        You have <span id="interestCountdownWrap" class="interest-countdown"><span id="interestCountdown">30</span> seconds</span>
+        to choose. If you both say yes, you will see each other's WhatsApp number here.
       </p>
       <p id="interestStatus" class="interest-status" aria-live="polite"></p>
+      <p id="interestContact" class="interest-contact" hidden>
+        WhatsApp: <a id="interestContactLink" target="_blank" rel="noopener noreferrer"></a>
+        <span id="interestContactMissing" hidden>No WhatsApp number is on file.</span>
+      </p>
       <div id="interestChoiceButtons" class="interest-actions">
-        <button id="interestYesButton" class="interest-yes" type="button">Yes, share our contact details</button>
+        <button id="interestYesButton" class="interest-yes" type="button">Yes, share our WhatsApp numbers</button>
         <button id="interestNoButton" class="interest-no" type="button">No, thanks</button>
       </div>
       <div class="interest-actions">
-        <button id="interestRetryButton" class="interest-retry" type="button" hidden>Retry contact email</button>
         <button id="interestCloseButton" class="interest-close" type="button" hidden>Close</button>
       </div>
     </section>
@@ -392,11 +408,14 @@
         interestDialog: document.getElementById('interestDialog'),
         interestPartnerName: document.getElementById('interestPartnerName'),
         interestCountdown: document.getElementById('interestCountdown'),
+        interestCountdownWrap: document.getElementById('interestCountdownWrap'),
         interestStatus: document.getElementById('interestStatus'),
+        interestContact: document.getElementById('interestContact'),
+        interestContactLink: document.getElementById('interestContactLink'),
+        interestContactMissing: document.getElementById('interestContactMissing'),
         interestChoiceButtons: document.getElementById('interestChoiceButtons'),
         interestYesButton: document.getElementById('interestYesButton'),
         interestNoButton: document.getElementById('interestNoButton'),
-        interestRetryButton: document.getElementById('interestRetryButton'),
         interestCloseButton: document.getElementById('interestCloseButton'),
       },
       fetchIceServers: async () => {
@@ -447,10 +466,6 @@
     document.getElementById('interestNoButton').addEventListener(
       'click',
       () => controller.submitInterestChoice(false),
-    );
-    document.getElementById('interestRetryButton').addEventListener(
-      'click',
-      () => controller.retryInterestEmail(),
     );
     document.getElementById('interestCloseButton').addEventListener(
       'click',

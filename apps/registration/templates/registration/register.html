@@ -1,3 +1,4 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
 <head>
@@ -7,22 +8,26 @@
     <style>
         body {
             font-family: Arial, sans-serif;
-            background: linear-gradient(rgba(0,0,0,0.4), rgba(0,0,0,0.4)), url('https://images.unsplash.com/photo-1511795409834-ef04bbd61622?auto=format&fit=crop&w=1920&q=80') no-repeat center center fixed;
+            background:
+                linear-gradient(rgba(22, 17, 12, 0.34), rgba(22, 17, 12, 0.48)),
+                url("{% static 'registration/images/speed-dating-background.png' %}") no-repeat center center fixed;
             background-size: cover;
             margin: 0;
-            padding: 20px;
+            padding: 24px;
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
+            min-height: 100svh;
         }
         .card {
-            background: #fffdf5;
+            background: rgba(255, 253, 245, 0.97);
             width: 100%;
-            max-width: 550px;
-            padding: 30px;
-            border-radius: 12px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+            max-width: 570px;
+            padding: 32px;
+            border: 1px solid rgba(255, 255, 255, 0.72);
+            border-radius: 16px;
+            box-shadow: 0 18px 55px rgba(22, 17, 12, 0.3);
             box-sizing: border-box;
         }
         h1 {
@@ -97,22 +102,63 @@
             border: none;
             border-radius: 0;
         }
+        .whatsapp-box select:focus, .whatsapp-box input:focus {
+            outline: 2px solid #6675d8;
+            outline-offset: -2px;
+        }
+        .session-free-note {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0 0 12px;
+            padding: 10px 12px;
+            border: 1px solid #b9e5cf;
+            border-radius: 8px;
+            background: #effaf3;
+            color: #17663b;
+            font-size: 13px;
+            font-weight: 700;
+        }
+        .session-free-note svg { flex: 0 0 auto; }
         .payment-icons {
             display: flex;
-            gap: 15px;
-            align-items: center;
+            gap: 12px;
+            align-items: stretch;
         }
         .payment-option {
             display: flex;
             align-items: center;
-            gap: 6px;
-            background: #f1f1f1;
-            padding: 8px 14px;
-            border-radius: 6px;
-            opacity: 0.6;
-            cursor: not-allowed;
+            gap: 10px;
+            min-width: 150px;
+            background: #fff;
+            border: 1px solid #d9dce4;
+            padding: 10px 14px;
+            border-radius: 8px;
             font-weight: bold;
-            font-size: 13px;
+            font-size: 15px;
+            color: #202432;
+        }
+        .payment-option[aria-disabled="true"] { opacity: 0.76; }
+        .payment-logo { width: 30px; height: 30px; flex: 0 0 auto; object-fit: contain; }
+        .payment-option.paypal { color: #003087; }
+        .age-note {
+            margin: 6px 0 0;
+            color: #6f6b63;
+            font-size: 12px;
+        }
+        .error-msg[role="alert"] { line-height: 1.45; }
+        [hidden] { display: none !important; }
+        @media (max-width: 600px) {
+            body {
+                align-items: flex-start;
+                padding: 14px 10px;
+                background-attachment: scroll;
+            }
+            .card { padding: 24px 18px; border-radius: 12px; }
+            h1 { font-size: 21px; }
+            .whatsapp-box select { width: 125px; }
+            .payment-icons { gap: 8px; }
+            .payment-option { min-width: 0; flex: 1; padding: 9px 10px; gap: 7px; }
         }
         .disclaimer {
             background: #f7f3e8;
@@ -164,7 +210,8 @@
 
         <div class="form-group">
             <label>Age:</label>
-            <input type="number" id="age" name="age" placeholder="Enter age number (e.g., 25)" min="18" max="100">
+            <input type="number" id="age" name="age" placeholder="Enter your age (18 or older)" min="18" step="1" required>
+            <p class="age-note">Registration is open to people aged 18 and over.</p>
         </div>
 
         <div class="form-group">
@@ -181,7 +228,7 @@
             <div class="radio-group">
                 <label><input type="radio" name="want_to_date" value="Male"> Male</label>
                 <label><input type="radio" name="want_to_date" value="Female"> Female</label>
-                <label><input type="radio" name="want_to_date" value="Any" checked> Any / Other</label>
+                <label><input type="radio" name="want_to_date" value="Any" checked> Any/Other</label>
             </div>
         </div>
 
@@ -195,17 +242,68 @@
             <div class="whatsapp-box">
                 <select id="countryCode">
                     <option value="+64" selected>🇳🇿 +64 (NZ)</option>
-                    <option value="+49">🇩🇪 +49 (DE)</option>
-                    <option value="+44">🇬🇧 +44 (UK)</option>
+                    <optgroup label="Europe">
+                    <option value="+355">🇦🇱 +355 (Albania)</option>
+                    <option value="+376">🇦🇩 +376 (Andorra)</option>
+                    <option value="+374">🇦🇲 +374 (Armenia)</option>
+                    <option value="+43">🇦🇹 +43 (Austria)</option>
+                    <option value="+994">🇦🇿 +994 (Azerbaijan)</option>
+                    <option value="+32">🇧🇪 +32 (Belgium)</option>
+                    <option value="+375">🇧🇾 +375 (Belarus)</option>
+                    <option value="+387">🇧🇦 +387 (Bosnia and Herzegovina)</option>
+                    <option value="+359">🇧🇬 +359 (Bulgaria)</option>
+                    <option value="+385">🇭🇷 +385 (Croatia)</option>
+                    <option value="+357">🇨🇾 +357 (Cyprus)</option>
+                    <option value="+420">🇨🇿 +420 (Czechia)</option>
+                    <option value="+45">🇩🇰 +45 (Denmark)</option>
+                    <option value="+372">🇪🇪 +372 (Estonia)</option>
+                    <option value="+358">🇫🇮 +358 (Finland)</option>
+                    <option value="+33">🇫🇷 +33 (France)</option>
+                    <option value="+995">🇬🇪 +995 (Georgia)</option>
+                    <option value="+49">🇩🇪 +49 (Germany)</option>
+                    <option value="+30">🇬🇷 +30 (Greece)</option>
+                    <option value="+36">🇭🇺 +36 (Hungary)</option>
+                    <option value="+354">🇮🇸 +354 (Iceland)</option>
+                    <option value="+353">🇮🇪 +353 (Ireland)</option>
+                    <option value="+39">🇮🇹 +39 (Italy)</option>
+                    <option value="+383">🇽🇰 +383 (Kosovo)</option>
+                    <option value="+371">🇱🇻 +371 (Latvia)</option>
+                    <option value="+423">🇱🇮 +423 (Liechtenstein)</option>
+                    <option value="+370">🇱🇹 +370 (Lithuania)</option>
+                    <option value="+352">🇱🇺 +352 (Luxembourg)</option>
+                    <option value="+356">🇲🇹 +356 (Malta)</option>
+                    <option value="+373">🇲🇩 +373 (Moldova)</option>
+                    <option value="+377">🇲🇨 +377 (Monaco)</option>
+                    <option value="+382">🇲🇪 +382 (Montenegro)</option>
+                    <option value="+31">🇳🇱 +31 (Netherlands)</option>
+                    <option value="+389">🇲🇰 +389 (North Macedonia)</option>
+                    <option value="+47">🇳🇴 +47 (Norway)</option>
+                    <option value="+48">🇵🇱 +48 (Poland)</option>
+                    <option value="+351">🇵🇹 +351 (Portugal)</option>
+                    <option value="+40">🇷🇴 +40 (Romania)</option>
+                    <option value="+7">🇷🇺 +7 (Russia)</option>
+                    <option value="+378">🇸🇲 +378 (San Marino)</option>
+                    <option value="+381">🇷🇸 +381 (Serbia)</option>
+                    <option value="+421">🇸🇰 +421 (Slovakia)</option>
+                    <option value="+386">🇸🇮 +386 (Slovenia)</option>
+                    <option value="+34">🇪🇸 +34 (Spain)</option>
+                    <option value="+46">🇸🇪 +46 (Sweden)</option>
+                    <option value="+41">🇨🇭 +41 (Switzerland)</option>
+                    <option value="+90">🇹🇷 +90 (Türkiye)</option>
+                    <option value="+380">🇺🇦 +380 (Ukraine)</option>
+                    <option value="+44">🇬🇧 +44 (United Kingdom)</option>
+                    </optgroup>
+                    <optgroup label="Other countries">
                     <option value="+1">🇺🇸 +1 (US)</option>
                     <option value="+61">🇦🇺 +61 (AU)</option>
+                    </optgroup>
                 </select>
                 <input type="text" id="whatsappNumber" placeholder="WhatsApp number" required>
             </div>
         </div>
 
         {% if tags %}
-        <div class="form-group">
+        <div class="form-group" hidden aria-hidden="true">
             <label>Interests / Tags:</label>
             <input type="text" id="tagSearch" class="tag-search" placeholder="Search interests..." style="margin-bottom: 8px;">
             <div class="checkbox-group">
@@ -219,10 +317,23 @@
         {% endif %}
 
         <div class="form-group">
+            <div class="session-free-note" role="note">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"></circle>
+                    <path d="m8 12 2.5 2.5L16.5 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+                <span>This session is free of charge</span>
+            </div>
             <label>Payment:</label>
-            <div class="payment-icons">
-                <div class="payment-option"><input type="radio" disabled> Revolut</div>
-                <div class="payment-option"><input type="radio" disabled> PayPal</div>
+            <div class="payment-icons" aria-label="Payment methods">
+                <div class="payment-option" aria-disabled="true">
+                    <img class="payment-logo" src="{% static 'registration/images/revolut-mark.svg' %}" alt="">
+                    <strong>Revolut</strong>
+                </div>
+                <div class="payment-option paypal" aria-disabled="true">
+                    <img class="payment-logo" src="{% static 'registration/images/paypal-mark.svg' %}" alt="">
+                    <strong>PayPal</strong>
+                </div>
             </div>
         </div>
 
@@ -230,7 +341,7 @@
             <strong>Disclaimer:</strong><br>
             By registering, I confirm that:<br>
             1. I am over the age of legality and consent (at least 18 years old).<br>
-            2. I consent to my email address and WhatsApp number being shared <em>only</em> with individuals I have accepted; all responsibilities after that...
+            2. My email is used for registration and room access. My WhatsApp number is shared with a partner <em>only if we both agree</em> after our session.
         </div>
 
         <div id="errorContainer" class="error-msg"></div>
@@ -250,19 +361,22 @@
         const fullWhatsapp = countryCode + ' ' + rawPhone;
 
         const ageInput = document.getElementById('age').value.trim();
-        
-        const selectedTags = Array.from(document.querySelectorAll('input[name="tag_ids"]:checked'))
-            .map(el => el.value);
+        const age = Number(ageInput);
+        if (!Number.isInteger(age) || age < 18) {
+            errorDiv.textContent = 'Registration is only available to people aged 18 or older.';
+            errorDiv.style.display = 'block';
+            document.getElementById('age').focus();
+            return;
+        }
         const csrfToken = document.querySelector('[name="csrfmiddlewaretoken"]').value;
 
         const payload = {
             display_name: document.getElementById('displayName').value.trim(),
-            age: ageInput ? parseInt(ageInput, 10) : null,
+            age: age,
             gender: document.querySelector('input[name="gender"]:checked').value,
             want_to_date: document.querySelector('input[name="want_to_date"]:checked').value,
             email: document.getElementById('email').value.trim(),
             whatsapp: fullWhatsapp,
-            tag_ids: selectedTags,
             accepted_terms: true
         };
 

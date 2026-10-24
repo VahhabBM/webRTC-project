@@ -453,11 +453,17 @@ def _validate_server_interest_prompt(payload: dict) -> None:
             "Optional field 'own_response' must be a boolean or null",
             original_type=MessageType.SERVER_INTEREST_PROMPT,
         )
-    for field in ("mutual", "email_pending"):
-        if field in payload and not isinstance(payload[field], bool):
+    if "mutual" in payload and not isinstance(payload["mutual"], bool):
+        raise ProtocolError(
+            ErrorCode.ERR_INVALID_MESSAGE,
+            "Optional field 'mutual' must be a boolean",
+            original_type=MessageType.SERVER_INTEREST_PROMPT,
+        )
+    if "partner_whatsapp" in payload and payload["partner_whatsapp"] is not None:
+        if not isinstance(payload["partner_whatsapp"], str):
             raise ProtocolError(
                 ErrorCode.ERR_INVALID_MESSAGE,
-                f"Optional field '{field}' must be a boolean",
+                "Optional field 'partner_whatsapp' must be a string or null",
                 original_type=MessageType.SERVER_INTEREST_PROMPT,
             )
 

@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import timedelta
 
 from django.db import transaction
 from django.utils import timezone
 
 from apps.events.models import Pair, PairInterest
-from apps.registration.services.email_service import EmailService
-
-logger = logging.getLogger(__name__)
 
 INTEREST_RESPONSE_WINDOW = timedelta(seconds=30)
 
@@ -26,7 +22,7 @@ class PairInterestError(Exception):
 def submit_pair_interest(
     *, participant, room_id: str, round_number: int, interested: bool, now=None
 ) -> dict:
-    """Record one immutable choice and send both emails only for mutual yes."""
+    """Record one immutable choice and reveal WhatsApp only after mutual yes."""
     current = now or timezone.now()
 
     with transaction.atomic():
@@ -86,64 +82,10 @@ def submit_pair_interest(
                 409,
             )
 
-        if choice.is_mutual:
-            _deliver_mutual_emails(choice, pair, current)
-
-        own_email_sent_at = (
-            choice.email_sent_to_a_at if is_a else choice.email_sent_to_b_at
-        )
+        partner = pair.participant_b if is_a else pair.participant_a
         return {
             "recorded": True,
             "mutual": choice.is_mutual,
-            "email_sent": own_email_sent_at is not None,
-            "email_pending": choice.is_mutual
-            and (
-                choice.email_sent_to_a_at is None or choice.email_sent_to_b_at is None
-            ),
+            "partner_display_name": partner.display_name if choice.is_mutual else None,
+            "partner_whatsapp": (partner.whatsapp or "") if choice.is_mutual else None,
         }
-
-
-def _deliver_mutual_emails(choice: PairInterest, pair: Pair, now) -> None:
-    if not choice.is_mutual:
-        return
-
-    deliveries = (
-        (
-            "email_sent_to_a_at",
-            pair.participant_a,
-            pair.participant_b,
-        ),
-        (
-            "email_sent_to_b_at",
-            pair.participant_b,
-            pair.participant_a,
-        ),
-    )
-    for sent_field, recipient, partner in deliveries:
-        if getattr(choice, sent_field) is not None:
-            continue
-        if not recipient.email:
-            logger.error(
-                "Mutual-interest email skipped because participant %s has no email",
-                recipient.pk,
-            )
-            continue
-        try:
-            EmailService.send_mutual_interest_email(
-                recipient_email=recipient.email,
-                recipient_name=recipient.display_name,
-                partner_name=partner.display_name,
-                partner_email=partner.email,
-                partner_whatsapp=partner.whatsapp,
-                event_title=pair.event.name,
-            )
-        except Exception:
-            logger.exception(
-                "Mutual-interest email failed for pair %s and participant %s",
-                pair.pk,
-                recipient.pk,
-            )
-            continue
-
-        setattr(choice, sent_field, now)
-        choice.save(update_fields=[sent_field, "updated_at"])

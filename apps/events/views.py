@@ -24,7 +24,10 @@ from apps.events.auth import (
 )
 from apps.events.interest import PairInterestError, submit_pair_interest
 from apps.events.models import ConnectionType, Pair, Participant
-from apps.events.orchestrator import invalidate_participant_sockets
+from apps.events.orchestrator import (
+    OrchestratorRealtime,
+    invalidate_participant_sockets,
+)
 from apps.events.turn import TurnCredentialService, generate_ice_servers
 from apps.protocol.media_transport import DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS
 
@@ -162,6 +165,21 @@ def submit_round_interest(request: HttpRequest) -> JsonResponse:
             participant.pk,
         )
         return JsonResponse({"error": {"code": "internal_error"}}, status=500)
+
+    if result.get("mutual"):
+        pair = (
+            Pair.objects.filter(
+                event_id=participant.event_id,
+                round__number=round_number,
+                room_id=room_id,
+            )
+            .select_related(
+                "participant_a", "participant_b", "round", "interest"
+            )
+            .first()
+        )
+        if pair is not None:
+            OrchestratorRealtime(participant.event).broadcast_interest_result(pair)
 
     return JsonResponse(result)
 
