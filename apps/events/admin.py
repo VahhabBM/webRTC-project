@@ -12,6 +12,7 @@ from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils import timezone
 
+from .countries import COUNTRY_NAMES
 from .models import (
     DisconnectionCause,
     DisconnectionLog,
@@ -451,6 +452,7 @@ class TagAdmin(admin.ModelAdmin):
 class ParticipantAdmin(admin.ModelAdmin):
     list_display = (
         "display_name",
+        "country_name",
         "email",
         "status",
         "display_tags",
@@ -484,6 +486,10 @@ class ParticipantAdmin(admin.ModelAdmin):
     def display_tags(self, obj):
         tags = [tag.name for tag in obj.tags.all()]
         return ", ".join(tags) if tags else "-"
+
+    @admin.display(description="Country")
+    def country_name(self, obj):
+        return COUNTRY_NAMES.get(obj.country, obj.country or "-")
 
     @admin.display(description="Token")
     def token_status(self, obj):

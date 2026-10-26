@@ -1,5 +1,7 @@
 from decimal import Decimal, InvalidOperation
 
+from apps.events.countries import COUNTRY_CODES
+
 
 class RegistrationError(Exception):
     def __init__(self, message, code="invalid_data"):
@@ -60,6 +62,15 @@ def validate_registration_data(event, data):
             "Registration is only available to people aged 18 or older.",
             "age_restricted",
         )
+    country = data.get("country", "")
+    if country is None:
+        country = ""
+    if not isinstance(country, str):
+        raise RegistrationError("Choose a valid country.", "invalid_country")
+    country = country.strip().upper()
+    if country and country not in COUNTRY_CODES:
+        raise RegistrationError("Choose a valid country.", "invalid_country")
+
     gender = data.get("gender", "Other/Prefer Not to Say")
     want_to_date = data.get("want_to_date", "Any")
     whatsapp = data.get("whatsapp", "")
@@ -67,6 +78,7 @@ def validate_registration_data(event, data):
     return {
         "display_name": display_name,
         "age": age,
+        "country": country,
         "gender": gender,
         "want_to_date": want_to_date,
         "email": email,

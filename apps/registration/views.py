@@ -8,6 +8,7 @@ from django.utils import timezone
 from django.views import View
 
 from apps.events.auth import event_end, issue_join_token
+from apps.events.countries import COUNTRY_CHOICES
 from apps.events.models import Event, Tag
 from apps.registration.forms import RegistrationError, validate_registration_data
 from apps.registration.models import (
@@ -86,6 +87,7 @@ def register_view(request, event_id=None):
             display_name=payload["display_name"],
             email=email,
             age=payload.get("age"),
+            country=payload.get("country", ""),
             gender=payload.get("gender", "Other/Prefer Not to Say"),
             want_to_date=payload.get("want_to_date", "Any"),
             whatsapp=payload.get("whatsapp", ""),
@@ -351,7 +353,12 @@ class RegisterView(View):
         return render(
             request,
             "registration/register.html",
-            {"event": event, "event_id": event_id, "tags": tags},
+            {
+                "event": event,
+                "event_id": event_id,
+                "tags": tags,
+                "country_choices": COUNTRY_CHOICES,
+            },
         )
 
     def post(self, request, event_id=None, *args, **kwargs):

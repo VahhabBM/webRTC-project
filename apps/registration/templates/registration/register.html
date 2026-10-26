@@ -215,6 +215,16 @@
         </div>
 
         <div class="form-group">
+            <label for="country">I am from:</label>
+            <select id="country" name="country" required>
+                <option value="" selected disabled>Select your country</option>
+                {% for code, name in country_choices %}
+                <option value="{{ code }}">{{ name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="form-group">
             <label>I am:</label>
             <div class="radio-group">
                 <label><input type="radio" name="gender" value="Male" checked> Male</label>
@@ -373,6 +383,7 @@
         const payload = {
             display_name: document.getElementById('displayName').value.trim(),
             age: age,
+            country: document.getElementById('country').value,
             gender: document.querySelector('input[name="gender"]:checked').value,
             want_to_date: document.querySelector('input[name="want_to_date"]:checked').value,
             email: document.getElementById('email').value.trim(),
