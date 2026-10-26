@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Call Room</title>
   <style>
     :root {
@@ -115,6 +116,8 @@
         border-radius: 10px;
         overflow: hidden;
         gap: 0;
+        /* Eliminates Chrome's 300 ms double-tap-zoom delay */
+        touch-action: manipulation;
       }
 
       .video-card {
@@ -189,6 +192,9 @@
         height: 100%;
         max-height: none;
         object-fit: cover;
+        /* Prevent Chrome composited-layer video elements from swallowing
+           pointer events; taps are handled by the .video-card wrapper. */
+        pointer-events: none;
       }
 
       /* Hide the h3 label in the PiP thumbnail; show it in the primary view */
