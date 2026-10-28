@@ -195,7 +195,7 @@ EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 
 DEFAULT_FROM_EMAIL = env(
     "DEFAULT_FROM_EMAIL",
-    default="رویداد همسان‌گزینی <noreply@eventmatching.ir>",
+    default="Meetakk <admin@meetakk.com>",
 )
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
 

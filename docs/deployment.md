@@ -211,7 +211,7 @@ secret.
 | `PARTICIPANT_JOIN_BASE_URL` | Public base URL used to build join links. |
 | `FRONTEND_URL` | Public base URL used in registration/magic-link emails. |
 | `DJANGO_EMAIL_BACKEND` | Defaults to the console backend; set a real backend to send registration email. |
-| `DEFAULT_FROM_EMAIL` | Sender address for registration email. |
+| `DEFAULT_FROM_EMAIL` | Sender name and address for outgoing email; defaults to `Meetakk <admin@meetakk.com>`. |
 
 SMTP host/port/credentials are not currently read from the environment by
 `config/settings/base.py`. Sending real email therefore needs a backend that
