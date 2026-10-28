@@ -66,7 +66,12 @@ def _registration_payload(**overrides) -> dict:
         "email": "testuser@example.com",
         "age": 25,
         "tag_ids": [],
-        "accepted_terms": True,
+        "consents": {
+            "age_confirmation": True,
+            "sensitive_data_processing": True,
+            "mutual_contact_sharing": True,
+            "terms_and_privacy": True,
+        },
     }
     base.update(overrides)
     return base
@@ -185,7 +190,12 @@ def test_http_endpoint_rejects_multiple_tags_when_unique_tags_enabled(client: Cl
             "email": "carol@example.com",
             "age": 25,
             "tag_ids": [str(tag1.id), str(tag2.id)],
-            "accepted_terms": True,
+            "consents": {
+                "age_confirmation": True,
+                "sensitive_data_processing": True,
+                "mutual_contact_sharing": True,
+                "terms_and_privacy": True,
+            },
         }
     )
 
@@ -217,7 +227,12 @@ def test_http_endpoint_accepts_single_tag_when_unique_tags_enabled(client: Clien
             "email": "dave@example.com",
             "age": 25,
             "tag_ids": [str(tag.id)],
-            "accepted_terms": True,
+            "consents": {
+                "age_confirmation": True,
+                "sensitive_data_processing": True,
+                "mutual_contact_sharing": True,
+                "terms_and_privacy": True,
+            },
         }
     )
 
@@ -250,7 +265,12 @@ def test_http_endpoint_still_allows_multiple_tags_when_unique_tags_disabled(
             "email": "eve@example.com",
             "age": 25,
             "tag_ids": [str(tag1.id), str(tag2.id)],
-            "accepted_terms": True,
+            "consents": {
+                "age_confirmation": True,
+                "sensitive_data_processing": True,
+                "mutual_contact_sharing": True,
+                "terms_and_privacy": True,
+            },
         }
     )
 

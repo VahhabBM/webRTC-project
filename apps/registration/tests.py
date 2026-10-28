@@ -32,7 +32,12 @@ class RegistrationTests(TestCase):
             "display_name": "علی رضایی",
             "email": "ali@example.com",
             "tag_ids": [str(self.tag1.id)],
-            "accepted_terms": True,
+            "consents": {
+                "age_confirmation": True,
+                "sensitive_data_processing": True,
+                "mutual_contact_sharing": True,
+                "terms_and_privacy": True,
+            },
         }
         payload.update(overrides)
         return self.client.post(
@@ -55,10 +60,10 @@ class RegistrationTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["code"], "duplicate_email")
 
-    def test_registration_without_accepted_terms_is_rejected(self):
-        response = self._register(accepted_terms=False)
+    def test_registration_without_all_required_consents_is_rejected(self):
+        response = self._register(consents={"age_confirmation": True})
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["code"], "terms_not_accepted")
+        self.assertEqual(response.json()["code"], "consents_required")
 
     def test_registration_with_too_many_tags_is_rejected(self):
         extra_tags = [Tag.objects.create(name=f"تگ{i}").id for i in range(6)]

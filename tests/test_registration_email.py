@@ -28,7 +28,12 @@ class RegistrationEmailTestCase(TestCase):
             "email": "test@example.com",
             "age": 29,
             "tag_ids": [str(self.tag.id)],
-            "accepted_terms": True,
+            "consents": {
+                "age_confirmation": True,
+                "sensitive_data_processing": True,
+                "mutual_contact_sharing": True,
+                "terms_and_privacy": True,
+            },
         }
 
         # 1. Submit registration request

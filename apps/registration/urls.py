@@ -4,6 +4,7 @@ from .views import (
     CheckEmailView,
     DeviceCheckReportView,
     DeviceCheckView,
+    LegalDocumentsView,
     RegisterView,
     VerifyEmailView,
 )
@@ -11,6 +12,12 @@ from .views import (
 app_name = "registration"
 
 urlpatterns = [
+    path("legal/", LegalDocumentsView.as_view(), name="legal"),
+    path(
+        "<uuid:event_id>/legal/",
+        LegalDocumentsView.as_view(),
+        name="legal-event",
+    ),
     path("<uuid:event_id>/", RegisterView.as_view(), name="register-ui"),
     path(
         "events/<uuid:event_id>/register/",

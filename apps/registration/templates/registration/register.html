@@ -169,6 +169,19 @@
             line-height: 1.4;
             margin-bottom: 20px;
         }
+        .consent-intro { margin: 6px 0 12px; }
+        .consent-option {
+            display: flex;
+            align-items: flex-start;
+            gap: 9px;
+            margin: 11px 0;
+            color: #514a40;
+            font-size: 13px;
+        }
+        .consent-option input { flex: 0 0 auto; margin: 3px 0 0; }
+        .consent-option label { display: inline; margin: 0; font-weight: normal; line-height: 1.45; cursor: pointer; }
+        .consent-option .required-mark { color: #b13c2d; font-weight: bold; }
+        .consent-section a { color: #294b87; text-decoration: underline; }
         button.submit-btn {
             background-color: #3b5998;
             color: white;
@@ -347,11 +360,31 @@
             </div>
         </div>
 
-        <div class="disclaimer">
-            <strong>Disclaimer:</strong><br>
-            By registering, I confirm that:<br>
-            1. I am over the age of legality and consent (at least 18 years old).<br>
-            2. My email is used for registration and room access. My WhatsApp number is shared with a partner <em>only if we both agree</em> after our session.
+        <div class="disclaimer consent-section">
+            <strong>Privacy and consent</strong>
+            <p class="consent-intro">
+                Meetakk is the data controller for the information you give here. We use it only to run the event and match you with other participants. Read our
+                <a href="{{ legal_url }}#privacy" target="_blank" rel="noopener">Privacy Policy</a> and
+                <a href="{{ legal_url }}#terms" target="_blank" rel="noopener">Terms &amp; Conditions</a>.
+                Please tick each box separately. Boxes marked <span class="required-mark">*</span> are required.
+            </p>
+            <div class="consent-option">
+                <input type="checkbox" id="consentAge" name="consents" value="age_confirmation" required>
+                <label for="consentAge"><span class="required-mark">*</span> I confirm that I am 18 years old or over.</label>
+            </div>
+            <div class="consent-option">
+                <input type="checkbox" id="consentSensitiveData" name="consents" value="sensitive_data_processing" required>
+                <label for="consentSensitiveData"><span class="required-mark">*</span> I explicitly consent to Meetakk processing my gender and the genders I would like to meet, which may reveal my sexual orientation, only to match me with other participants.</label>
+            </div>
+            <div class="consent-option">
+                <input type="checkbox" id="consentMutualSharing" name="consents" value="mutual_contact_sharing" required>
+                <label for="consentMutualSharing"><span class="required-mark">*</span> I consent to my name and WhatsApp number being shared only with participants I have mutually matched with at this event. I understand that once shared, Meetakk cannot control how they use my details.</label>
+            </div>
+            <div class="consent-option">
+                <input type="checkbox" id="consentTermsPrivacy" name="consents" value="terms_and_privacy" required>
+                <label for="consentTermsPrivacy"><span class="required-mark">*</span> I have read and agree to the <a href="{{ legal_url }}#terms" target="_blank" rel="noopener">Terms &amp; Conditions</a> and <a href="{{ legal_url }}#privacy" target="_blank" rel="noopener">Privacy Policy</a>. I understand that Meetakk only facilitates introductions and is not responsible for the conduct of other participants.</label>
+            </div>
+            <p class="age-note">We delete your registration details and WhatsApp number 2 days after the event.</p>
         </div>
 
         <div id="errorContainer" class="error-msg"></div>
@@ -388,7 +421,12 @@
             want_to_date: document.querySelector('input[name="want_to_date"]:checked').value,
             email: document.getElementById('email').value.trim(),
             whatsapp: fullWhatsapp,
-            accepted_terms: true
+            consents: {
+                age_confirmation: document.getElementById('consentAge').checked,
+                sensitive_data_processing: document.getElementById('consentSensitiveData').checked,
+                mutual_contact_sharing: document.getElementById('consentMutualSharing').checked,
+                terms_and_privacy: document.getElementById('consentTermsPrivacy').checked
+            }
         };
 
         try {

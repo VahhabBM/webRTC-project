@@ -4,6 +4,7 @@ import logging
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.template import TemplateDoesNotExist
+from django.urls import reverse
 from django.utils import timezone
 from django.views import View
 
@@ -11,10 +12,18 @@ from apps.events.auth import event_end, issue_join_token
 from apps.events.countries import COUNTRY_CHOICES
 from apps.events.models import Event, Tag
 from apps.registration.forms import RegistrationError, validate_registration_data
+from apps.registration.legal_documents import (
+    LAST_UPDATED,
+    PRIVACY_POLICY,
+    PRIVACY_VERSION,
+    TERMS_AND_CONDITIONS,
+    TERMS_VERSION,
+)
 from apps.registration.models import (
     DeviceCheckLog,
     EmailVerificationToken,
     Participant,
+    TermsAcceptance,
 )
 from apps.registration.services.email_service import EmailService
 
@@ -91,6 +100,12 @@ def register_view(request, event_id=None):
             gender=payload.get("gender", "Other/Prefer Not to Say"),
             want_to_date=payload.get("want_to_date", "Any"),
             whatsapp=payload.get("whatsapp", ""),
+        )
+        TermsAcceptance.objects.create(
+            participant=participant,
+            terms_version=TERMS_VERSION,
+            privacy_version=PRIVACY_VERSION,
+            consents=payload["consents"],
         )
         tag_ids = payload.get("tag_ids") or payload.get("tags") or []
         if tag_ids and hasattr(participant, "tags"):
@@ -313,6 +328,26 @@ def device_check_view(request, event_id=None):
     )
 
 
+def legal_documents_view(request, event_id=None):
+    event = get_object_or_404(Event, id=event_id) if event_id else None
+    registration_url = (
+        reverse("registration:register-ui", kwargs={"event_id": event_id})
+        if event_id
+        else "/"
+    )
+    return render(
+        request,
+        "registration/legal_documents.html",
+        {
+            "event": event,
+            "registration_url": registration_url,
+            "terms": TERMS_AND_CONDITIONS,
+            "privacy": PRIVACY_POLICY,
+            "last_updated": LAST_UPDATED,
+        },
+    )
+
+
 def device_check_report_view(request, event_id=None):
     """API endpoint to receive and record device check telemetry in DeviceCheckLog."""
     if request.method != "POST":
@@ -358,6 +393,11 @@ class RegisterView(View):
                 "event_id": event_id,
                 "tags": tags,
                 "country_choices": COUNTRY_CHOICES,
+                "legal_url": (
+                    reverse("registration:legal-event", kwargs={"event_id": event_id})
+                    if event_id
+                    else reverse("registration:legal")
+                ),
             },
         )
 
@@ -378,6 +418,11 @@ class CheckEmailView(View):
 class DeviceCheckView(View):
     def get(self, request, event_id=None, *args, **kwargs):
         return device_check_view(request, event_id=event_id)
+
+
+class LegalDocumentsView(View):
+    def get(self, request, event_id=None, *args, **kwargs):
+        return legal_documents_view(request, event_id=event_id)
 
 
 class DeviceCheckReportView(View):

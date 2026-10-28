@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terms &amp; Conditions and Privacy Policy | Meetakk</title>
+    <style>
+        :root { color-scheme: light; }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 24px 14px;
+            background: #f4f1e9;
+            color: #29251f;
+            font: 16px/1.65 Arial, sans-serif;
+        }
+        main {
+            width: min(100%, 860px);
+            margin: 0 auto;
+            padding: clamp(22px, 5vw, 48px);
+            background: #fffdf7;
+            border: 1px solid #e4ded0;
+            border-radius: 14px;
+            box-shadow: 0 12px 40px rgba(40, 31, 18, .12);
+        }
+        h1, h2, h3 { line-height: 1.25; color: #403525; }
+        h1 { margin: 0 0 8px; font-size: clamp(26px, 5vw, 36px); }
+        h2 { margin: 42px 0 12px; padding-top: 22px; border-top: 1px solid #e7e0d3; font-size: 25px; }
+        h3 { margin: 26px 0 8px; font-size: 18px; }
+        p { margin: 9px 0; }
+        ul { margin: 8px 0 14px; padding-left: 24px; }
+        li { margin: 6px 0; }
+        .updated { margin: 0 0 26px; color: #6c6255; font-size: 14px; }
+        .summary { margin: 0 0 20px; color: #554a3d; }
+        .back {
+            display: inline-block;
+            margin-top: 32px;
+            padding: 10px 15px;
+            border-radius: 7px;
+            background: #3b5998;
+            color: #fff;
+            text-decoration: none;
+            font-weight: 700;
+        }
+        .back:focus-visible, a:focus-visible { outline: 3px solid #d07a33; outline-offset: 3px; }
+        @media (max-width: 540px) {
+            body { padding: 10px; }
+            main { border-radius: 10px; }
+            h2 { margin-top: 32px; }
+        }
+    </style>
+</head>
+<body>
+<main>
+    <h1>Meetakk Terms &amp; Conditions and Privacy Policy</h1>
+    <p class="updated">Last updated: {{ last_updated }}</p>
+
+    <section id="terms" aria-labelledby="terms-heading">
+        <h2 id="terms-heading">Terms &amp; Conditions</h2>
+        <p class="summary">{{ terms.summary }}</p>
+        {% for section in terms.sections %}
+            <section aria-labelledby="terms-section-{{ forloop.counter }}">
+                <h3 id="terms-section-{{ forloop.counter }}">{{ section.heading }}</h3>
+                {% if section.intro %}<p>{{ section.intro }}</p>{% endif %}
+                {% if section.paragraphs %}
+                    {% for paragraph in section.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
+                {% endif %}
+                {% if section.items %}
+                    <ul>{% for item in section.items %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+            </section>
+        {% endfor %}
+    </section>
+
+    <section id="privacy" aria-labelledby="privacy-heading">
+        <h2 id="privacy-heading">Privacy Policy</h2>
+        <p class="summary">{{ privacy.summary }}</p>
+        {% for section in privacy.sections %}
+            <section aria-labelledby="privacy-section-{{ forloop.counter }}">
+                <h3 id="privacy-section-{{ forloop.counter }}">{{ section.heading }}</h3>
+                {% if section.intro %}<p>{{ section.intro }}</p>{% endif %}
+                {% if section.paragraphs %}
+                    {% for paragraph in section.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
+                {% endif %}
+                {% if section.items %}
+                    <ul>{% for item in section.items %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% endif %}
+            </section>
+        {% endfor %}
+    </section>
+
+    <a class="back" href="{{ registration_url }}">Back to registration</a>
+</main>
+</body>
+</html>

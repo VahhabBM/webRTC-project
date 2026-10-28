@@ -1,6 +1,7 @@
 from decimal import Decimal, InvalidOperation
 
 from apps.events.countries import COUNTRY_CODES
+from apps.registration.legal_documents import REQUIRED_CONSENTS
 
 
 class RegistrationError(Exception):
@@ -26,10 +27,13 @@ def validate_registration_data(event, data):
     if not email or "@" not in email:
         raise RegistrationError("A valid email address is required.", "invalid_email")
 
-    accepted_terms = data.get("accepted_terms", True)
-    if not accepted_terms:
+    consents = data.get("consents")
+    if not isinstance(consents, dict) or any(
+        consents.get(consent_id) is not True for consent_id in REQUIRED_CONSENTS
+    ):
         raise RegistrationError(
-            "You must accept the terms and conditions.", "terms_not_accepted"
+            "Please tick every required privacy and consent box to register.",
+            "consents_required",
         )
 
     tag_selection_provided = "tag_ids" in data or "tags" in data
@@ -85,5 +89,5 @@ def validate_registration_data(event, data):
         "whatsapp": whatsapp,
         "tag_ids": tag_ids,
         "tags": tag_ids,
-        "accepted_terms": accepted_terms,
+        "consents": {consent_id: True for consent_id in REQUIRED_CONSENTS},
     }
