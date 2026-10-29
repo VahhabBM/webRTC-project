@@ -14,9 +14,12 @@ class EmailService:
         message = (
             f"Hello {name},\n\n"
             f"Thank you for registering for {event_title}.\n"
-            f"Please click the link below to activate your account:\n\n"
+            "Please click the link below to verify your email address.\n\n"
             f"{verify_url}\n\n"
-            f"This link is valid for the next 24 hours."
+            "After you verify your email, your registration will be complete. "
+            "Your personal event access link will be emailed to you 24 hours "
+            "before the event starts.\n\n"
+            "This verification link is valid for the next 24 hours."
         )
 
         try:

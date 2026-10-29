@@ -131,6 +131,7 @@ class Participant(models.Model):
     )
     join_token_expires_at = models.DateTimeField(null=True, blank=True)
     joined_at = models.DateTimeField(null=True, blank=True)
+    event_access_email_sent_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     tags = models.ManyToManyField(

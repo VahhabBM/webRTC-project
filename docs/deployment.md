@@ -213,6 +213,11 @@ secret.
 | `DJANGO_EMAIL_BACKEND` | Defaults to the console backend; set a real backend to send registration email. |
 | `DEFAULT_FROM_EMAIL` | Sender name and address for outgoing email; defaults to `Meetakk <admin@meetakk.com>`. |
 
+The production Compose stack runs `email_scheduler`, which checks every five
+minutes for verified participants in upcoming events and sends each room link
+once when the event is within 24 hours. The verification email explains this
+schedule; the room link is not sent immediately after verification.
+
 SMTP host/port/credentials are not currently read from the environment by
 `config/settings/base.py`. Sending real email therefore needs a backend that
 does not require them, or a follow-up settings change — do not assume

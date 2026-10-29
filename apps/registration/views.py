@@ -1,5 +1,4 @@
 import json
-import logging
 
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
@@ -8,7 +7,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views import View
 
-from apps.events.auth import event_end, issue_join_token
+from apps.events.auth import event_end
 from apps.events.countries import COUNTRY_CHOICES
 from apps.events.models import Event, Tag
 from apps.registration.forms import RegistrationError, validate_registration_data
@@ -26,8 +25,6 @@ from apps.registration.models import (
     TermsAcceptance,
 )
 from apps.registration.services.email_service import EmailService
-
-logger = logging.getLogger(__name__)
 
 
 def is_rate_limited(request):
@@ -124,6 +121,7 @@ def register_view(request, event_id=None):
             recipient_email=email,
             name=participant.display_name,
             token=token_obj.token,
+            event_title=participant.event.name,
         )
     except Exception as exc:
         return JsonResponse(
@@ -223,7 +221,7 @@ def verify_email_view(request, token):
         token_obj.save()
 
     participant = token_obj.participant
-    access_link_email_sent = False
+    access_link_email_scheduled = False
     if participant:
         if hasattr(participant, "confirm") and callable(participant.confirm):
             participant.confirm()
@@ -245,34 +243,21 @@ def verify_email_view(request, token):
                     participant.status = ParticipantStatus.VERIFIED
             participant.save()
 
-        if (
+        access_link_email_scheduled = bool(
             participant.joined_at
             and participant.email
             and event_end(participant) > timezone.now()
-        ):
-            try:
-                join_token = issue_join_token(participant)
-                join_url = EmailService.build_event_access_url(
-                    participant, join_token
-                )
-                EmailService.send_event_access_email(
-                    recipient_email=participant.email,
-                    name=participant.display_name,
-                    event_title=participant.event.name,
-                    join_url=join_url,
-                )
-                access_link_email_sent = True
-            except Exception:
-                logger.exception(
-                    "Could not send event access email for participant %s",
-                    participant.pk,
-                )
+        )
 
     if is_json_request:
         return JsonResponse(
             {
-                "message": "Your registration has been successfully verified.",
-                "access_link_email_sent": access_link_email_sent,
+                "message": (
+                    "Your email is verified and your registration is complete. "
+                    "Your event access link will be emailed 24 hours before "
+                    "the event starts."
+                ),
+                "access_link_email_scheduled": access_link_email_scheduled,
             },
             status=200,
         )
@@ -289,10 +274,15 @@ def verify_email_view(request, token):
             "event": getattr(participant, "event", None),
             "success": True,
             "valid": True,
-            "access_link_email_sent": access_link_email_sent,
+            "access_link_email_scheduled": access_link_email_scheduled,
         },
         status=200,
-        fallback_html=f"<!DOCTYPE html><html dir='ltr'><body><h1>You are Confirmed!</h1><p>{participant.display_name if participant else ''}</p></body></html>",
+        fallback_html=(
+            "<!DOCTYPE html><html dir='ltr'><body><h1>You are Confirmed!</h1>"
+            f"<p>{participant.display_name if participant else ''}</p>"
+            "<p>Your event access link will be emailed 24 hours before the event starts.</p>"
+            "</body></html>"
+        ),
     )
 
 
