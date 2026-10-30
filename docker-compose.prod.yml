@@ -60,6 +60,23 @@ services:
       - "300"
       - --confirm-production
 
+  data_retention:
+    image: webrtc-project:${APP_GIT_TAG:?APP_GIT_TAG must be set to the deployed Git tag}
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    depends_on:
+      web:
+        condition: service_healthy
+    command:
+      - python
+      - manage.py
+      - delete_expired_registration_data
+      - --loop
+      - --interval-seconds
+      - "3600"
+      - --confirm-production
+
   db:
     image: postgres:16-alpine
     restart: unless-stopped

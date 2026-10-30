@@ -216,7 +216,9 @@ secret.
 The production Compose stack runs `email_scheduler`, which checks every five
 minutes for verified participants in upcoming events and sends each room link
 once when the event is within 24 hours. The verification email explains this
-schedule; the room link is not sent immediately after verification.
+schedule; the room link is not sent immediately after verification. It also
+runs `data_retention`, which removes participants and their related registration
+records two days after an event ends, checking once per hour.
 
 SMTP host/port/credentials are not currently read from the environment by
 `config/settings/base.py`. Sending real email therefore needs a backend that
@@ -233,7 +235,8 @@ does not require them, or a follow-up settings change — do not assume
 
 ## 5. Startup and health checks
 
-1. All three services are up and healthy:
+1. All five services are present; `db`, `redis`, and `web` are healthy, and
+   `email_scheduler` and `data_retention` are running:
 
    ```bash
    docker compose --env-file .env.production -f docker-compose.prod.yml ps
