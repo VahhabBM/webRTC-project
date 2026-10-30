@@ -19,7 +19,7 @@ TERMS_AND_CONDITIONS = {
         },
         {
             "heading": "2. Who can take part",
-            "items": [
+            "bullets": [
                 "You must be 18 or over.",
                 "The information you give when you register, including your age and gender, must be true.",
                 "You may only register for yourself.",
@@ -27,7 +27,7 @@ TERMS_AND_CONDITIONS = {
         },
         {
             "heading": "3. Registration",
-            "items": [
+            "bullets": [
                 "You register using our online form.",
                 "If we cancel or reschedule an event, we will offer you a place at the new date.",
             ],
@@ -35,7 +35,7 @@ TERMS_AND_CONDITIONS = {
         {
             "heading": "4. How you must behave",
             "intro": "You agree to:",
-            "items": [
+            "bullets": [
                 "Be respectful and polite to everyone at the event.",
                 "Not harass, threaten, pressure or discriminate against anyone.",
                 "Not record, screenshot or share anything from the event.",
@@ -48,7 +48,7 @@ TERMS_AND_CONDITIONS = {
         },
         {
             "heading": "5. Our role and responsibility",
-            "items": [
+            "bullets": [
                 "Meetakk only organises events and introduces people. We do not check the identity, background or intentions of participants, and we do not guarantee that you will find a match or a relationship.",
                 "You are responsible for your own decisions and for anything that happens between you and other participants, online or in person.",
                 "To the extent the law allows, Meetakk is not responsible for the behaviour of participants or for any loss or harm that results from meeting or contacting them. Nothing in these terms limits any rights you have under consumer law or any liability that cannot legally be excluded.",
@@ -56,7 +56,7 @@ TERMS_AND_CONDITIONS = {
         },
         {
             "heading": "6. Staying safe",
-            "items": [
+            "bullets": [
                 "Do not share personal details such as your address, workplace or financial information early on.",
                 "If you decide to meet in person, choose a public place and tell a friend or family member where you are going.",
             ],
@@ -90,7 +90,7 @@ PRIVACY_POLICY = {
         },
         {
             "heading": "2. What we collect",
-            "items": [
+            "bullets": [
                 "Your name",
                 "Your date of birth or age",
                 "Your gender and the genders you would like to meet",
@@ -101,7 +101,7 @@ PRIVACY_POLICY = {
         },
         {
             "heading": "3. Why we use your data",
-            "items": [
+            "bullets": [
                 "To register you and confirm your booking. This is needed to carry out our agreement with you.",
                 "To match you with other participants and share your name and WhatsApp number with people you mutually match with. We do this with your consent.",
                 "To use your gender and the genders you would like to meet, which can reveal your sexual orientation, only for matching. We do this with your explicit consent.",
@@ -109,7 +109,7 @@ PRIVACY_POLICY = {
         },
         {
             "heading": "4. Who we share it with",
-            "items": [
+            "bullets": [
                 "Mutual matches: only your name and WhatsApp number, and only when you both chose each other.",
                 "Service providers that help us run Meetakk, such as our form and storage tools, our email service and WhatsApp.",
                 "We do not sell your data and we do not use it for advertising or marketing.",
@@ -124,14 +124,14 @@ PRIVACY_POLICY = {
         },
         {
             "heading": "6. How long we keep your data",
-            "items": [
+            "bullets": [
                 "We delete your registration details and WhatsApp number 2 days after the event.",
             ],
         },
         {
             "heading": "7. Your rights",
             "intro": "You have the right to:",
-            "items": [
+            "bullets": [
                 "Ask for a copy of your data.",
                 "Ask us to correct it.",
                 "Ask us to delete it.",

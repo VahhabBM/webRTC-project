@@ -65,8 +65,8 @@
                 {% if section.paragraphs %}
                     {% for paragraph in section.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
                 {% endif %}
-                {% if section.items %}
-                    <ul>{% for item in section.items %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% if section.bullets %}
+                    <ul>{% for item in section.bullets %}<li>{{ item }}</li>{% endfor %}</ul>
                 {% endif %}
             </section>
         {% endfor %}
@@ -82,8 +82,8 @@
                 {% if section.paragraphs %}
                     {% for paragraph in section.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
                 {% endif %}
-                {% if section.items %}
-                    <ul>{% for item in section.items %}<li>{{ item }}</li>{% endfor %}</ul>
+                {% if section.bullets %}
+                    <ul>{% for item in section.bullets %}<li>{{ item }}</li>{% endfor %}</ul>
                 {% endif %}
             </section>
         {% endfor %}
