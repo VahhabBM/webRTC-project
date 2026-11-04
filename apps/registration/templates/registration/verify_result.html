@@ -1,6 +1,6 @@
 {% extends "registration/base.html" %}
 
-{% block title %}Registration Confirmed{% endblock %}
+{% block title %}{% if registration_status == "waitlisted" %}Email Verified — Waitlist{% else %}Registration Confirmed{% endif %}{% endblock %}
 
 {% block main_content %}
   <div style="text-align: center; padding: 42px 24px;">
@@ -9,13 +9,17 @@
         <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
       </svg>
     </div>
-    <h2 style="font-size: 1.4rem; font-weight: 800; color: var(--text-main); margin-bottom: 10px;">You are Confirmed!</h2>
+    <h2 style="font-size: 1.4rem; font-weight: 800; color: var(--text-main); margin-bottom: 10px;">
+      {% if registration_status == "waitlisted" %}Email verified — you are on the waitlist{% else %}You are Confirmed!{% endif %}
+    </h2>
     <p style="font-size: 0.95rem; color: var(--text-muted); margin-bottom: 22px;">
       Welcome <strong>{{ participant.display_name }}</strong>, your participation in <strong>{{ event.name }}</strong> is officially verified.
     </p>
 
     <div style="background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 14px; padding: 18px; font-size: 0.9rem; color: #065f46; line-height: 1.6;">
-      {% if access_link_email_scheduled %}
+      {% if verification_message %}
+        {{ verification_message }}
+      {% elif access_link_email_scheduled %}
         Your email is verified and your registration is complete. Your personal event access link will be emailed 24 hours before the event starts.
       {% else %}
         Your email is verified. Please contact the event organizer for your event access details.

@@ -31,6 +31,7 @@ class RegistrationTests(TestCase):
         payload = {
             "display_name": "علی رضایی",
             "email": "ali@example.com",
+            "age": 30,
             "tag_ids": [str(self.tag1.id)],
             "consents": {
                 "age_confirmation": True,

@@ -6,7 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.events.auth import event_end, issue_join_token
-from apps.events.models import EventStatus, Participant
+from apps.events.models import EventStatus, Participant, RegistrationStatus
 from apps.registration.services.email_service import EmailService
 
 
@@ -22,6 +22,7 @@ def send_event_access_email_once(participant_id) -> bool:
     if (
         participant.event_access_email_sent_at
         or participant.joined_at is None
+        or participant.registration_status != RegistrationStatus.CONFIRMED
         or not participant.email
         or participant.event.status
         not in {

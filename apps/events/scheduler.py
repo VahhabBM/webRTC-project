@@ -34,7 +34,12 @@ def calculate_full_schedule(
     base_start = start_time or event.start_time or timezone.now()
     schedule: list[ScheduledRound] = []
 
-    current_round_start = base_start
+    intro_offset = (
+        timedelta(seconds=event.intro_video_duration_seconds + preconnect_duration.total_seconds())
+        if event.intro_video_url
+        else timedelta(0)
+    )
+    current_round_start = base_start + intro_offset
     round_dur = event.round_duration
     break_dur = event.break_duration
 

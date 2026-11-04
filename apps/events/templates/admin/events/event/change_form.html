@@ -10,5 +10,15 @@
       <a href="{{ matching_report_url }}" class="historylink">Run Matching Report</a>
     </li>
   {% endif %}
+  {% if registration_stats_url %}
+    <li>
+      <a href="{{ registration_stats_url }}" class="historylink">Registration Statistics</a>
+    </li>
+  {% endif %}
+  {% if waitlist_url %}
+    <li>
+      <a href="{{ waitlist_url }}" class="historylink">Verified Waitlist</a>
+    </li>
+  {% endif %}
   {{ block.super }}
 {% endblock %}

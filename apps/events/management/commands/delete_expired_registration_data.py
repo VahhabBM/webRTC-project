@@ -9,7 +9,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
-from apps.events.auth import participant_session_cache_key
+from apps.events.auth import participant_session_cache_key, scheduled_event_end
 from apps.events.models import Event, EventStatus, Participant
 from apps.registration.models import DeviceCheckLog
 
@@ -70,11 +70,7 @@ class Command(BaseCommand):
             EventStatus.PAUSED,
         )
         for event in Event.objects.exclude(status__in=excluded_statuses).iterator():
-            event_end = event.start_time + (
-                event.num_rounds * event.round_duration
-                + max(event.num_rounds - 1, 0) * event.break_duration
-            )
-            if event_end > cutoff:
+            if scheduled_event_end(event) > cutoff:
                 continue
 
             participant_ids = list(

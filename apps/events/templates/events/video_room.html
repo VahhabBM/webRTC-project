@@ -106,6 +106,7 @@
       transform: scaleX(-1);
     }
     #remoteVideo { transform: none; }
+    #introVideo { transform: none; }
 
     /* ── Mobile-only PiP video layout ──────────────────────────────────────
        On viewports ≤640 px the remote feed is large/primary and the local
@@ -306,9 +307,47 @@
     .interest-yes { background: var(--success); color: white; }
     .interest-no, .interest-close { background: #475569; color: white; }
     .interest-actions button:disabled { cursor: wait; opacity: 0.65; }
+    .intro-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      display: grid;
+      place-items: center;
+      padding: 1rem;
+      background: rgb(2 6 23 / 92%);
+    }
+    .intro-dialog {
+      width: min(100%, 720px);
+      padding: 1.25rem;
+      border: 1px solid #475569;
+      border-radius: 14px;
+      background: var(--surface);
+    }
+    .intro-dialog h2 { margin-top: 0; }
+    .intro-dialog video { width: 100%; max-height: 55vh; background: #000; }
+    .intro-dialog button {
+      margin-top: 0.75rem;
+      border: 0;
+      border-radius: 7px;
+      padding: 0.65rem 0.9rem;
+      background: #475569;
+      color: white;
+      font: inherit;
+      cursor: pointer;
+    }
+    .intro-status { min-height: 1.5rem; color: var(--muted); }
   </style>
 </head>
 <body>
+
+  <div id="eventIntro" class="intro-backdrop" role="dialog" aria-modal="true" aria-labelledby="introTitle" hidden>
+    <section class="intro-dialog">
+      <h2 id="introTitle">Welcome to Meetakk</h2>
+      <p id="introStatus" class="intro-status" aria-live="polite">Your introduction will begin when the event starts.</p>
+      <video id="introVideo" controls playsinline preload="metadata" hidden></video>
+      <button id="introContinue" type="button" disabled>Continue without video</button>
+    </section>
+  </div>
 
   <header class="room-header">
     <img class="room-logo" src="{% static 'events/images/meetakk-logo.jpg' %}" alt="Meetakk">
@@ -479,16 +518,78 @@
     );
 
     async function init() {
+      const requestStartedAt = performance.now();
       const meRes = await fetch('/participant/me/');
       if (!meRes.ok) {
         document.getElementById('statusFooter').textContent =
           'Not authenticated. Please join with a valid token first.';
         return;
       }
+      const responseReceivedAt = performance.now();
       const meData = await meRes.json();
       controller.myParticipantId = meData.participant.id;
       window.__t38ForceMediaFallback = () => controller.forceMediaFallback();
-      controller.connect();
+
+      const intro = meData.participant.intro_video;
+      if (!intro?.configured || intro.completed) {
+        controller.connect();
+        return;
+      }
+
+      const overlay = document.getElementById('eventIntro');
+      const video = document.getElementById('introVideo');
+      const status = document.getElementById('introStatus');
+      const continueButton = document.getElementById('introContinue');
+      const requestDuration = responseReceivedAt - requestStartedAt;
+      const estimatedServerNow = Date.parse(meData.server_time) + requestDuration / 2;
+      const eventStart = Date.parse(intro.event_start_at);
+      const startDelay = Math.max(0, eventStart - estimatedServerNow);
+      let connected = false;
+      const connectOnce = () => {
+        if (connected) return;
+        connected = true;
+        overlay.hidden = true;
+        controller.connect();
+      };
+      const finishIntro = async () => {
+        continueButton.disabled = true;
+        status.textContent = 'Saving your progress…';
+        const csrfToken = document.querySelector(
+          '#interestCsrfForm [name="csrfmiddlewaretoken"]',
+        )?.value;
+        try {
+          const response = await fetch('/participant/intro/complete/', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'X-CSRFToken': csrfToken || '' },
+          });
+          if (!response.ok) throw new Error('Could not save intro progress');
+          connectOnce();
+        } catch (_error) {
+          status.textContent = 'Progress could not be saved. Please try again.';
+          continueButton.disabled = false;
+        }
+      };
+
+      overlay.hidden = false;
+      video.src = intro.url;
+      video.addEventListener('ended', finishIntro, { once: true });
+      video.addEventListener('error', () => {
+        status.textContent = 'The introduction video could not be loaded. You can continue without it.';
+      });
+      continueButton.addEventListener('click', finishIntro);
+      if (startDelay > 0) {
+        status.textContent = 'Your introduction will begin when the event starts.';
+        window.setTimeout(() => {
+          status.textContent = 'Play the introduction video, or continue without it.';
+          video.hidden = false;
+          continueButton.disabled = false;
+        }, startDelay);
+      } else {
+        status.textContent = 'Play the introduction video, or continue without it.';
+        video.hidden = false;
+        continueButton.disabled = false;
+      }
     }
 
     init();

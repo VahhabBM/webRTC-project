@@ -1,0 +1,23 @@
+{% extends "admin/base_site.html" %}
+{% block breadcrumbs %}
+<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Home</a> › <a href="{% url 'admin:app_list' app_label='events' %}">Events</a> › <a href="{% url 'admin:events_event_change' event.pk %}">{{ event.name }}</a> › Verified waitlist</div>
+{% endblock %}
+{% block content %}
+<h1>Verified female waitlist — {{ event.name }}</h1>
+<p>Only verified women appear here. Sending an invitation does not confirm a place; the participant must accept while capacity is available.</p>
+<table>
+  <thead><tr><th>Name</th><th>Registered</th><th>Action</th></tr></thead>
+  <tbody>
+    {% for participant in participants %}
+      <tr>
+        <td>{{ participant.display_name }}</td>
+        <td>{{ participant.created_at }}</td>
+        <td>{% if can_invite %}<form method="post" action="{% url 'admin:events_event_waitlist_invite' event.pk participant.pk %}">{% csrf_token %}<button type="submit">Send invitation</button></form>{% else %}View only{% endif %}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="3">No eligible participants are currently waitlisted.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p><a class="button" href="{% url 'admin:events_event_change' event.pk %}">Back to event</a></p>
+{% endblock %}

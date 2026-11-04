@@ -1,0 +1,15 @@
+{% extends "registration/base.html" %}
+{% block title %}Event invitation{% endblock %}
+{% block main_content %}
+  <div style="padding:32px">
+    <h1>{% if accepted %}Place confirmed{% else %}Invitation to {{ event.name }}{% endif %}</h1>
+    <p>Hello {{ participant.display_name }},</p>
+    <p>{{ message }}</p>
+    {% if can_accept %}
+      <form method="post">
+        {% csrf_token %}
+        <button class="btn-primary" type="submit">Accept invitation</button>
+      </form>
+    {% endif %}
+  </div>
+{% endblock %}

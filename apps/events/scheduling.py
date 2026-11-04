@@ -26,8 +26,10 @@ from apps.events.models import (
     OperatorActionLog,
     OperatorActionType,
     Pair,
+    RegistrationStatus,
     Round,
 )
+from apps.events.scheduler import calculate_full_schedule
 from apps.events.scoring import build_participant_profile, build_scoring_weights
 
 
@@ -41,7 +43,9 @@ def build_match_input(event: Event) -> MatchInput:
     ValueError
         If the event's scoring_weights configuration is invalid.
     """
-    participants_qs = event.participants.all().prefetch_related("tags")
+    participants_qs = event.participants.filter(
+        registration_status=RegistrationStatus.CONFIRMED
+    ).prefetch_related("tags")
     participants = list(participants_qs)
 
     weights = build_scoring_weights(event)
@@ -52,6 +56,15 @@ def build_match_input(event: Event) -> MatchInput:
                 MatchParticipant(
                     pid=str(p.pk),
                     profile=build_participant_profile(p),
+                    gender=p.gender,
+                    want_to_date=p.want_to_date,
+                    max_dates=(
+                        event.female_date_limit
+                        if p.gender == "Female"
+                        else event.male_date_limit
+                        if p.gender == "Male"
+                        else event.other_date_limit
+                    ),
                 )
                 for p in participants
             ),
@@ -83,18 +96,19 @@ def persist_schedule(event: Event, schedule) -> None:
     with transaction.atomic():
         event.rounds.all().delete()
 
-        step = event.round_duration + event.break_duration
+        full_schedule = {
+            item.number: item for item in calculate_full_schedule(event)
+        }
         round_objects: list[Round] = []
         for rnd in schedule.rounds:
-            starts_at = event.start_time + (rnd.number - 1) * step
-            ends_at = starts_at + event.round_duration
+            slot = full_schedule[rnd.number]
             round_objects.append(
                 Round(
                     event=event,
                     number=rnd.number,
                     status="scheduled",
-                    starts_at=starts_at,
-                    ends_at=ends_at,
+                    starts_at=slot.starts_at,
+                    ends_at=slot.ends_at,
                 )
             )
 
@@ -182,7 +196,10 @@ def recalculate_pairs_pre_start(
 
         pids = frozenset(mp.pid for mp in match_input.participants)
         violations = validate_schedule(
-            new_schedule, pids, num_rounds=int(locked_event.num_rounds)
+            new_schedule,
+            pids,
+            num_rounds=int(locked_event.num_rounds),
+            match_input=match_input,
         )
         if len(violations) > 0:
             raise MatchingError(

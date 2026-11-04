@@ -7,6 +7,7 @@ from .views import (
     LegalDocumentsView,
     RegisterView,
     VerifyEmailView,
+    accept_waitlist_invitation,
 )
 
 app_name = "registration"
@@ -26,6 +27,11 @@ urlpatterns = [
     ),
     path("check-email/", CheckEmailView.as_view(), name="check-email"),
     path("verify/<str:token>/", VerifyEmailView.as_view(), name="verify-email"),
+    path(
+        "waitlist/<str:token>/",
+        accept_waitlist_invitation,
+        name="accept-waitlist-invitation",
+    ),
     path(
         "device-check/",
         DeviceCheckView.as_view(),

@@ -8,7 +8,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from apps.events.email_notifications import send_event_access_email_once
-from apps.events.models import Event, EventStatus, Participant
+from apps.events.models import Event, EventStatus, Participant, RegistrationStatus
 
 
 class Command(BaseCommand):
@@ -75,6 +75,7 @@ class Command(BaseCommand):
                 Participant.objects.filter(
                     event=event,
                     joined_at__isnull=False,
+                    registration_status=RegistrationStatus.CONFIRMED,
                     event_access_email_sent_at__isnull=True,
                 )
                 .exclude(email="")

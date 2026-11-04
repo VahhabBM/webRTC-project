@@ -210,6 +210,19 @@ class TestBuildReport:
         assert isinstance(r.p10_score, float)
         assert isinstance(r.zero_tag_pairs, int)
 
+    def test_longest_gap_uses_round_and_break_durations(self):
+        schedule = GeneratedSchedule(
+            rounds=(
+                _round(1, [_pair(1, 2)]),
+                _round(2, [_pair(3, 4)]),
+                _round(3, [_pair(1, 3)]),
+            )
+        )
+
+        report = build_report(schedule, [])
+
+        assert report.longest_gap_minutes == 11.0
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Integration: build_report with real generate_schedule output

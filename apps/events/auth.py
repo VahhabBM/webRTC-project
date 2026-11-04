@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
+from datetime import timedelta
 
 from django.conf import settings
 
@@ -14,7 +15,7 @@ from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Participant
+from .models import Participant, RegistrationStatus
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +37,16 @@ class ExpiredJoinToken(Exception):
 
 
 def event_end(participant: Participant):
-    event = participant.event
-    return event.start_time + (
+    return scheduled_event_end(participant.event)
+
+
+def scheduled_event_end(event):
+    intro_offset = (
+        timedelta(seconds=event.intro_video_duration_seconds + 20)
+        if event.intro_video_url
+        else timedelta(0)
+    )
+    return event.start_time + intro_offset + (
         event.num_rounds * event.round_duration
         + max(event.num_rounds - 1, 0) * event.break_duration
     )
@@ -77,7 +86,11 @@ def authenticate_join_token(raw_token: str) -> Participant:
         .filter(join_token_digest=digest)
         .first()
     )
-    if participant is None or not participant.verify_join_token(raw_token):
+    if (
+        participant is None
+        or participant.registration_status != RegistrationStatus.CONFIRMED
+        or not participant.verify_join_token(raw_token)
+    ):
         raise InvalidJoinToken
     if participant.token_is_expired():
         raise ExpiredJoinToken

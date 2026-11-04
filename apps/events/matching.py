@@ -24,6 +24,9 @@ class MatchingImpossibleError(MatchingError):
 class MatchParticipant:
     pid: str
     profile: ParticipantProfile
+    gender: str | None = None
+    want_to_date: str | None = None
+    max_dates: int | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +48,13 @@ class ScheduleRound:
     number: int
     pairs: tuple[SchedulePair, ...]
     unmatched_pid: str | None
+    unmatched_pids: tuple[str, ...] = ()
+
+    @property
+    def all_unmatched_pids(self) -> tuple[str, ...]:
+        if self.unmatched_pids:
+            return self.unmatched_pids
+        return (self.unmatched_pid,) if self.unmatched_pid else ()
 
 
 @dataclass(frozen=True)
@@ -63,6 +73,228 @@ def _canon(x: str, y: str) -> tuple[str, str]:
     return (x, y) if _uuid_value(x) < _uuid_value(y) else (y, x)
 
 
+def _normalized_gender(value: str | None) -> str:
+    if value == "Male":
+        return "Male"
+    if value == "Female":
+        return "Female"
+    return "Other"
+
+
+def _accepts(participant: MatchParticipant, partner: MatchParticipant) -> bool:
+    preference = participant.want_to_date or "Any"
+    return preference == "Any" or preference == _normalized_gender(partner.gender)
+
+
+def _participant_limit(participant: MatchParticipant) -> int:
+    if participant.max_dates is not None:
+        return max(0, int(participant.max_dates))
+    return 7 if _normalized_gender(participant.gender) == "Female" else 5
+
+
+def _generate_constrained_schedule(match_input: MatchInput) -> GeneratedSchedule:
+    participants = tuple(sorted(match_input.participants, key=lambda p: _uuid_value(p.pid)))
+    by_pid = {p.pid: p for p in participants}
+    adjacency: dict[str, list[str]] = {p.pid: [] for p in participants}
+    scores: dict[tuple[str, str], float] = {}
+
+    for index, participant in enumerate(participants):
+        for partner in participants[index + 1 :]:
+            if _accepts(participant, partner) and _accepts(partner, participant):
+                key = _canon(participant.pid, partner.pid)
+                adjacency[participant.pid].append(partner.pid)
+                adjacency[partner.pid].append(participant.pid)
+                scores[key] = compute_match_score(
+                    participant.profile, partner.profile, match_input.weights
+                )
+
+    for pid, candidates in adjacency.items():
+        candidates.sort(key=_uuid_value)
+
+    is_female_male_bipartite = bool(scores) and all(
+        {_normalized_gender(by_pid[a].gender), _normalized_gender(by_pid[b].gender)}
+        == {"Female", "Male"}
+        for a, b in scores
+    )
+    pair_counts = {p.pid: 0 for p in participants}
+    last_round = {p.pid: 0 for p in participants}
+    used_pairs: set[tuple[str, str]] = set()
+    rounds: list[ScheduleRound] = []
+
+    for round_number in range(1, match_input.num_rounds + 1):
+        available = {
+            p.pid
+            for p in participants
+            if pair_counts[p.pid] < _participant_limit(p)
+        }
+        eligible_edges = {
+            pid: [
+                other
+                for other in adjacency[pid]
+                if other in available and _canon(pid, other) not in used_pairs
+            ]
+            for pid in available
+        }
+
+        def partner_key(pid: str, other: str) -> tuple:
+            return (
+                pair_counts[other],
+                last_round[other],
+                -scores[_canon(pid, other)],
+                _uuid_value(other),
+            )
+
+        round_pairs: list[tuple[str, str]] = []
+        if is_female_male_bipartite:
+            women = [
+                p.pid
+                for p in participants
+                if p.pid in available and _normalized_gender(p.gender) == "Female"
+            ]
+            men = {
+                p.pid
+                for p in participants
+                if p.pid in available and _normalized_gender(p.gender) == "Male"
+            }
+            women.sort(
+                key=lambda pid: (
+                    len([m for m in eligible_edges[pid] if m in men]),
+                    pair_counts[pid],
+                    last_round[pid],
+                    _uuid_value(pid),
+                )
+            )
+            assigned_men: dict[str, str] = {}
+            ranked_men = {
+                woman_id: sorted(
+                    (man_id for man_id in eligible_edges[woman_id] if man_id in men),
+                    key=lambda man_id: partner_key(woman_id, man_id),
+                )
+                for woman_id in women
+            }
+            infinity = len(women) + 1
+            distance: dict[str, int] = {}
+
+            def breadth_first_layers() -> int:
+                queue: list[str] = []
+                assigned_women = set(assigned_men.values())
+                for woman_id in women:
+                    if woman_id not in assigned_women:
+                        distance[woman_id] = 0
+                        queue.append(woman_id)
+                    else:
+                        distance[woman_id] = infinity
+                shortest_augmenting_path = infinity
+                cursor = 0
+                while cursor < len(queue):
+                    woman_id = queue[cursor]
+                    cursor += 1
+                    if distance[woman_id] >= shortest_augmenting_path:
+                        continue
+                    for man_id in ranked_men[woman_id]:
+                        previous_woman = assigned_men.get(man_id)
+                        if previous_woman is None:
+                            shortest_augmenting_path = distance[woman_id] + 1
+                        elif distance[previous_woman] == infinity:
+                            distance[previous_woman] = distance[woman_id] + 1
+                            queue.append(previous_woman)
+                return shortest_augmenting_path
+
+            def depth_first_augment(woman_id: str, shortest_path: int) -> bool:
+                for man_id in ranked_men[woman_id]:
+                    previous_woman = assigned_men.get(man_id)
+                    if previous_woman is None:
+                        if distance[woman_id] + 1 != shortest_path:
+                            continue
+                    elif (
+                        distance[previous_woman] != distance[woman_id] + 1
+                        or not depth_first_augment(previous_woman, shortest_path)
+                    ):
+                        continue
+                    assigned_men[man_id] = woman_id
+                    return True
+                distance[woman_id] = infinity
+                return False
+
+            while True:
+                shortest_path = breadth_first_layers()
+                if shortest_path == infinity:
+                    break
+                assigned_women = set(assigned_men.values())
+                for woman_id in women:
+                    if woman_id not in assigned_women:
+                        depth_first_augment(woman_id, shortest_path)
+            round_pairs = [
+                _canon(woman_id, man_id)
+                for man_id, woman_id in assigned_men.items()
+            ]
+        else:
+            unmatched = set(available)
+            remaining_degree = {
+                pid: len(eligible_edges[pid]) for pid in available
+            }
+            ranked_partners = {
+                pid: sorted(
+                    eligible_edges[pid],
+                    key=lambda other: partner_key(pid, other),
+                )
+                for pid in available
+            }
+
+            def remove_from_round(pid: str) -> None:
+                unmatched.remove(pid)
+                for other in eligible_edges[pid]:
+                    if other in unmatched:
+                        remaining_degree[other] -= 1
+
+            while unmatched:
+                pid = min(
+                    unmatched,
+                    key=lambda candidate: (
+                        remaining_degree[candidate],
+                        pair_counts[candidate],
+                        last_round[candidate],
+                        _uuid_value(candidate),
+                    ),
+                )
+                partner = next(
+                    (other for other in ranked_partners[pid] if other in unmatched),
+                    None,
+                )
+                if partner is None:
+                    remove_from_round(pid)
+                    continue
+                round_pairs.append(_canon(pid, partner))
+                remove_from_round(pid)
+                remove_from_round(partner)
+
+        paired_ids: set[str] = set()
+        pairs_out: list[SchedulePair] = []
+        for pid_a, pid_b in sorted(round_pairs, key=lambda pair: (_uuid_value(pair[0]), _uuid_value(pair[1]))):
+            paired_ids.update((pid_a, pid_b))
+            pair_key = (pid_a, pid_b)
+            used_pairs.add(pair_key)
+            pair_counts[pid_a] += 1
+            pair_counts[pid_b] += 1
+            last_round[pid_a] = round_number
+            last_round[pid_b] = round_number
+            pairs_out.append(
+                SchedulePair(pid_a=pid_a, pid_b=pid_b, score=scores[pair_key])
+            )
+
+        unmatched_pids = tuple(p.pid for p in participants if p.pid not in paired_ids)
+        rounds.append(
+            ScheduleRound(
+                number=round_number,
+                pairs=tuple(pairs_out),
+                unmatched_pid=unmatched_pids[0] if len(unmatched_pids) == 1 else None,
+                unmatched_pids=unmatched_pids,
+            )
+        )
+
+    return GeneratedSchedule(rounds=tuple(rounds))
+
+
 def generate_schedule(match_input: MatchInput) -> GeneratedSchedule:
     """Generate an R-round no-repeat pairing schedule entirely in memory."""
 
@@ -76,6 +308,23 @@ def generate_schedule(match_input: MatchInput) -> GeneratedSchedule:
             _uuid_value(pid)
     except (ValueError, AttributeError, TypeError) as exc:
         raise MatchingError("Participant IDs must be valid UUID strings.") from exc
+    if any(
+        p.gender is not None or p.want_to_date is not None or p.max_dates is not None
+        for p in match_input.participants
+    ):
+        if len(pid_list) < 2:
+            raise MatchingImpossibleError(
+                f"Cannot generate a schedule with fewer than 2 participants (got {len(pid_list)})."
+            )
+        max_rounds = len(pid_list) - 1 if len(pid_list) % 2 == 0 else len(pid_list)
+        if match_input.num_rounds > max_rounds:
+            raise MatchingImpossibleError(
+                f"Participant count {len(pid_list)} is too small for "
+                f"{match_input.num_rounds} non-repeating rounds. "
+                f"At most {max_rounds} rounds are possible."
+            )
+        return _generate_constrained_schedule(match_input)
+
     profiles: dict[str, ParticipantProfile] = {
         p.pid: p.profile for p in match_input.participants
     }
@@ -380,7 +629,16 @@ def validate_schedule(
     schedule: GeneratedSchedule,
     all_participant_pids: frozenset[str],
     num_rounds: int,
+    match_input: MatchInput | None = None,
 ) -> list[ScheduleViolation]:
+    if match_input and any(
+        p.gender is not None or p.want_to_date is not None or p.max_dates is not None
+        for p in match_input.participants
+    ):
+        return _validate_constrained_schedule(
+            schedule, all_participant_pids, num_rounds, match_input
+        )
+
     violations: list[ScheduleViolation] = []
 
     if len(schedule.rounds) != num_rounds:
@@ -540,6 +798,95 @@ def validate_schedule(
                     kind="UNMATCHED_TWICE",
                     detail=f"Participant {pid} unmatched {count} times.",
                 )
+            )
+
+    return violations
+
+
+def _validate_constrained_schedule(
+    schedule: GeneratedSchedule,
+    all_participant_pids: frozenset[str],
+    num_rounds: int,
+    match_input: MatchInput,
+) -> list[ScheduleViolation]:
+    violations: list[ScheduleViolation] = []
+    participants = {participant.pid: participant for participant in match_input.participants}
+    pair_counts = {pid: 0 for pid in all_participant_pids}
+    pair_rounds: dict[tuple[str, str], int] = {}
+
+    if len(schedule.rounds) != num_rounds:
+        violations.append(
+            ScheduleViolation(
+                "WRONG_ROUND_COUNT",
+                f"Expected {num_rounds} rounds, got {len(schedule.rounds)}.",
+            )
+        )
+    if {rnd.number for rnd in schedule.rounds} != set(range(1, num_rounds + 1)):
+        violations.append(
+            ScheduleViolation("WRONG_ROUND_NUMBERS", "Round numbers are incomplete or duplicated.")
+        )
+
+    for rnd in schedule.rounds:
+        used: set[str] = set()
+        for pair in rnd.pairs:
+            if pair.pid_a not in all_participant_pids or pair.pid_b not in all_participant_pids:
+                violations.append(
+                    ScheduleViolation("UNKNOWN_PARTICIPANT", f"Round {rnd.number} contains an unknown participant.")
+                )
+                continue
+            if pair.pid_a == pair.pid_b:
+                violations.append(
+                    ScheduleViolation("SELF_PAIR", f"Round {rnd.number} contains a self-pair.")
+                )
+                continue
+            if _uuid_value(pair.pid_a) >= _uuid_value(pair.pid_b):
+                violations.append(
+                    ScheduleViolation("WRONG_CANONICAL_ORDER", f"Round {rnd.number} contains an unordered pair.")
+                )
+            if pair.pid_a in used or pair.pid_b in used:
+                violations.append(
+                    ScheduleViolation("DUPLICATE_IN_ROUND", f"Round {rnd.number} uses a participant more than once.")
+                )
+            used.update((pair.pid_a, pair.pid_b))
+            key = (pair.pid_a, pair.pid_b)
+            if key in pair_rounds:
+                violations.append(
+                    ScheduleViolation("REPEATED_PARTNER", f"A pair repeats in rounds {pair_rounds[key]} and {rnd.number}.")
+                )
+            else:
+                pair_rounds[key] = rnd.number
+            pair_counts[pair.pid_a] += 1
+            pair_counts[pair.pid_b] += 1
+
+            first = participants.get(pair.pid_a)
+            second = participants.get(pair.pid_b)
+            if first and second and not (
+                _accepts(first, second) and _accepts(second, first)
+            ):
+                violations.append(
+                    ScheduleViolation("PREFERENCE_VIOLATION", f"Round {rnd.number} violates mutual date preferences.")
+                )
+            if not isinstance(pair.score, (int, float)) or not math.isfinite(pair.score) or not 0 <= pair.score <= 1:
+                violations.append(
+                    ScheduleViolation("SCORE_OUT_OF_RANGE", f"Round {rnd.number} contains an invalid score.")
+                )
+
+        expected_unmatched = set(all_participant_pids) - used
+        actual_unmatched = set(rnd.all_unmatched_pids)
+        if expected_unmatched != actual_unmatched:
+            violations.append(
+                ScheduleViolation("WRONG_UNMATCHED_SET", f"Round {rnd.number} does not report all unmatched participants.")
+            )
+        if used & actual_unmatched:
+            violations.append(
+                ScheduleViolation("UNMATCHED_PAIRED", f"Round {rnd.number} marks a paired participant unmatched.")
+            )
+
+    for pid, count in pair_counts.items():
+        participant = participants.get(pid)
+        if participant and count > _participant_limit(participant):
+            violations.append(
+                ScheduleViolation("DATE_LIMIT_EXCEEDED", f"Participant {pid} exceeds their configured date limit.")
             )
 
     return violations

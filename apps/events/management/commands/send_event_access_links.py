@@ -7,6 +7,7 @@ from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
+from apps.events.auth import scheduled_event_end
 from apps.events.email_notifications import send_event_access_email_once
 from apps.events.models import Event, Participant
 
@@ -68,7 +69,4 @@ class Command(BaseCommand):
 
     @staticmethod
     def event_end(event):
-        return event.start_time + (
-            event.num_rounds * event.round_duration
-            + max(event.num_rounds - 1, 0) * event.break_duration
-        )
+        return scheduled_event_end(event)

@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import secrets
+from datetime import timedelta
 
 from django import forms
+from django.conf import settings
 from django.contrib import admin, messages
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.db.models import Count, Q
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils import timezone
+
+from apps.registration.services.email_service import EmailService
 
 from .countries import COUNTRY_NAMES
 from .models import (
@@ -24,8 +31,10 @@ from .models import (
     ParticipantIncidentNote,
     ParticipantStatus,
     ParticipantTag,
+    RegistrationStatus,
     Round,
     Tag,
+    WaitlistInvitation,
 )
 
 for model in (ParticipantTag, Round, Pair):
@@ -135,6 +144,11 @@ class EventAdmin(admin.ModelAdmin):
         "num_rounds",
         "round_duration",
         "break_duration",
+        "male_date_limit",
+        "female_date_limit",
+        "other_date_limit",
+        "intro_video_url",
+        "intro_video_duration_seconds",
         "unique_tags",
     )
 
@@ -173,6 +187,21 @@ class EventAdmin(admin.ModelAdmin):
                 self.admin_site.admin_view(self.operator_monitoring_view),
                 name="events_event_live_monitoring",
             ),
+            path(
+                "<uuid:object_id>/registration-stats/",
+                self.admin_site.admin_view(self.registration_stats_view),
+                name="events_event_registration_stats",
+            ),
+            path(
+                "<uuid:object_id>/waitlist/",
+                self.admin_site.admin_view(self.waitlist_view),
+                name="events_event_waitlist",
+            ),
+            path(
+                "<uuid:object_id>/waitlist/<uuid:participant_id>/invite/",
+                self.admin_site.admin_view(self.invite_waitlisted_participant),
+                name="events_event_waitlist_invite",
+            ),
         ]
         return custom + urls
 
@@ -188,6 +217,12 @@ class EventAdmin(admin.ModelAdmin):
             )
             extra_context["live_monitoring_url"] = reverse(
                 "admin:events_event_live_monitoring", args=[object_id]
+            )
+            extra_context["registration_stats_url"] = reverse(
+                "admin:events_event_registration_stats", args=[object_id]
+            )
+            extra_context["waitlist_url"] = reverse(
+                "admin:events_event_waitlist", args=[object_id]
             )
         return super().changeform_view(request, object_id, form_url, extra_context)
 
@@ -295,6 +330,141 @@ class EventAdmin(admin.ModelAdmin):
             context,
         )
 
+    def registration_stats_view(self, request, object_id):
+        event = get_object_or_404(Event, pk=object_id)
+        if not self.has_view_permission(request, event):
+            return HttpResponseForbidden("You do not have permission to view registration statistics.")
+
+        total = event.participants.count()
+
+        def aggregate(field_name, label_for):
+            rows = (
+                event.participants.values(field_name)
+                .annotate(count=Count("id"))
+                .order_by(field_name)
+            )
+            result = []
+            for row in rows:
+                label = label_for(row[field_name])
+                count = row["count"]
+                result.append(
+                    {
+                        "label": label,
+                        "count": count,
+                        "percent": f"{(count * 100 / total):.1f}%" if total else "0.0%",
+                    }
+                )
+            return result
+
+        gender_rows = aggregate(
+            "gender", lambda value: value or "Not provided"
+        )
+        country_rows = aggregate(
+            "country", lambda value: COUNTRY_NAMES.get(value or "", value or "Not provided")
+        )
+        return TemplateResponse(
+            request,
+            "admin/events/event/registration_stats.html",
+            {
+                **self.admin_site.each_context(request),
+                "title": f"Registration statistics – {event.name}",
+                "event": event,
+                "total": total,
+                "gender_rows": gender_rows,
+                "country_rows": country_rows,
+                "opts": self.model._meta,
+                "app_label": self.model._meta.app_label,
+            },
+        )
+
+    def waitlist_view(self, request, object_id):
+        event = get_object_or_404(Event, pk=object_id)
+        if not self.has_view_permission(request, event):
+            return HttpResponseForbidden("You do not have permission to view the waitlist.")
+        eligible = event.participants.filter(
+            registration_status=RegistrationStatus.WAITLISTED,
+            gender="Female",
+            email_verified_at__isnull=False,
+        ).exclude(email="").order_by("created_at")
+        return TemplateResponse(
+            request,
+            "admin/events/event/waitlist.html",
+            {
+                **self.admin_site.each_context(request),
+                "title": f"Waitlist – {event.name}",
+                "event": event,
+                "participants": eligible,
+                "can_invite": self.has_change_permission(request, event),
+                "opts": self.model._meta,
+                "app_label": self.model._meta.app_label,
+            },
+        )
+
+    def invite_waitlisted_participant(self, request, object_id, participant_id):
+        if request.method != "POST":
+            return HttpResponseForbidden("Invitations must be sent using POST.")
+        event = get_object_or_404(Event, pk=object_id)
+        if not self.has_change_permission(request, event):
+            return HttpResponseForbidden("You do not have permission to send invitations.")
+
+        now = timezone.now()
+        with transaction.atomic():
+            locked_event = Event.objects.select_for_update().get(pk=event.pk)
+            participant = get_object_or_404(
+                Participant.objects.select_for_update(),
+                pk=participant_id,
+                event=locked_event,
+                gender="Female",
+                registration_status=RegistrationStatus.WAITLISTED,
+                email_verified_at__isnull=False,
+            )
+            if not participant.email:
+                raise Http404
+            WaitlistInvitation.objects.filter(
+                participant=participant,
+                accepted_at__isnull=True,
+                revoked_at__isnull=True,
+            ).update(revoked_at=now)
+            token = secrets.token_urlsafe(32)
+            invitation = WaitlistInvitation.objects.create(
+                event=locked_event,
+                participant=participant,
+                token_digest=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+                created_by=request.user,
+                expires_at=now + timedelta(
+                    hours=getattr(settings, "WAITLIST_INVITATION_TTL_HOURS", 48)
+                ),
+            )
+            invitation_url = request.build_absolute_uri(
+                reverse("registration:accept-waitlist-invitation", args=[token])
+            )
+            email_args = {
+                "recipient_email": participant.email,
+                "name": participant.display_name,
+                "event_title": locked_event.name,
+                "message": (
+                    f"A place is available for {locked_event.name}. Accept your "
+                    f"invitation within {getattr(settings, 'WAITLIST_INVITATION_TTL_HOURS', 48)} hours "
+                    f"using this personal link:\n\n{invitation_url}\n\n"
+                    "If the remaining place is taken before you accept, your waitlist status will remain unchanged."
+                ),
+            }
+
+        try:
+            EmailService.send_waitlist_invitation_email(**email_args)
+        except Exception:
+            WaitlistInvitation.objects.filter(pk=invitation.pk).update(
+                revoked_at=timezone.now()
+            )
+            self.message_user(
+                request,
+                "The invitation email could not be sent. The link was revoked.",
+                level=messages.ERROR,
+            )
+        else:
+            self.message_user(request, "Waitlist invitation sent.", level=messages.SUCCESS)
+        return redirect("admin:events_event_waitlist", object_id)
+
     # ------------------------------------------------------------------ #
     # Matching report view                                               #
     # ------------------------------------------------------------------ #
@@ -353,9 +523,17 @@ class EventAdmin(admin.ModelAdmin):
                         schedule = generate_schedule(match_input)
                         pids = frozenset(mp.pid for mp in match_input.participants)
                         violations = validate_schedule(
-                            schedule, pids, num_rounds=event.num_rounds
+                            schedule,
+                            pids,
+                            num_rounds=event.num_rounds,
+                            match_input=match_input,
                         )
-                        report = build_report(schedule, violations)
+                        report = build_report(
+                            schedule,
+                            violations,
+                            round_duration=event.round_duration,
+                            break_duration=event.break_duration,
+                        )
 
                         if action == "lock":
                             if report.can_lock:

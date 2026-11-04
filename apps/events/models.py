@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator, URLValidator
 from django.db import models
 from django.utils import timezone
 from django.utils.timezone import now as django_now
@@ -39,6 +39,13 @@ class ParticipantStatus(models.TextChoices):
     COMPLETED = "completed", "Completed"
 
 
+class RegistrationStatus(models.TextChoices):
+    PENDING = "pending", "Pending email verification"
+    CONFIRMED = "confirmed", "Confirmed"
+    WAITLISTED = "waitlisted", "Waitlisted"
+    WITHDRAWN = "withdrawn", "Withdrawn"
+
+
 class RoundStatus(models.TextChoices):
     SCHEDULED = "scheduled", "Scheduled"
     ACTIVE = "active", "Active"
@@ -65,14 +72,30 @@ class Event(models.Model):
     status = models.CharField(
         max_length=20, choices=EventStatus.choices, default=EventStatus.DRAFT
     )
-    num_rounds = models.PositiveSmallIntegerField(validators=[MinValueValidator(1)])
+    num_rounds = models.PositiveSmallIntegerField(
+        default=5, validators=[MinValueValidator(1), MaxValueValidator(7)]
+    )
     round_duration = models.DurationField(
-        validators=[MinValueValidator(timedelta(seconds=1))]
+        default=timedelta(minutes=7),
+        validators=[MinValueValidator(timedelta(seconds=1))],
     )
     break_duration = models.DurationField(
-        validators=[MinValueValidator(timedelta(seconds=0))]
+        default=timedelta(minutes=2),
+        validators=[MinValueValidator(timedelta(seconds=0))],
     )
     start_time = models.DateTimeField()
+    male_date_limit = models.PositiveSmallIntegerField(default=5)
+    female_date_limit = models.PositiveSmallIntegerField(default=7)
+    other_date_limit = models.PositiveSmallIntegerField(default=5)
+    intro_video_url = models.URLField(
+        blank=True,
+        default="",
+        validators=[URLValidator(schemes=["https"])],
+        help_text="Optional direct HTTPS MP4/WebM video URL played before the first round.",
+    )
+    intro_video_duration_seconds = models.PositiveSmallIntegerField(
+        default=0, validators=[MaxValueValidator(300)]
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     scoring_weights = models.JSONField(default=_default_scoring_weights)
@@ -85,6 +108,20 @@ class Event(models.Model):
             "When disabled, the existing multiple-tag behavior remains unchanged."
         ),
     )
+
+    def clean(self):
+        super().clean()
+        if bool(self.intro_video_url) != (self.intro_video_duration_seconds > 0):
+            from django.core.exceptions import ValidationError
+
+            raise ValidationError(
+                {
+                    "intro_video_duration_seconds": (
+                        "Set a positive duration when an intro video URL is provided; "
+                        "leave both fields empty/zero to disable the intro."
+                    )
+                }
+            )
 
     class Meta:
         ordering = ("-start_time",)
@@ -125,12 +162,21 @@ class Participant(models.Model):
         choices=ParticipantStatus.choices,
         default=ParticipantStatus.WAITING,
     )
+    registration_status = models.CharField(
+        max_length=16,
+        choices=RegistrationStatus.choices,
+        default=RegistrationStatus.CONFIRMED,
+        db_index=True,
+    )
     join_token_hash = models.CharField(max_length=256)
     join_token_digest = models.CharField(
         max_length=64, blank=True, default="", db_index=True
     )
     join_token_expires_at = models.DateTimeField(null=True, blank=True)
     joined_at = models.DateTimeField(null=True, blank=True)
+    email_verified_at = models.DateTimeField(null=True, blank=True)
+    reservation_expires_at = models.DateTimeField(null=True, blank=True)
+    intro_video_completed_at = models.DateTimeField(null=True, blank=True)
     event_access_email_sent_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -343,6 +389,33 @@ class PairInterest(models.Model):
         if participant.pk == self.pair.participant_b_id:
             return self.participant_b_interested
         raise ValueError("Participant is not part of this pair")
+
+
+class WaitlistInvitation(models.Model):
+    """Single-use, auditable invite from the verified female waitlist."""
+
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="waitlist_invitations")
+    participant = models.ForeignKey(
+        Participant, on_delete=models.CASCADE, related_name="waitlist_invitations"
+    )
+    token_digest = models.CharField(max_length=64, unique=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="meetakk_waitlist_invitations",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [models.Index(fields=("event", "created_at"))]
+
+    def __str__(self) -> str:
+        return f"Waitlist invitation for {self.participant_id} ({self.event_id})"
 
 
 class EventTransitionLog(models.Model):

@@ -76,7 +76,15 @@ def validate_registration_data(event, data):
         raise RegistrationError("Choose a valid country.", "invalid_country")
 
     gender = data.get("gender", "Other/Prefer Not to Say")
+    if gender not in {"Male", "Female", "Other/Prefer Not to Say"}:
+        raise RegistrationError("Choose a valid gender option.", "invalid_gender")
+
     want_to_date = data.get("want_to_date", "Any")
+    if want_to_date not in {"Male", "Female", "Any"}:
+        raise RegistrationError(
+            "Choose a valid date preference.", "invalid_date_preference"
+        )
+
     whatsapp = data.get("whatsapp", "")
 
     return {

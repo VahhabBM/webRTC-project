@@ -1,0 +1,19 @@
+{% extends "admin/base_site.html" %}
+{% block breadcrumbs %}
+<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Home</a> › <a href="{% url 'admin:app_list' app_label='events' %}">Events</a> › <a href="{% url 'admin:events_event_change' event.pk %}">{{ event.name }}</a> › Registration statistics</div>
+{% endblock %}
+{% block content %}
+<h1>Registration statistics — {{ event.name }}</h1>
+<p>Total registrations: {{ total }}</p>
+<h2>By gender</h2>
+<table>
+  <thead><tr><th>Gender</th><th>Count</th><th>Percent</th></tr></thead>
+  <tbody>{% for row in gender_rows %}<tr><td>{{ row.label }}</td><td>{{ row.count }}</td><td>{{ row.percent }}</td></tr>{% empty %}<tr><td colspan="3">No registrations yet.</td></tr>{% endfor %}</tbody>
+</table>
+<h2>By country</h2>
+<table>
+  <thead><tr><th>Country</th><th>Count</th><th>Percent</th></tr></thead>
+  <tbody>{% for row in country_rows %}<tr><td>{{ row.label }}</td><td>{{ row.count }}</td><td>{{ row.percent }}</td></tr>{% empty %}<tr><td colspan="3">No registrations yet.</td></tr>{% endfor %}</tbody>
+</table>
+<p><a class="button" href="{% url 'admin:events_event_change' event.pk %}">Back to event</a></p>
+{% endblock %}

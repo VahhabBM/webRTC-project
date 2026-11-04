@@ -7,18 +7,34 @@ from apps.events.auth import personal_join_link
 
 class EmailService:
     @staticmethod
-    def send_verification_email(recipient_email, name, token, event_title="Event"):
+    def send_verification_email(
+        recipient_email,
+        name,
+        token,
+        event_title="Event",
+        registration_status="pending",
+    ):
         verify_url = f"{settings.FRONTEND_URL}{reverse('registration:verify-email', args=[token])}"
 
         subject = f"Registration Verification for: {event_title}"
+        if registration_status == "waitlisted":
+            registration_note = (
+                "Your email verification is needed to keep your waitlist entry. "
+                "A place is not confirmed unless you later accept an invitation."
+            )
+        else:
+            registration_note = (
+                "Your place is reserved for 24 hours. After you verify your email, "
+                "your registration is complete and your personal event access link "
+                "will be emailed 24 hours before the event starts."
+            )
+
         message = (
             f"Hello {name},\n\n"
             f"Thank you for registering for {event_title}.\n"
-            "Please click the link below to verify your email address.\n\n"
+            "Please click the link below to verify your email address and activate your registration.\n\n"
             f"{verify_url}\n\n"
-            "After you verify your email, your registration will be complete. "
-            "Your personal event access link will be emailed to you 24 hours "
-            "before the event starts.\n\n"
+            f"{registration_note}\n\n"
             "This verification link is valid for the next 24 hours."
         )
 
@@ -62,3 +78,20 @@ class EmailService:
             )
         except Exception as e:
             raise RuntimeError(f"Error sending event access email: {str(e)}")
+
+    @staticmethod
+    def send_waitlist_invitation_email(
+        recipient_email, name, event_title, message
+    ):
+        subject = f"A place is available for: {event_title}"
+        body = f"Hello {name},\n\n{message}"
+        try:
+            send_mail(
+                subject=subject,
+                message=body,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[recipient_email],
+                fail_silently=False,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Error sending waitlist invitation: {str(e)}")

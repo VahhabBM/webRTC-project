@@ -4,9 +4,11 @@ import json
 import logging
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_safe
 from rest_framework import status
@@ -103,13 +105,31 @@ def current_participant(request: HttpRequest) -> JsonResponse:
             status=401,
         )
 
+    now = timezone.now()
+    event = participant.event
+    intro_configured = bool(event.intro_video_url)
+    intro_completed = (
+        not intro_configured or participant.intro_video_completed_at is not None
+    )
     return JsonResponse(
         {
             "authenticated": True,
+            "server_time": now.isoformat(),
             "participant": {
                 "id": str(participant.pk),
                 "display_name": participant.display_name,
                 "event_id": str(participant.event_id),
+                "intro_video": {
+                    "configured": intro_configured,
+                    "url": event.intro_video_url,
+                    "duration_seconds": event.intro_video_duration_seconds,
+                    "completed": intro_completed,
+                    "event_start_at": event.start_time.isoformat(),
+                    "start_delay_ms": max(
+                        0,
+                        int((event.start_time - now).total_seconds() * 1000),
+                    ),
+                },
             },
         }
     )
@@ -117,6 +137,31 @@ def current_participant(request: HttpRequest) -> JsonResponse:
 
 # Alias for backward compatibility
 participant_me_view = current_participant
+
+
+@require_POST
+def complete_event_intro(request: HttpRequest) -> JsonResponse:
+    participant = get_authenticated_participant(request)
+    if not participant:
+        return JsonResponse(
+            {"error": "Authentication required", "authenticated": False},
+            status=401,
+        )
+    with transaction.atomic():
+        participant = Participant.objects.select_for_update().select_related("event").get(
+            pk=participant.pk
+        )
+        now = timezone.now()
+        if not participant.event.intro_video_url:
+            return JsonResponse({"configured": False, "completed": True})
+        if now < participant.event.start_time:
+            return JsonResponse(
+                {"error": "The event introduction has not started yet."}, status=409
+            )
+        if participant.intro_video_completed_at is None:
+            participant.intro_video_completed_at = now
+            participant.save(update_fields=["intro_video_completed_at", "updated_at"])
+    return JsonResponse({"configured": True, "completed": True})
 
 
 @require_POST
