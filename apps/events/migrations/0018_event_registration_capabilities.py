@@ -19,7 +19,7 @@ def backfill_legacy_registration_status(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("events", "0015_pairinterest"),
+        ("events", "0017_participant_event_access_email_sent_at"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
