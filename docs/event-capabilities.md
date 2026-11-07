@@ -5,7 +5,7 @@ registration capacity, waitlist invitations, and the event introduction video.
 
 ## Acceptance criteria
 
-- New events default to five 7-minute dates with 2-minute breaks. Event
+- New events default to five 7-minute rounds with 2-minute breaks. Event
   operators may configure the number of rounds and per-gender date ceilings.
 - The optional introduction video starts at the event start time and completes
   before the first preconnect window. Its completion is stored per participant
@@ -28,6 +28,9 @@ registration capacity, waitlist invitations, and the event introduction video.
   to 50 selected email addresses for scheduled or registration-open events.
   Recipient addresses are validated and deduplicated for delivery and are not
   saved by this page.
+- The staff-only Operations Dashboard is available from the Events list in
+  Django admin. It summarizes live, upcoming, and recent events without showing
+  participant contact details and links to each event's tools.
 - Event admins can view aggregate registration counts and percentages by
   gender and country. Unknown values remain in the denominator and appear as
   their own category. The page never lists individual registrants.

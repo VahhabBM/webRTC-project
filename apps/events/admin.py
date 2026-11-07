@@ -190,6 +190,7 @@ class EventAdmin(admin.ModelAdmin):
 
     # Override the change-form template to inject custom tool buttons.
     change_form_template = "admin/events/event/change_form.html"
+    change_list_template = "admin/events/event/change_list.html"
 
     # ------------------------------------------------------------------ #
     # Queryset / display helpers                                         #
@@ -213,6 +214,11 @@ class EventAdmin(admin.ModelAdmin):
     def get_urls(self):
         urls = super().get_urls()
         custom = [
+            path(
+                "operations-dashboard/",
+                self.admin_site.admin_view(self.operations_dashboard_view),
+                name="events_event_operations_dashboard",
+            ),
             path(
                 "<uuid:object_id>/matching-report/",
                 self.admin_site.admin_view(self.matching_report_view),
@@ -252,6 +258,9 @@ class EventAdmin(admin.ModelAdmin):
 
     def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
         extra_context = extra_context or {}
+        extra_context["operations_dashboard_url"] = reverse(
+            "admin:events_event_operations_dashboard"
+        )
         if object_id:
             extra_context["matching_report_url"] = reverse(
                 "admin:events_event_matching_report", args=[object_id]
@@ -269,6 +278,85 @@ class EventAdmin(admin.ModelAdmin):
                 "admin:events_event_registration_invitations", args=[object_id]
             )
         return super().changeform_view(request, object_id, form_url, extra_context)
+
+    def operations_dashboard_view(self, request):
+        """Show staff a live, event-level overview and its operational tools."""
+        if not request.user.has_perm("events.view_event"):
+            return HttpResponseForbidden(
+                "You do not have permission to view the event dashboard."
+            )
+
+        now = timezone.now()
+        annotated_events = Event.objects.select_related(
+            "registration_stats_snapshot"
+        ).annotate(
+            registrations_count=Count("participants", distinct=True),
+            confirmed_count=Count(
+                "participants",
+                filter=Q(
+                    participants__registration_status=RegistrationStatus.CONFIRMED
+                ),
+                distinct=True,
+            ),
+            waitlisted_count=Count(
+                "participants",
+                filter=Q(
+                    participants__registration_status=RegistrationStatus.WAITLISTED
+                ),
+                distinct=True,
+            ),
+        )
+        live_statuses = (
+            EventStatus.ACTIVE,
+            EventStatus.RUNNING,
+            EventStatus.PAUSED,
+        )
+        upcoming_statuses = (
+            EventStatus.REGISTRATION_OPEN,
+            EventStatus.SCHEDULED,
+            EventStatus.LOCKED,
+        )
+        active_events = list(
+            annotated_events.filter(status__in=live_statuses).order_by("start_time")
+        )
+        upcoming_events = list(
+            annotated_events.filter(
+                status__in=upcoming_statuses, start_time__gte=now
+            ).order_by("start_time")[:25]
+        )
+        recent_events = list(
+            annotated_events.filter(
+                status__in=(EventStatus.COMPLETED, EventStatus.CANCELLED)
+            ).order_by("-start_time")[:10]
+        )
+        overview_statuses = (*live_statuses, *upcoming_statuses)
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": "Operations Dashboard",
+            "opts": self.model._meta,
+            "now": now,
+            "active_events": active_events,
+            "upcoming_events": upcoming_events,
+            "recent_events": recent_events,
+            "active_count": Event.objects.filter(status__in=live_statuses).count(),
+            "upcoming_count": Event.objects.filter(
+                status__in=upcoming_statuses, start_time__gte=now
+            ).count(),
+            "can_change_events": self.has_change_permission(request),
+            "confirmed_count": Participant.objects.filter(
+                event__status__in=overview_statuses,
+                registration_status=RegistrationStatus.CONFIRMED,
+            ).count(),
+            "waitlisted_count": Participant.objects.filter(
+                event__status__in=overview_statuses,
+                registration_status=RegistrationStatus.WAITLISTED,
+            ).count(),
+            "event_changelist_url": reverse("admin:events_event_changelist"),
+        }
+        return TemplateResponse(
+            request, "admin/events/event/operations_dashboard.html", context
+        )
 
     # ------------------------------------------------------------------ #
     # Live monitoring view (T-40 & T-41)                                 #
@@ -377,7 +465,9 @@ class EventAdmin(admin.ModelAdmin):
     def registration_stats_view(self, request, object_id):
         event = get_object_or_404(Event, pk=object_id)
         if not self.has_view_permission(request, event):
-            return HttpResponseForbidden("You do not have permission to view registration statistics.")
+            return HttpResponseForbidden(
+                "You do not have permission to view registration statistics."
+            )
 
         snapshot = EventRegistrationStatsSnapshot.objects.filter(event=event).first()
         total = snapshot.total_registrations if snapshot else event.participants.count()
@@ -454,12 +544,18 @@ class EventAdmin(admin.ModelAdmin):
     def waitlist_view(self, request, object_id):
         event = get_object_or_404(Event, pk=object_id)
         if not self.has_view_permission(request, event):
-            return HttpResponseForbidden("You do not have permission to view the waitlist.")
-        eligible = event.participants.filter(
-            registration_status=RegistrationStatus.WAITLISTED,
-            gender="Female",
-            email_verified_at__isnull=False,
-        ).exclude(email="").order_by("created_at")
+            return HttpResponseForbidden(
+                "You do not have permission to view the waitlist."
+            )
+        eligible = (
+            event.participants.filter(
+                registration_status=RegistrationStatus.WAITLISTED,
+                gender="Female",
+                email_verified_at__isnull=False,
+            )
+            .exclude(email="")
+            .order_by("created_at")
+        )
         return TemplateResponse(
             request,
             "admin/events/event/waitlist.html",
@@ -557,7 +653,9 @@ class EventAdmin(admin.ModelAdmin):
             return HttpResponseForbidden("Invitations must be sent using POST.")
         event = get_object_or_404(Event, pk=object_id)
         if not self.has_change_permission(request, event):
-            return HttpResponseForbidden("You do not have permission to send invitations.")
+            return HttpResponseForbidden(
+                "You do not have permission to send invitations."
+            )
 
         now = timezone.now()
         with transaction.atomic():
@@ -583,7 +681,8 @@ class EventAdmin(admin.ModelAdmin):
                 participant=participant,
                 token_digest=hashlib.sha256(token.encode("utf-8")).hexdigest(),
                 created_by=request.user,
-                expires_at=now + timedelta(
+                expires_at=now
+                + timedelta(
                     hours=getattr(settings, "WAITLIST_INVITATION_TTL_HOURS", 48)
                 ),
             )
@@ -614,7 +713,9 @@ class EventAdmin(admin.ModelAdmin):
                 level=messages.ERROR,
             )
         else:
-            self.message_user(request, "Waitlist invitation sent.", level=messages.SUCCESS)
+            self.message_user(
+                request, "Waitlist invitation sent.", level=messages.SUCCESS
+            )
         return redirect("admin:events_event_waitlist", object_id)
 
     # ------------------------------------------------------------------ #

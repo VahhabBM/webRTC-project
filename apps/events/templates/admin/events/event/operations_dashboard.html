@@ -1,0 +1,140 @@
+{% extends "admin/base_site.html" %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a> ›
+  <a href="{% url 'admin:app_list' app_label='events' %}">Events</a> ›
+  <a href="{{ event_changelist_url }}">Events</a> › Operations Dashboard
+</div>
+{% endblock %}
+
+{% block content %}
+<style>
+  .operations-dashboard { max-width: 1200px; }
+  .operations-dashboard__cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+    gap: 12px;
+    margin: 20px 0 28px;
+  }
+  .operations-dashboard__card {
+    background: var(--darkened-bg, #f8f8f8);
+    border: 1px solid var(--hairline-color, #ddd);
+    border-radius: 6px;
+    padding: 16px;
+  }
+  .operations-dashboard__value { display: block; font-size: 1.7rem; font-weight: 700; }
+  .operations-dashboard__label { color: var(--body-quiet-color, #666); }
+  .operations-dashboard__table-wrap { overflow-x: auto; margin: 12px 0 28px; }
+  .operations-dashboard__table { width: 100%; min-width: 720px; }
+  .operations-dashboard__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .operations-dashboard__actions a { white-space: nowrap; }
+  .operations-dashboard__empty { padding: 14px; color: var(--body-quiet-color, #666); }
+  @media (max-width: 600px) {
+    .operations-dashboard__cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+</style>
+
+<div class="operations-dashboard">
+  <h1>Operations Dashboard</h1>
+  <p>Event status and registration totals for event operators. Personal participant details are not shown here.</p>
+
+  <div class="operations-dashboard__cards" aria-label="Event summary">
+    <div class="operations-dashboard__card">
+      <span class="operations-dashboard__value">{{ active_count }}</span>
+      <span class="operations-dashboard__label">Live or paused events</span>
+    </div>
+    <div class="operations-dashboard__card">
+      <span class="operations-dashboard__value">{{ upcoming_count }}</span>
+      <span class="operations-dashboard__label">Upcoming events</span>
+    </div>
+    <div class="operations-dashboard__card">
+      <span class="operations-dashboard__value">{{ confirmed_count }}</span>
+      <span class="operations-dashboard__label">Confirmed registrations</span>
+    </div>
+    <div class="operations-dashboard__card">
+      <span class="operations-dashboard__value">{{ waitlisted_count }}</span>
+      <span class="operations-dashboard__label">Waitlisted registrations</span>
+    </div>
+  </div>
+
+  <h2>Live events</h2>
+  <div class="operations-dashboard__table-wrap">
+    <table class="operations-dashboard__table">
+      <thead>
+        <tr><th>Event</th><th>Status</th><th>Start time</th><th>Registrations</th><th>Confirmed</th><th>Waitlist</th><th>Tools</th></tr>
+      </thead>
+      <tbody>
+        {% for event in active_events %}
+        <tr>
+          <th scope="row"><a href="{% url 'admin:events_event_change' event.pk %}">{{ event.name }}</a></th>
+          <td>{{ event.get_status_display }}</td>
+          <td>{{ event.start_time|date:"DATETIME_FORMAT" }}</td>
+          <td>{% if event.registration_stats_snapshot %}{{ event.registration_stats_snapshot.total_registrations }}{% else %}{{ event.registrations_count }}{% endif %}</td>
+          <td>{{ event.confirmed_count }}</td>
+          <td>{{ event.waitlisted_count }}</td>
+          <td class="operations-dashboard__actions">
+            <a class="button" href="{% url 'admin:events_event_live_monitoring' event.pk %}">Live Monitoring</a>
+            {% if event.status == "active" %}<a class="button" href="{% url 'admin:events_event_matching_report' event.pk %}">Matching Report</a>{% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td class="operations-dashboard__empty" colspan="7">No events are live or paused.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Upcoming events</h2>
+  <div class="operations-dashboard__table-wrap">
+    <table class="operations-dashboard__table">
+      <thead>
+        <tr><th>Event</th><th>Status</th><th>Start time</th><th>Registrations</th><th>Confirmed</th><th>Waitlist</th><th>Tools</th></tr>
+      </thead>
+      <tbody>
+        {% for event in upcoming_events %}
+        <tr>
+          <th scope="row"><a href="{% url 'admin:events_event_change' event.pk %}">{{ event.name }}</a></th>
+          <td>{{ event.get_status_display }}</td>
+          <td>{{ event.start_time|date:"DATETIME_FORMAT" }}</td>
+          <td>{% if event.registration_stats_snapshot %}{{ event.registration_stats_snapshot.total_registrations }}{% else %}{{ event.registrations_count }}{% endif %}</td>
+          <td>{{ event.confirmed_count }}</td>
+          <td>{{ event.waitlisted_count }}</td>
+          <td class="operations-dashboard__actions">
+            <a class="button" href="{% url 'admin:events_event_registration_stats' event.pk %}">Statistics</a>
+            <a class="button" href="{% url 'admin:events_event_waitlist' event.pk %}">Verified Waitlist</a>
+            {% if can_change_events %}<a class="button" href="{% url 'admin:events_event_registration_invitations' event.pk %}">Send Registration Links</a>{% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td class="operations-dashboard__empty" colspan="7">No upcoming events.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Recent events</h2>
+  <div class="operations-dashboard__table-wrap">
+    <table class="operations-dashboard__table">
+      <thead>
+        <tr><th>Event</th><th>Status</th><th>Start time</th><th>Registrations</th><th>Tools</th></tr>
+      </thead>
+      <tbody>
+        {% for event in recent_events %}
+        <tr>
+          <th scope="row"><a href="{% url 'admin:events_event_change' event.pk %}">{{ event.name }}</a></th>
+          <td>{{ event.get_status_display }}</td>
+          <td>{{ event.start_time|date:"DATETIME_FORMAT" }}</td>
+          <td>{% if event.registration_stats_snapshot %}{{ event.registration_stats_snapshot.total_registrations }}{% else %}{{ event.registrations_count }}{% endif %}</td>
+          <td><a class="button" href="{% url 'admin:events_event_registration_stats' event.pk %}">Statistics</a></td>
+        </tr>
+        {% empty %}
+        <tr><td class="operations-dashboard__empty" colspan="5">No completed or cancelled events yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p><a class="button" href="{{ event_changelist_url }}">Manage all events</a></p>
+</div>
+{% endblock %}
