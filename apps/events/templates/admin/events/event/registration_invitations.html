@@ -1,0 +1,25 @@
+{% extends "admin/base_site.html" %}
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a> ›
+  <a href="{% url 'admin:app_list' app_label='events' %}">Events</a> ›
+  <a href="{% url 'admin:events_event_change' event.pk %}">{{ event.name }}</a> ›
+  Registration invitations
+</div>
+{% endblock %}
+{% block content %}
+<h1>Send registration links — {{ event.name }}</h1>
+<p>Share this event registration link with selected people:</p>
+<p><code>{{ registration_url }}</code></p>
+{% if can_send %}
+  <form method="post" novalidate>
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="default">Send registration links</button>
+  </form>
+  <p>Email addresses are used only for this send and are not stored by this page.</p>
+{% else %}
+  <p>Invitations are available only for events that are scheduled or open for registration.</p>
+{% endif %}
+<p><a class="button" href="{% url 'admin:events_event_change' event.pk %}">Back to event</a></p>
+{% endblock %}

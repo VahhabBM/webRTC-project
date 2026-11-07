@@ -43,8 +43,8 @@ def test_new_event_defaults_to_five_seven_minute_dates_and_two_minute_breaks():
     assert event.num_rounds == 5
     assert event.round_duration == timedelta(minutes=7)
     assert event.break_duration == timedelta(minutes=2)
-    assert event.male_date_limit == 5
-    assert event.female_date_limit == 7
+    assert event.male_date_limit == 4
+    assert event.female_date_limit == 8
     assert event.other_date_limit == 5
 
 

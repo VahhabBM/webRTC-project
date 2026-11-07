@@ -20,5 +20,10 @@
       <a href="{{ waitlist_url }}" class="historylink">Verified Waitlist</a>
     </li>
   {% endif %}
+  {% if registration_invitations_url %}
+    <li>
+      <a href="{{ registration_invitations_url }}" class="historylink">Send Registration Links</a>
+    </li>
+  {% endif %}
   {{ block.super }}
 {% endblock %}

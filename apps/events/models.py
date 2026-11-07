@@ -84,8 +84,8 @@ class Event(models.Model):
         validators=[MinValueValidator(timedelta(seconds=0))],
     )
     start_time = models.DateTimeField()
-    male_date_limit = models.PositiveSmallIntegerField(default=5)
-    female_date_limit = models.PositiveSmallIntegerField(default=7)
+    male_date_limit = models.PositiveSmallIntegerField(default=4)
+    female_date_limit = models.PositiveSmallIntegerField(default=8)
     other_date_limit = models.PositiveSmallIntegerField(default=5)
     intro_video_url = models.URLField(
         blank=True,
@@ -131,6 +131,18 @@ class Event(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+
+class EventRegistrationStatsSnapshot(models.Model):
+    """Event-level counts retained after individual registration records expire."""
+
+    event = models.OneToOneField(
+        Event, on_delete=models.CASCADE, related_name="registration_stats_snapshot"
+    )
+    total_registrations = models.PositiveIntegerField()
+    gender_counts = models.JSONField(default=dict)
+    country_counts = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
 
 
 class Tag(models.Model):

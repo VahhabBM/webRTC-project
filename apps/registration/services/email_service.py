@@ -7,6 +7,30 @@ from apps.events.auth import personal_join_link
 
 class EmailService:
     @staticmethod
+    def send_registration_invitation_email(
+        recipient_email, event_title, registration_url
+    ):
+        subject = f"You're invited to register for: {event_title}"
+        message = (
+            f"Hello,\n\n"
+            f"You are invited to register for {event_title}.\n"
+            "Complete your registration using the link below:\n\n"
+            f"{registration_url}\n\n"
+            "We look forward to seeing you at the event.\n\n"
+            "Meetakk"
+        )
+        try:
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[recipient_email],
+                fail_silently=False,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Error sending registration invitation: {str(e)}")
+
+    @staticmethod
     def send_verification_email(
         recipient_email,
         name,

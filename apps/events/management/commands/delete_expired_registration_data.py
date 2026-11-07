@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import Counter
 from datetime import timedelta
 
 from django.conf import settings
@@ -10,8 +11,31 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.events.auth import participant_session_cache_key, scheduled_event_end
-from apps.events.models import Event, EventStatus, Participant
+from apps.events.models import (
+    Event,
+    EventRegistrationStatsSnapshot,
+    EventStatus,
+    Participant,
+)
 from apps.registration.models import DeviceCheckLog
+
+_MIN_AGGREGATE_CELL_SIZE = 5
+_OTHER_AGGREGATE_BUCKET = "__other__"
+
+
+def _aggregate_counts(values):
+    counts = Counter(values)
+    retained = {
+        value: count
+        for value, count in counts.items()
+        if count >= _MIN_AGGREGATE_CELL_SIZE
+    }
+    small_groups = sum(
+        count for count in counts.values() if count < _MIN_AGGREGATE_CELL_SIZE
+    )
+    if small_groups:
+        retained[_OTHER_AGGREGATE_BUCKET] = small_groups
+    return dict(sorted(retained.items()))
 
 
 class Command(BaseCommand):
@@ -73,26 +97,54 @@ class Command(BaseCommand):
             if scheduled_event_end(event) > cutoff:
                 continue
 
-            participant_ids = list(
-                Participant.objects.filter(event_id=event.pk).values_list(
-                    "pk", flat=True
-                )
-            )
-            device_logs = DeviceCheckLog.objects.filter(event_id=event.pk)
-            device_log_count = device_logs.count()
-            if not participant_ids and not device_log_count:
-                continue
-
-            eligible_events += 1
-            eligible_participants += len(participant_ids)
             if dry_run:
+                participant_count = Participant.objects.filter(
+                    event_id=event.pk
+                ).count()
+                device_log_count = DeviceCheckLog.objects.filter(
+                    event_id=event.pk
+                ).count()
+                if not participant_count and not device_log_count:
+                    continue
+                eligible_events += 1
+                eligible_participants += participant_count
                 self.stdout.write(
-                    f"Eligible event {event.pk}: {len(participant_ids)} participant(s), "
+                    f"Eligible event {event.pk}: {participant_count} participant(s), "
                     f"{device_log_count} device-check log(s)."
                 )
                 continue
 
             with transaction.atomic():
+                locked_event = Event.objects.select_for_update().get(pk=event.pk)
+                if scheduled_event_end(locked_event) > cutoff:
+                    continue
+
+                participant_rows = list(
+                    Participant.objects.filter(event_id=locked_event.pk).values_list(
+                        "pk", "gender", "country"
+                    )
+                )
+                participant_ids = [row[0] for row in participant_rows]
+                device_logs = DeviceCheckLog.objects.filter(event_id=locked_event.pk)
+                device_log_count = device_logs.count()
+                if not participant_ids and not device_log_count:
+                    continue
+
+                eligible_events += 1
+                eligible_participants += len(participant_ids)
+                EventRegistrationStatsSnapshot.objects.get_or_create(
+                    event=locked_event,
+                    defaults={
+                        "total_registrations": len(participant_rows),
+                        "gender_counts": _aggregate_counts(
+                            gender or "Not provided"
+                            for _, gender, _ in participant_rows
+                        ),
+                        "country_counts": _aggregate_counts(
+                            country or "" for _, _, country in participant_rows
+                        ),
+                    },
+                )
                 deleted_device_logs += device_logs.delete()[0]
                 deleted_count, _ = Participant.objects.filter(
                     pk__in=participant_ids

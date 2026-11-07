@@ -24,6 +24,10 @@ registration capacity, waitlist invitations, and the event introduction video.
   event administrator. An invitation is a hashed, single-use token, expires
   after 48 hours, and can be accepted only while a seat is available. Issuing
   and accepting invitations is recorded against the operator and participant.
+- Authorized event administrators can send the public registration link to up
+  to 50 selected email addresses for scheduled or registration-open events.
+  Recipient addresses are validated and deduplicated for delivery and are not
+  saved by this page.
 - Event admins can view aggregate registration counts and percentages by
   gender and country. Unknown values remain in the denominator and appear as
   their own category. The page never lists individual registrants.
@@ -34,7 +38,7 @@ registration capacity, waitlist invitations, and the event introduction video.
   Say`; date preferences are `Male`, `Female`, and `Any/Other`. A pair is
   eligible only when both participants' preferences allow the other person's
   gender. `Any/Other` allows all three gender categories.
-- Default date ceilings are 5 for men, 7 for women, and 5 for other or
+- Default date ceilings are 4 for men, 8 for women, and 5 for other or
   undisclosed gender. The event's configured round count remains the overall
   ceiling, so the default five-round event gives everyone at most five dates.
 - The 10-minute wait goal is treated as a scheduling objective, not an
@@ -46,6 +50,8 @@ registration capacity, waitlist invitations, and the event introduction video.
   requests from overselling seats while allowing unverified seats to expire.
 - Waitlist invitations are manual and operator-selected. The system does not
   reveal invite eligibility or the invite list to participants.
+- Public registration invitations are sent from the event's admin page to
+  addresses entered by the operator; they are not individual access tokens.
 - The introduction video is optional and configured per event with an HTTPS
   URL and duration. Its duration is included before the first 20-second
   preconnect period; the server's persisted round times remain authoritative.

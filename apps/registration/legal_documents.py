@@ -1,8 +1,8 @@
 """Terms and privacy policy copy supplied by Meetakk."""
 
 TERMS_VERSION = "2026-11"
-PRIVACY_VERSION = "2026-11"
-LAST_UPDATED = "Nov 2026"
+PRIVACY_VERSION = "2026-11-08"
+LAST_UPDATED = "Nov 8, 2026"
 
 TERMS_AND_CONDITIONS = {
     "summary": (
@@ -76,10 +76,10 @@ TERMS_AND_CONDITIONS = {
 
 PRIVACY_POLICY = {
     "summary": (
-        "In short: We collect your name, gender, preferences and WhatsApp number "
-        "to run the event and match you with people you both choose. We delete "
-        "your registration details and WhatsApp number 2 days after the event. "
-        "We never sell your data or use it for advertising."
+        "In short: We collect your registration details to run the event and match "
+        "you with people you both choose. We delete individual registration records "
+        "2 days after the event, but keep aggregate event statistics such as counts "
+        "by gender and country. We never sell your data or use it for advertising."
     ),
     "sections": [
         {
@@ -125,7 +125,8 @@ PRIVACY_POLICY = {
         {
             "heading": "6. How long we keep your data",
             "bullets": [
-                "We delete your registration details and WhatsApp number 2 days after the event.",
+                "Two days after the event, we delete individual registration records, including your name, age, gender, country, preferences, email address, WhatsApp number and linked consent and device-check records.",
+                "We retain event-level aggregate registration statistics, including total registrations and counts by gender and country, without participant names, contact details or participant IDs. Categories with fewer than 5 registrations are combined as Other.",
             ],
         },
         {

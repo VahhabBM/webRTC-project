@@ -4,7 +4,11 @@
 {% endblock %}
 {% block content %}
 <h1>Registration statistics — {{ event.name }}</h1>
+{% if statistics_unavailable %}
+<p>No participant records or historical statistics are stored for this event.</p>
+{% else %}
 <p>Total registrations: {{ total }}</p>
+{% if statistics_retained %}<p>These are event-level aggregate statistics retained after individual registration data was deleted.</p>{% endif %}
 <h2>By gender</h2>
 <table>
   <thead><tr><th>Gender</th><th>Count</th><th>Percent</th></tr></thead>
@@ -15,5 +19,6 @@
   <thead><tr><th>Country</th><th>Count</th><th>Percent</th></tr></thead>
   <tbody>{% for row in country_rows %}<tr><td>{{ row.label }}</td><td>{{ row.count }}</td><td>{{ row.percent }}</td></tr>{% empty %}<tr><td colspan="3">No registrations yet.</td></tr>{% endfor %}</tbody>
 </table>
+{% endif %}
 <p><a class="button" href="{% url 'admin:events_event_change' event.pk %}">Back to event</a></p>
 {% endblock %}

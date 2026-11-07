@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import re
 import secrets
 from datetime import timedelta
 
@@ -9,6 +10,7 @@ from django import forms
 from django.conf import settings
 from django.contrib import admin, messages
 from django.core.exceptions import ValidationError
+from django.core.validators import EmailValidator
 from django.db import transaction
 from django.db.models import Count, Q
 from django.http import Http404, HttpResponse, HttpResponseForbidden
@@ -19,11 +21,13 @@ from django.utils import timezone
 
 from apps.registration.services.email_service import EmailService
 
+from .auth import scheduled_event_end
 from .countries import COUNTRY_NAMES
 from .models import (
     DisconnectionCause,
     DisconnectionLog,
     Event,
+    EventRegistrationStatsSnapshot,
     EventStatus,
     OperatorActionLog,
     Pair,
@@ -117,6 +121,38 @@ class EventAdminForm(forms.ModelForm):
         return cleaned
 
 
+class RegistrationInvitationForm(forms.Form):
+    recipients = forms.CharField(
+        label="Recipient email addresses",
+        widget=forms.Textarea(attrs={"rows": 6, "cols": 80}),
+        help_text="Enter one email address per line, or separate addresses with commas.",
+    )
+
+    def clean_recipients(self):
+        raw_value = self.cleaned_data["recipients"]
+        addresses = []
+        seen = set()
+        validator = EmailValidator()
+        for address in re.split(r"[,;\s]+", raw_value):
+            address = address.strip()
+            if not address or address.casefold() in seen:
+                continue
+            try:
+                validator(address)
+            except ValidationError as exc:
+                raise forms.ValidationError(
+                    "Enter valid email addresses; one or more entries are invalid."
+                ) from exc
+            seen.add(address.casefold())
+            addresses.append(address)
+
+        if not addresses:
+            raise forms.ValidationError("Enter at least one email address.")
+        if len(addresses) > 50:
+            raise forms.ValidationError("You can invite up to 50 people at a time.")
+        return addresses
+
+
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin):
     list_display = (
@@ -198,6 +234,11 @@ class EventAdmin(admin.ModelAdmin):
                 name="events_event_waitlist",
             ),
             path(
+                "<uuid:object_id>/registration-invitations/",
+                self.admin_site.admin_view(self.registration_invitation_view),
+                name="events_event_registration_invitations",
+            ),
+            path(
                 "<uuid:object_id>/waitlist/<uuid:participant_id>/invite/",
                 self.admin_site.admin_view(self.invite_waitlisted_participant),
                 name="events_event_waitlist_invite",
@@ -223,6 +264,9 @@ class EventAdmin(admin.ModelAdmin):
             )
             extra_context["waitlist_url"] = reverse(
                 "admin:events_event_waitlist", args=[object_id]
+            )
+            extra_context["registration_invitations_url"] = reverse(
+                "admin:events_event_registration_invitations", args=[object_id]
             )
         return super().changeform_view(request, object_id, form_url, extra_context)
 
@@ -335,18 +379,18 @@ class EventAdmin(admin.ModelAdmin):
         if not self.has_view_permission(request, event):
             return HttpResponseForbidden("You do not have permission to view registration statistics.")
 
-        total = event.participants.count()
+        snapshot = EventRegistrationStatsSnapshot.objects.filter(event=event).first()
+        total = snapshot.total_registrations if snapshot else event.participants.count()
+        statistics_unavailable = (
+            snapshot is None
+            and total == 0
+            and scheduled_event_end(event) <= timezone.now() - timedelta(days=2)
+        )
 
-        def aggregate(field_name, label_for):
-            rows = (
-                event.participants.values(field_name)
-                .annotate(count=Count("id"))
-                .order_by(field_name)
-            )
+        def rows_from_counts(counts, label_for):
             result = []
-            for row in rows:
-                label = label_for(row[field_name])
-                count = row["count"]
+            for value, count in sorted(counts.items(), key=lambda item: item[0] or ""):
+                label = label_for(value)
                 result.append(
                     {
                         "label": label,
@@ -356,11 +400,39 @@ class EventAdmin(admin.ModelAdmin):
                 )
             return result
 
-        gender_rows = aggregate(
-            "gender", lambda value: value or "Not provided"
+        if snapshot:
+            gender_counts = snapshot.gender_counts
+            country_counts = snapshot.country_counts
+        elif statistics_unavailable:
+            gender_counts = {}
+            country_counts = {}
+        else:
+            gender_counts = dict(
+                event.participants.values("gender")
+                .annotate(count=Count("id"))
+                .values_list("gender", "count")
+            )
+            country_counts = dict(
+                event.participants.values("country")
+                .annotate(count=Count("id"))
+                .values_list("country", "count")
+            )
+
+        gender_rows = rows_from_counts(
+            gender_counts,
+            lambda value: (
+                "Other (small groups)"
+                if value == "__other__"
+                else value or "Not provided"
+            ),
         )
-        country_rows = aggregate(
-            "country", lambda value: COUNTRY_NAMES.get(value or "", value or "Not provided")
+        country_rows = rows_from_counts(
+            country_counts,
+            lambda value: (
+                "Other (small groups)"
+                if value == "__other__"
+                else COUNTRY_NAMES.get(value or "", value or "Not provided")
+            ),
         )
         return TemplateResponse(
             request,
@@ -372,6 +444,8 @@ class EventAdmin(admin.ModelAdmin):
                 "total": total,
                 "gender_rows": gender_rows,
                 "country_rows": country_rows,
+                "statistics_unavailable": statistics_unavailable,
+                "statistics_retained": snapshot is not None,
                 "opts": self.model._meta,
                 "app_label": self.model._meta.app_label,
             },
@@ -395,6 +469,84 @@ class EventAdmin(admin.ModelAdmin):
                 "event": event,
                 "participants": eligible,
                 "can_invite": self.has_change_permission(request, event),
+                "opts": self.model._meta,
+                "app_label": self.model._meta.app_label,
+            },
+        )
+
+    def registration_invitation_view(self, request, object_id):
+        event = get_object_or_404(Event, pk=object_id)
+        if not self.has_view_permission(request, event):
+            return HttpResponseForbidden(
+                "You do not have permission to view registration invitations."
+            )
+
+        registration_url = request.build_absolute_uri(
+            reverse("registration:register-ui", args=[event.pk])
+        )
+        can_send = self.has_change_permission(request, event) and event.status in {
+            EventStatus.REGISTRATION_OPEN,
+            EventStatus.SCHEDULED,
+        }
+        form = RegistrationInvitationForm(
+            request.POST if request.method == "POST" else None
+        )
+        sent_count = 0
+        failed_recipients = []
+
+        if request.method == "POST":
+            if not self.has_change_permission(request, event):
+                return HttpResponseForbidden(
+                    "You do not have permission to send registration invitations."
+                )
+            if not can_send:
+                self.message_user(
+                    request,
+                    "Registration invitations can only be sent for scheduled or open events.",
+                    level=messages.ERROR,
+                )
+            elif form.is_valid():
+                for recipient_email in form.cleaned_data["recipients"]:
+                    try:
+                        EmailService.send_registration_invitation_email(
+                            recipient_email=recipient_email,
+                            event_title=event.name,
+                            registration_url=registration_url,
+                        )
+                    except Exception:
+                        failed_recipients.append(recipient_email)
+                    else:
+                        sent_count += 1
+
+                if sent_count:
+                    self.message_user(
+                        request,
+                        f"Registration link sent to {sent_count} recipient(s).",
+                        level=messages.SUCCESS,
+                    )
+                if failed_recipients:
+                    self.message_user(
+                        request,
+                        f"Could not send {len(failed_recipients)} invitation email(s). "
+                        "Only failed addresses remain in the form for retry.",
+                        level=messages.ERROR,
+                    )
+                    form = RegistrationInvitationForm(
+                        initial={"recipients": "\n".join(failed_recipients)}
+                    )
+                else:
+                    form = RegistrationInvitationForm()
+
+        return TemplateResponse(
+            request,
+            "admin/events/event/registration_invitations.html",
+            {
+                **self.admin_site.each_context(request),
+                "title": f"Registration invitations – {event.name}",
+                "event": event,
+                "registration_url": registration_url,
+                "can_send": can_send,
+                "form": form,
                 "opts": self.model._meta,
                 "app_label": self.model._meta.app_label,
             },
