@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 
 from django.conf import settings
 from django.db import transaction
@@ -30,6 +31,17 @@ from apps.registration.models import (
     TermsAcceptance,
 )
 from apps.registration.services.email_service import EmailService
+
+_REGISTRATION_TITLE_DATE_SUFFIX = re.compile(
+    r"\s*(?:[-–—|:]\s*)?(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})\s*$",
+    re.IGNORECASE,
+)
+
+
+def _registration_event_title(event):
+    if event is None:
+        return ""
+    return _REGISTRATION_TITLE_DATE_SUFFIX.sub("", event.name).strip()
 
 
 def is_rate_limited(request):
@@ -535,6 +547,7 @@ class RegisterView(View):
             "registration/register.html",
             {
                 "event": event,
+                "event_title": _registration_event_title(event),
                 "event_id": event_id,
                 "tags": tags,
                 "country_choices": COUNTRY_CHOICES,

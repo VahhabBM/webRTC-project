@@ -28,6 +28,23 @@ class TestRegistrationUI:
         assert tag.name in content
         assert "tag-search" in content
 
+    def test_registration_heading_omits_date_suffix_from_event_name(
+        self, client: Client
+    ):
+        event = Event.objects.create(
+            name="Meetakk - 14 Nov 2026",
+            start_time=timezone.now() + timedelta(days=6),
+        )
+
+        response = client.get(f"/registration/{event.id}/")
+
+        assert response.status_code == 200
+        content = response.content.decode("utf-8")
+        assert "Meetakk" in content
+        assert "14 Nov 2026" not in content
+        event.refresh_from_db()
+        assert event.name == "Meetakk - 14 Nov 2026"
+
     def test_check_email_page_renders_successfully(self, client: Client):
         response = client.get("/registration/check-email/?email=user@example.com")
         assert response.status_code == 200
