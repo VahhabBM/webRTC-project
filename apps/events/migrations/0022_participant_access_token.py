@@ -6,7 +6,7 @@ class Migration(migrations.Migration):
     dependencies = [
         (
             "events",
-            "0019_rename_events_wait_e8a2f3_idx_events_wait_event_i_678a27_idx_and_more",
+            "0021_alter_event_female_date_limit_and_more",
         ),
     ]
 
