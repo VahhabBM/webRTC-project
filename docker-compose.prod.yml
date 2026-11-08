@@ -43,6 +43,21 @@ services:
       retries: 6
       start_period: 20s
 
+  event_orchestrator:
+    image: webrtc-project:${APP_GIT_TAG:?APP_GIT_TAG must be set to the deployed Git tag}
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    depends_on:
+      web:
+        condition: service_healthy
+    command:
+      - python
+      - manage.py
+      - run_event_orchestrator
+      - --interval-seconds
+      - "2"
+
   email_scheduler:
     image: webrtc-project:${APP_GIT_TAG:?APP_GIT_TAG must be set to the deployed Git tag}
     restart: unless-stopped

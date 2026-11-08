@@ -279,7 +279,11 @@ def video_room_page(request: HttpRequest) -> HttpResponse:
             "warning_threshold_seconds": getattr(
                 settings, "ORCHESTRATOR_FINAL_SECONDS", 30
             ),
+            # Scope relay fallback to the authenticated participant's current
+            # room by default. An explicit setting can still narrow this to
+            # a single diagnostic pair when needed.
             "media_fallback_room_id": getattr(settings, "MEDIA_FALLBACK_ROOM_ID", "")
+            or room_id
             or "",
             "media_fallback_escalation_timeout_ms": int(
                 getattr(
