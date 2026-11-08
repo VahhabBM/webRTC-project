@@ -76,6 +76,7 @@
           <td class="operations-dashboard__actions">
             <a class="button" href="{% url 'admin:events_event_live_monitoring' event.pk %}">Live Monitoring</a>
             {% if event.status == "active" %}<a class="button" href="{% url 'admin:events_event_matching_report' event.pk %}">Matching Report</a>{% endif %}
+            {% if can_view_participants %}<a class="button" href="{{ participant_changelist_url }}?event__id__exact={{ event.pk }}">Participants</a>{% endif %}
           </td>
         </tr>
         {% empty %}
@@ -103,6 +104,7 @@
           <td class="operations-dashboard__actions">
             <a class="button" href="{% url 'admin:events_event_registration_stats' event.pk %}">Statistics</a>
             <a class="button" href="{% url 'admin:events_event_waitlist' event.pk %}">Verified Waitlist</a>
+            {% if can_view_participants %}<a class="button" href="{{ participant_changelist_url }}?event__id__exact={{ event.pk }}">Participants</a>{% endif %}
             {% if can_change_events %}<a class="button" href="{% url 'admin:events_event_registration_invitations' event.pk %}">Send Registration Links</a>{% endif %}
           </td>
         </tr>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import logging
 import re
 import secrets
 from datetime import timedelta
@@ -23,6 +24,7 @@ from apps.registration.services.email_service import EmailService
 
 from .auth import scheduled_event_end
 from .countries import COUNTRY_NAMES
+from .email_notifications import send_event_access_email_once
 from .models import (
     DisconnectionCause,
     DisconnectionLog,
@@ -40,6 +42,8 @@ from .models import (
     Tag,
     WaitlistInvitation,
 )
+
+logger = logging.getLogger(__name__)
 
 for model in (ParticipantTag, Round, Pair):
     admin.site.register(model)
@@ -277,6 +281,11 @@ class EventAdmin(admin.ModelAdmin):
             extra_context["registration_invitations_url"] = reverse(
                 "admin:events_event_registration_invitations", args=[object_id]
             )
+            if request.user.has_perm("events.view_participant"):
+                extra_context["participants_url"] = (
+                    f"{reverse('admin:events_participant_changelist')}?"
+                    f"event__id__exact={object_id}"
+                )
         return super().changeform_view(request, object_id, form_url, extra_context)
 
     def operations_dashboard_view(self, request):
@@ -344,6 +353,12 @@ class EventAdmin(admin.ModelAdmin):
                 status__in=upcoming_statuses, start_time__gte=now
             ).count(),
             "can_change_events": self.has_change_permission(request),
+            "can_view_participants": request.user.has_perm(
+                "events.view_participant"
+            ),
+            "participant_changelist_url": reverse(
+                "admin:events_participant_changelist"
+            ),
             "confirmed_count": Participant.objects.filter(
                 event__status__in=overview_statuses,
                 registration_status=RegistrationStatus.CONFIRMED,
@@ -895,7 +910,7 @@ class ParticipantAdmin(admin.ModelAdmin):
     list_filter = ("status", "tags", "event")
     search_fields = ("display_name", "email")
     list_per_page = 50
-    actions = ["export_as_csv"]
+    actions = ["export_as_csv", "send_selected_access_links"]
 
     readonly_fields = (
         "join_token_hash",
@@ -925,6 +940,56 @@ class ParticipantAdmin(admin.ModelAdmin):
     @admin.display(description="Token")
     def token_status(self, obj):
         return "Configured" if obj.join_token_digest else "Missing"
+
+    @admin.action(
+        description="Send event access links to selected participants",
+        permissions=["change"],
+    )
+    def send_selected_access_links(self, request, queryset):
+        participant_ids = list(
+            queryset.values_list("pk", flat=True).distinct()[:51]
+        )
+        if len(participant_ids) > 50:
+            self.message_user(
+                request,
+                "Select no more than 50 participants at a time.",
+                level=messages.ERROR,
+            )
+            return
+
+        sent = skipped = failed = 0
+        for participant_id in participant_ids:
+            try:
+                if send_event_access_email_once(participant_id):
+                    sent += 1
+                else:
+                    skipped += 1
+            except Exception:
+                logger.exception(
+                    "Selected event access email failed for participant %s",
+                    participant_id,
+                )
+                failed += 1
+
+        if sent:
+            self.message_user(
+                request,
+                f"Sent event access emails to {sent} participant(s).",
+                level=messages.SUCCESS,
+            )
+        if skipped:
+            self.message_user(
+                request,
+                f"Skipped {skipped} participant(s): their email was already sent, "
+                "they are not confirmed, or the event is outside the 24-hour window.",
+                level=messages.WARNING,
+            )
+        if failed:
+            self.message_user(
+                request,
+                f"Could not send {failed} event access email(s). Check server logs.",
+                level=messages.ERROR,
+            )
 
     @admin.action(description="Export selected participants to CSV (Excel UTF-8)")
     def export_as_csv(self, request, queryset):

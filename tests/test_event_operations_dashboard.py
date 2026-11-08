@@ -44,6 +44,18 @@ def test_operations_dashboard_shows_real_event_totals_and_tools():
         join_token_hash="test-hash",
         registration_status=RegistrationStatus.WAITLISTED,
     )
+    other_event = Event.objects.create(
+        name="Different event",
+        status=EventStatus.SCHEDULED,
+        start_time=now + timedelta(days=3),
+    )
+    Participant.objects.create(
+        event=other_event,
+        display_name="Other event attendee",
+        email="other@example.com",
+        join_token_hash="test-hash",
+        registration_status=RegistrationStatus.CONFIRMED,
+    )
     client = _admin_client()
 
     response = client.get(reverse("admin:events_event_operations_dashboard"))
@@ -59,6 +71,16 @@ def test_operations_dashboard_shows_real_event_totals_and_tools():
     assert (
         reverse("admin:events_event_registration_invitations", args=[event.pk]) in html
     )
+    assert (
+        f"{reverse('admin:events_participant_changelist')}?event__id__exact={event.pk}"
+        in html
+    )
+    participant_list = client.get(
+        f"{reverse('admin:events_participant_changelist')}?event__id__exact={event.pk}"
+    )
+    assert participant_list.status_code == 200
+    assert "Confirmed attendee" in participant_list.content.decode()
+    assert "Other event attendee" not in participant_list.content.decode()
 
     event_list = client.get(reverse("admin:events_event_changelist"))
     assert b"Operations Dashboard" in event_list.content
