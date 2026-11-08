@@ -73,7 +73,7 @@ class Event(models.Model):
         max_length=20, choices=EventStatus.choices, default=EventStatus.DRAFT
     )
     num_rounds = models.PositiveSmallIntegerField(
-        default=5, validators=[MinValueValidator(1), MaxValueValidator(7)]
+        default=5, validators=[MinValueValidator(1), MaxValueValidator(8)]
     )
     round_duration = models.DurationField(
         default=timedelta(minutes=7),
@@ -242,7 +242,12 @@ class ParticipantAccessToken(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        indexes = [models.Index(fields=("participant", "expires_at"))]
+        indexes = [
+            models.Index(
+                fields=("participant", "expires_at"),
+                name="events_access_parti_24ad09_idx",
+            )
+        ]
 
     def verify(self, raw_token: str) -> bool:
         return bool(raw_token) and check_password(raw_token, self.token_hash)
