@@ -104,7 +104,10 @@ REDIS_URL = env("REDIS_URL", default="redis://127.0.0.1:6379/0")
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {"hosts": [REDIS_URL]},
+        # redis-py 8 defaults socket_timeout to 5s. The channel layer blocks
+        # for 5s while waiting for a message, so the default tears down idle
+        # WebSockets before Redis can return an empty blocking-pop result.
+        "CONFIG": {"hosts": [{"address": REDIS_URL, "socket_timeout": None}]},
     }
 }
 
