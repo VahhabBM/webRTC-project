@@ -74,6 +74,7 @@ def test_no_intro_video_is_reported_as_not_configured(client):
     assert intro["url"] == ""
     assert intro["configured"] is False
     assert intro["completed"] is True
+    assert intro["event_start_at"] == event.start_time.isoformat()
 
 
 @pytest.mark.django_db

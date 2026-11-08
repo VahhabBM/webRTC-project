@@ -336,9 +336,74 @@
       cursor: pointer;
     }
     .intro-status { min-height: 1.5rem; color: var(--muted); }
+    .event-waiting-lobby {
+      position: fixed;
+      inset: 0;
+      z-index: 1300;
+      display: grid;
+      place-items: center;
+      padding: 1rem;
+      background: radial-gradient(circle at top, #1e3a5f 0, #0f172a 58%);
+    }
+    .waiting-card {
+      width: min(100%, 560px);
+      padding: clamp(1.5rem, 5vw, 3rem);
+      border: 1px solid #334155;
+      border-radius: 20px;
+      background: linear-gradient(145deg, rgb(30 41 59 / 98%), rgb(15 23 42 / 98%));
+      box-shadow: 0 24px 80px rgb(0 0 0 / 40%);
+      text-align: center;
+    }
+    .waiting-eyebrow {
+      color: #93c5fd;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    .waiting-card h2 { margin: 0.75rem 0; font-size: clamp(1.5rem, 5vw, 2.15rem); }
+    .waiting-card p { color: var(--muted); }
+    .waiting-countdown {
+      margin: 1.5rem 0;
+      padding: 1rem;
+      border: 1px solid #334155;
+      border-radius: 14px;
+      background: rgb(2 6 23 / 55%);
+    }
+    .waiting-countdown-label {
+      display: block;
+      margin-bottom: 0.4rem;
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .waiting-countdown-value {
+      color: var(--text);
+      font-size: clamp(2.25rem, 10vw, 4rem);
+      font-variant-numeric: tabular-nums;
+      font-weight: 750;
+      letter-spacing: 0.06em;
+      line-height: 1.15;
+    }
+    .waiting-note { margin-bottom: 0; font-size: 0.9rem; }
   </style>
 </head>
 <body>
+
+  <section id="eventWaitingLobby" class="event-waiting-lobby" aria-labelledby="waitingTitle">
+    <div class="waiting-card">
+      <span class="waiting-eyebrow">Meetakk Event</span>
+      <h2 id="waitingTitle">Your speed-meeting starts soon</h2>
+      <p id="waitingStatus" aria-live="polite">Checking your event schedule…</p>
+      <div class="waiting-countdown" role="timer" aria-live="off">
+        <span class="waiting-countdown-label">Time until your event starts</span>
+        <strong id="eventStartCountdown" class="waiting-countdown-value">--:--:--</strong>
+      </div>
+      <p class="waiting-note">Keep this page open. Your call room will open automatically when the event begins. You do not need to refresh or re-enter your invite link.</p>
+    </div>
+  </section>
 
   <div id="eventIntro" class="intro-backdrop" role="dialog" aria-modal="true" aria-labelledby="introTitle" hidden>
     <section class="intro-dialog">
@@ -418,6 +483,11 @@
 
   <script type="module">
     import { CallRoomController, CallRoomPhase } from '/static/events/js/call_room.js';
+    import {
+      estimateServerNowMs,
+      formatEventStartCountdown,
+      remainingUntilEventStartMs,
+    } from '/static/events/js/event_waiting_lobby.js';
     import { initVideoSwap } from '/static/events/js/video_swap.js';
 
     const WARNING_THRESHOLD_SECONDS = {{ warning_threshold_seconds }};
@@ -504,6 +574,62 @@
       },
     });
 
+    const waitingLobby = document.getElementById('eventWaitingLobby');
+    const eventStartCountdown = document.getElementById('eventStartCountdown');
+    const waitingStatus = document.getElementById('waitingStatus');
+
+    function waitForEventStart(eventStartAt, serverTime, requestStartedAt, responseReceivedAt) {
+      const getRemainingMs = () => {
+        const estimatedServerNow = estimateServerNowMs(
+          serverTime,
+          requestStartedAt,
+          responseReceivedAt,
+          performance.now(),
+        );
+        return remainingUntilEventStartMs(eventStartAt, estimatedServerNow);
+      };
+
+      const initialRemaining = getRemainingMs();
+      if (initialRemaining === null) {
+        waitingStatus.textContent =
+          'We could not verify the event start time. Please refresh this page or reopen your event link.';
+        document.querySelector('.waiting-countdown').hidden = true;
+        return Promise.resolve(false);
+      }
+      if (initialRemaining === 0) {
+        waitingLobby.hidden = true;
+        return Promise.resolve(true);
+      }
+
+      waitingLobby.hidden = false;
+      waitingStatus.textContent = 'Your event has not started yet.';
+      eventStartCountdown.textContent = formatEventStartCountdown(initialRemaining);
+      return new Promise((resolve) => {
+        const updateCountdown = () => {
+          const remaining = getRemainingMs();
+          if (remaining === null) {
+            window.clearInterval(intervalId);
+            waitingStatus.textContent =
+              'We could not verify the event start time. Please refresh this page or reopen your event link.';
+            document.querySelector('.waiting-countdown').hidden = true;
+            resolve(false);
+            return;
+          }
+          if (remaining === 0) {
+            eventStartCountdown.textContent = '00:00:00';
+            window.clearInterval(intervalId);
+            waitingLobby.hidden = true;
+            resolve(true);
+            return;
+          }
+          eventStartCountdown.textContent = formatEventStartCountdown(remaining);
+        };
+
+        const intervalId = window.setInterval(updateCountdown, 1000);
+        updateCountdown();
+      });
+    }
+
     document.getElementById('interestYesButton').addEventListener(
       'click',
       () => controller.submitInterestChoice(true),
@@ -519,10 +645,19 @@
 
     async function init() {
       const requestStartedAt = performance.now();
-      const meRes = await fetch('/participant/me/');
+      let meRes;
+      try {
+        meRes = await fetch('/participant/me/');
+      } catch (_error) {
+        waitingStatus.textContent =
+          'We could not verify your event link. Check your connection and refresh this page.';
+        document.querySelector('.waiting-countdown').hidden = true;
+        return;
+      }
       if (!meRes.ok) {
-        document.getElementById('statusFooter').textContent =
-          'Not authenticated. Please join with a valid token first.';
+        waitingStatus.textContent =
+          'We could not verify your event link. Reopen the access link from your email.';
+        document.querySelector('.waiting-countdown').hidden = true;
         return;
       }
       const responseReceivedAt = performance.now();
@@ -531,6 +666,13 @@
       window.__t38ForceMediaFallback = () => controller.forceMediaFallback();
 
       const intro = meData.participant.intro_video;
+      const canEnterRoom = await waitForEventStart(
+        intro?.event_start_at || meData.participant.event_start_at,
+        meData.server_time,
+        requestStartedAt,
+        responseReceivedAt,
+      );
+      if (!canEnterRoom) return;
       if (!intro?.configured || intro.completed) {
         controller.connect();
         return;
@@ -540,10 +682,6 @@
       const video = document.getElementById('introVideo');
       const status = document.getElementById('introStatus');
       const continueButton = document.getElementById('introContinue');
-      const requestDuration = responseReceivedAt - requestStartedAt;
-      const estimatedServerNow = Date.parse(meData.server_time) + requestDuration / 2;
-      const eventStart = Date.parse(intro.event_start_at);
-      const startDelay = Math.max(0, eventStart - estimatedServerNow);
       let connected = false;
       const connectOnce = () => {
         if (connected) return;
@@ -578,21 +716,16 @@
         status.textContent = 'The introduction video could not be loaded. You can continue without it.';
       });
       continueButton.addEventListener('click', finishIntro);
-      if (startDelay > 0) {
-        status.textContent = 'Your introduction will begin when the event starts.';
-        window.setTimeout(() => {
-          status.textContent = 'Play the introduction video, or continue without it.';
-          video.hidden = false;
-          continueButton.disabled = false;
-        }, startDelay);
-      } else {
-        status.textContent = 'Play the introduction video, or continue without it.';
-        video.hidden = false;
-        continueButton.disabled = false;
-      }
+      status.textContent = 'Play the introduction video, or continue without it.';
+      video.hidden = false;
+      continueButton.disabled = false;
     }
 
-    init();
+    init().catch(() => {
+      waitingStatus.textContent =
+        'We could not load your event details. Please refresh this page or reopen your event link.';
+      document.querySelector('.waiting-countdown').hidden = true;
+    });
     initVideoSwap(document.querySelector('.videos'));
   </script>
 </body>
