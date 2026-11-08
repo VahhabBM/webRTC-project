@@ -21,10 +21,13 @@ from django.urls import path, reverse
 from django.utils import timezone
 
 from apps.registration.services.email_service import EmailService
+from apps.registration.services.verification_email import (
+    resend_registration_verification_email,
+)
 
 from .auth import scheduled_event_end
 from .countries import COUNTRY_NAMES
-from .email_notifications import send_event_access_email_once
+from .email_notifications import send_event_access_email_manually
 from .models import (
     DisconnectionCause,
     DisconnectionLog,
@@ -942,13 +945,11 @@ class ParticipantAdmin(admin.ModelAdmin):
         return "Configured" if obj.join_token_digest else "Missing"
 
     @admin.action(
-        description="Send event access links to selected participants",
+        description="Manually send room links or registration verification emails",
         permissions=["change"],
     )
     def send_selected_access_links(self, request, queryset):
-        participant_ids = list(
-            queryset.values_list("pk", flat=True).distinct()[:51]
-        )
+        participant_ids = list(queryset.values_list("pk", flat=True).distinct()[:51])
         if len(participant_ids) > 50:
             self.message_user(
                 request,
@@ -957,11 +958,34 @@ class ParticipantAdmin(admin.ModelAdmin):
             )
             return
 
-        sent = skipped = failed = 0
+        access_sent = verification_sent = skipped = failed = 0
         for participant_id in participant_ids:
             try:
-                if send_event_access_email_once(participant_id):
-                    sent += 1
+                participant = Participant.objects.select_related("event").get(
+                    pk=participant_id
+                )
+                if (
+                    participant.registration_status == RegistrationStatus.CONFIRMED
+                    and participant.email_verified_at is not None
+                    and participant.joined_at is not None
+                ):
+                    if send_event_access_email_manually(participant_id):
+                        access_sent += 1
+                    else:
+                        skipped += 1
+                elif (
+                    participant.registration_status
+                    in {
+                        RegistrationStatus.PENDING,
+                        RegistrationStatus.CONFIRMED,
+                        RegistrationStatus.WAITLISTED,
+                    }
+                    and participant.email_verified_at is None
+                ):
+                    if resend_registration_verification_email(participant_id):
+                        verification_sent += 1
+                    else:
+                        skipped += 1
                 else:
                     skipped += 1
             except Exception:
@@ -971,17 +995,25 @@ class ParticipantAdmin(admin.ModelAdmin):
                 )
                 failed += 1
 
-        if sent:
+        if access_sent:
             self.message_user(
                 request,
-                f"Sent event access emails to {sent} participant(s).",
+                f"Sent/resend room access emails to {access_sent} participant(s).",
+                level=messages.SUCCESS,
+            )
+        if verification_sent:
+            self.message_user(
+                request,
+                f"Sent {verification_sent} verification email(s). After confirming, "
+                "confirmed participants receive their room link automatically; "
+                "waitlisted participants must accept an invitation first.",
                 level=messages.SUCCESS,
             )
         if skipped:
             self.message_user(
                 request,
-                f"Skipped {skipped} participant(s): their email was already sent, "
-                "they are not confirmed, or the event is outside the 24-hour window.",
+                f"Skipped {skipped} participant(s): no valid email, registration "
+                "needs organizer review, or the event has ended.",
                 level=messages.WARNING,
             )
         if failed:

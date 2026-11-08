@@ -8,7 +8,9 @@ from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.events.auth import authenticate_join_token, issue_join_token
 from apps.events.models import Event, EventStatus, Participant, RegistrationStatus
+from apps.registration.models import EmailVerificationToken
 
 
 def _admin_client():
@@ -64,24 +66,92 @@ def test_admin_can_send_personal_access_link_to_selected_eligible_participant():
 
 
 @pytest.mark.django_db
-def test_admin_access_link_action_skips_out_of_window_and_already_sent_participants():
-    _, too_early = _verified_participant(start_delta=timedelta(days=2))
-    _, already_sent = _verified_participant(
-        email_sent_at=timezone.now() - timedelta(minutes=1)
+def test_admin_access_link_action_resends_outside_window_and_during_event():
+    _, outside_window = _verified_participant(start_delta=timedelta(days=2))
+    previous_send = timezone.now() - timedelta(minutes=1)
+    _, already_sent_during_event = _verified_participant(
+        start_delta=-timedelta(minutes=10), email_sent_at=previous_send
+    )
+    already_sent_during_event.event.name = "Event already in progress"
+    already_sent_during_event.event.save(update_fields=["name"])
+    previous_token = issue_join_token(already_sent_during_event)
+
+    response = _admin_client().post(
+        reverse("admin:events_participant_changelist"),
+        {
+            "action": "send_selected_access_links",
+            "_selected_action": [
+                str(outside_window.pk),
+                str(already_sent_during_event.pk),
+            ],
+        },
+    )
+
+    outside_window.refresh_from_db()
+    already_sent_during_event.refresh_from_db()
+    assert response.status_code == 302
+    assert len(mail.outbox) == 2
+    assert all("/join/" in message.body for message in mail.outbox)
+    assert outside_window.event_access_email_sent_at is not None
+    assert already_sent_during_event.event_access_email_sent_at > previous_send
+    active_event_email = next(
+        message
+        for message in mail.outbox
+        if message.subject == "Your access link for: Event already in progress"
+    )
+    new_token = active_event_email.body.split("/join/", 1)[1].split("/", 1)[0]
+    assert authenticate_join_token(previous_token) == already_sent_during_event
+    assert authenticate_join_token(new_token) == already_sent_during_event
+
+
+@pytest.mark.django_db
+def test_admin_action_resends_verification_then_sends_room_link_after_confirmation():
+    event, participant = _verified_participant()
+    participant.registration_status = RegistrationStatus.PENDING
+    participant.joined_at = None
+    participant.email_verified_at = None
+    participant.reservation_expires_at = timezone.now() + timedelta(hours=2)
+    participant.save(
+        update_fields=[
+            "registration_status",
+            "joined_at",
+            "email_verified_at",
+            "reservation_expires_at",
+        ]
+    )
+    old_token = EmailVerificationToken.objects.create(
+        participant=participant,
+        token="old-verification-token",
+        expires_at=timezone.now() + timedelta(hours=1),
     )
 
     response = _admin_client().post(
         reverse("admin:events_participant_changelist"),
         {
             "action": "send_selected_access_links",
-            "_selected_action": [str(too_early.pk), str(already_sent.pk)],
+            "_selected_action": [str(participant.pk)],
         },
     )
 
-    too_early.refresh_from_db()
     assert response.status_code == 302
-    assert not mail.outbox
-    assert too_early.event_access_email_sent_at is None
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].subject == f"Registration Verification for: {event.name}"
+    old_token.refresh_from_db()
+    assert old_token.used_at is not None
+
+    new_token = EmailVerificationToken.objects.get(
+        participant=participant, used_at__isnull=True
+    )
+    verify_response = Client().get(
+        reverse("registration:verify-email", args=[new_token.token])
+    )
+    participant.refresh_from_db()
+    assert verify_response.status_code == 200
+    assert participant.registration_status == RegistrationStatus.CONFIRMED
+    assert participant.event_access_email_sent_at is not None
+    assert len(mail.outbox) == 2
+    assert mail.outbox[1].subject == f"Your access link for: {event.name}"
+    assert "/join/" in mail.outbox[1].body
 
 
 @pytest.mark.django_db
@@ -133,4 +203,7 @@ def test_view_only_staff_cannot_send_selected_access_links():
     response = client.get(reverse("admin:events_participant_changelist"))
 
     assert response.status_code == 200
-    assert b"Send event access links to selected participants" not in response.content
+    assert (
+        b"Manually send room links or registration verification emails"
+        not in response.content
+    )

@@ -1,4 +1,4 @@
-"""Helpers for one-time event access email delivery."""
+"""Helpers for scheduled and manually requested event access emails."""
 
 from datetime import timedelta
 
@@ -10,9 +10,31 @@ from apps.events.models import EventStatus, Participant, RegistrationStatus
 from apps.registration.services.email_service import EmailService
 
 
+def send_event_access_email_once(
+    participant_id, *, allow_event_in_progress: bool = False
+) -> bool:
+    """Send a due room link once; optionally allow an event already in progress."""
+    return _send_event_access_email(
+        participant_id,
+        allow_resend=False,
+        allow_event_in_progress=allow_event_in_progress,
+    )
+
+
+def send_event_access_email_manually(participant_id) -> bool:
+    """Send or resend a room link on an explicit administrator request."""
+    return _send_event_access_email(
+        participant_id,
+        allow_resend=True,
+        allow_event_in_progress=True,
+    )
+
+
 @transaction.atomic
-def send_event_access_email_once(participant_id) -> bool:
-    """Send a participant's room link once and record the successful delivery."""
+def _send_event_access_email(
+    participant_id, *, allow_resend: bool, allow_event_in_progress: bool
+) -> bool:
+    """Validate eligibility, rotate the link, and record a successful delivery."""
     participant = (
         Participant.objects.select_for_update()
         .select_related("event")
@@ -20,8 +42,9 @@ def send_event_access_email_once(participant_id) -> bool:
     )
     now = timezone.now()
     if (
-        participant.event_access_email_sent_at
+        (participant.event_access_email_sent_at and not allow_resend)
         or participant.joined_at is None
+        or participant.email_verified_at is None
         or participant.registration_status != RegistrationStatus.CONFIRMED
         or not participant.email
         or participant.event.status
@@ -30,9 +53,13 @@ def send_event_access_email_once(participant_id) -> bool:
             EventStatus.SCHEDULED,
             EventStatus.LOCKED,
             EventStatus.ACTIVE,
+            EventStatus.RUNNING,
         }
-        or participant.event.start_time <= now
-        or participant.event.start_time > now + timedelta(hours=24)
+        or (participant.event.start_time <= now and not allow_event_in_progress)
+        or (
+            participant.event.start_time > now + timedelta(hours=24)
+            and not allow_resend
+        )
         or event_end(participant) <= now
     ):
         return False

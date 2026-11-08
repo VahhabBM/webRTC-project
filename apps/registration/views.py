@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import re
 
 from django.conf import settings
@@ -14,6 +15,7 @@ from django.views.decorators.http import require_http_methods
 
 from apps.events.auth import event_end
 from apps.events.countries import COUNTRY_CHOICES
+from apps.events.email_notifications import send_event_access_email_once
 from apps.events.models import Event, RegistrationStatus, Tag, WaitlistInvitation
 from apps.registration.capacity import has_registration_capacity
 from apps.registration.forms import RegistrationError, validate_registration_data
@@ -31,6 +33,8 @@ from apps.registration.models import (
     TermsAcceptance,
 )
 from apps.registration.services.email_service import EmailService
+
+logger = logging.getLogger(__name__)
 
 _REGISTRATION_TITLE_DATE_SUFFIX = re.compile(
     r"\s*(?:[-–—|:]\s*)?(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})\s*$",
@@ -313,6 +317,18 @@ def verify_email_view(request, token):
             and participant.email
             and event_end(participant) > timezone.now()
         )
+        access_link_email_sent = False
+        if access_link_email_scheduled:
+            try:
+                access_link_email_sent = send_event_access_email_once(
+                    participant.pk,
+                    allow_event_in_progress=True,
+                )
+            except Exception:
+                logger.exception(
+                    "Could not send event access email after verification for participant %s",
+                    participant.pk,
+                )
 
     registration_status = (
         participant.registration_status if participant else RegistrationStatus.PENDING
@@ -323,16 +339,28 @@ def verify_email_view(request, token):
             "Your place is not confirmed unless you accept an invitation."
         )
     else:
-        verification_message = (
-            "Your email is verified and your registration is complete. "
-            "Your event access link will be emailed 24 hours before the event starts."
-        )
+        if access_link_email_sent:
+            verification_message = (
+                "Your email is verified and your registration is complete. "
+                "Your personal event access link has been sent in a separate email."
+            )
+        elif access_link_email_scheduled:
+            verification_message = (
+                "Your email is verified and your registration is complete. "
+                "Your personal event access link will be emailed within 24 hours of the event."
+            )
+        else:
+            verification_message = (
+                "Your email is verified and your registration is complete. "
+                "Please contact the event organizer for your event access details."
+            )
 
     if is_json_request:
         return JsonResponse(
             {
                 "message": verification_message,
                 "access_link_email_scheduled": access_link_email_scheduled,
+                "access_link_email_sent": access_link_email_sent,
                 "registration_status": registration_status,
             },
             status=200,
@@ -353,12 +381,13 @@ def verify_email_view(request, token):
             "success": True,
             "valid": True,
             "access_link_email_scheduled": access_link_email_scheduled,
+            "access_link_email_sent": access_link_email_sent,
         },
         status=200,
         fallback_html=(
             "<!DOCTYPE html><html dir='ltr'><body><h1>You are Confirmed!</h1>"
             f"<p>{participant.display_name if participant else ''}</p>"
-            "<p>Your event access link will be emailed 24 hours before the event starts.</p>"
+            f"<p>{verification_message}</p>"
             "</body></html>"
         ),
     )
@@ -394,7 +423,14 @@ def accept_waitlist_invitation(request, token):
     )
     now = timezone.now()
 
-    def invitation_response(invitation, participant, *, status=200, accepted=False):
+    def invitation_response(
+        invitation,
+        participant,
+        *,
+        status=200,
+        accepted=False,
+        access_link_sent=False,
+    ):
         return render(
             request,
             "registration/waitlist_invitation.html",
@@ -409,7 +445,9 @@ def accept_waitlist_invitation(request, token):
                     and invitation.expires_at > now
                 ),
                 "message": (
-                    "Your place is confirmed. Your event access link will arrive by email 24 hours before the event."
+                    "Your place is confirmed. Your event access link has been emailed."
+                    if accepted and access_link_sent
+                    else "Your place is confirmed. Your event access link will arrive by email 24 hours before the event."
                     if accepted
                     else "This invitation is no longer valid or has already been used."
                     if status == 410
@@ -471,7 +509,23 @@ def accept_waitlist_invitation(request, token):
         invitation.accepted_at = now
         invitation.save(update_fields=["accepted_at"])
 
-    return invitation_response(invitation, participant, accepted=True)
+    access_link_sent = False
+    try:
+        access_link_sent = send_event_access_email_once(
+            participant.pk,
+            allow_event_in_progress=True,
+        )
+    except Exception:
+        logger.exception(
+            "Could not send event access email after waitlist acceptance for participant %s",
+            participant.pk,
+        )
+    return invitation_response(
+        invitation,
+        participant,
+        accepted=True,
+        access_link_sent=access_link_sent,
+    )
 
 
 def device_check_view(request, event_id=None):

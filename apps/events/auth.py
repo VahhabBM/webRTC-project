@@ -15,7 +15,7 @@ from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Participant, RegistrationStatus
+from .models import Participant, ParticipantAccessToken, RegistrationStatus
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +53,24 @@ def scheduled_event_end(event):
 
 
 def issue_join_token(participant: Participant) -> str:
-    """Rotate a participant token and return the raw token once, in memory."""
+    """Issue a fresh token while retaining the previously emailed token."""
+    previous_expiry = event_end(participant)
+    if participant.join_token_digest and participant.join_token_hash:
+        previous_token, _ = ParticipantAccessToken.objects.get_or_create(
+            digest=participant.join_token_digest,
+            defaults={
+                "participant": participant,
+                "token_hash": participant.join_token_hash,
+                "expires_at": previous_expiry,
+            },
+        )
+        if previous_token.expires_at < previous_expiry:
+            previous_token.expires_at = previous_expiry
+            previous_token.save(update_fields=["expires_at"])
+
     raw_token = TOKEN_PREFIX + secrets.token_urlsafe(TOKEN_BYTES)
     participant.set_join_token(raw_token)
-    participant.join_token_expires_at = event_end(participant)
+    participant.join_token_expires_at = previous_expiry
     participant.save(
         update_fields=[
             "join_token_hash",
@@ -81,19 +95,36 @@ def authenticate_join_token(raw_token: str) -> Participant:
     if not raw_token or not raw_token.startswith(TOKEN_PREFIX):
         raise InvalidJoinToken
     digest = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-    participant = (
-        Participant.objects.select_related("event")
-        .filter(join_token_digest=digest)
+    retained_token = (
+        ParticipantAccessToken.objects.select_related(
+            "participant", "participant__event"
+        )
+        .filter(digest=digest)
         .first()
     )
-    if (
-        participant is None
-        or participant.registration_status != RegistrationStatus.CONFIRMED
-        or not participant.verify_join_token(raw_token)
-    ):
-        raise InvalidJoinToken
-    if participant.token_is_expired():
-        raise ExpiredJoinToken
+    if retained_token is not None:
+        participant = retained_token.participant
+        if (
+            participant.registration_status != RegistrationStatus.CONFIRMED
+            or not retained_token.verify(raw_token)
+        ):
+            raise InvalidJoinToken
+        if retained_token.expires_at <= timezone.now():
+            raise ExpiredJoinToken
+    else:
+        participant = (
+            Participant.objects.select_related("event")
+            .filter(join_token_digest=digest)
+            .first()
+        )
+        if (
+            participant is None
+            or participant.registration_status != RegistrationStatus.CONFIRMED
+            or not participant.verify_join_token(raw_token)
+        ):
+            raise InvalidJoinToken
+        if participant.token_is_expired():
+            raise ExpiredJoinToken
     if participant.joined_at is None:
         participant.joined_at = timezone.now()
         participant.save(update_fields=["joined_at", "updated_at"])

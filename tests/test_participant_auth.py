@@ -104,6 +104,16 @@ def test_token_is_reusable_until_expiry(participant, issued_token):
 
 
 @pytest.mark.django_db
+def test_rotating_a_join_link_keeps_the_previous_link_valid(participant):
+    previous_token = issue_join_token(participant)
+    current_token = issue_join_token(participant)
+
+    assert previous_token != current_token
+    assert authenticate_join_token(previous_token) == participant
+    assert authenticate_join_token(current_token) == participant
+
+
+@pytest.mark.django_db
 def test_malformed_token_is_rejected(participant):
     with pytest.raises(InvalidJoinToken):
         authenticate_join_token("not-a-token")

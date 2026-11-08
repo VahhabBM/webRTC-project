@@ -50,7 +50,9 @@ class EmailService:
             registration_note = (
                 "Your place is reserved for 24 hours. After you verify your email, "
                 "your registration is complete and your personal event access link "
-                "will be emailed 24 hours before the event starts."
+                "will be emailed 24 hours before the event starts. If you verify "
+                "during the final 24 hours, the room link will be sent shortly "
+                "after verification."
             )
 
         message = (

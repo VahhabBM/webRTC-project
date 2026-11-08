@@ -50,6 +50,7 @@ class RegistrationEmailTestCase(TestCase):
         email_body = mail.outbox[0].body
         self.assertIn("activate", email_body.lower())
         self.assertIn("will be emailed 24 hours before the event starts", email_body)
+        self.assertIn("during the final 24 hours", email_body)
 
         # 3. Verify token creation and account activation via verification URL
         participant = Participant.objects.get(

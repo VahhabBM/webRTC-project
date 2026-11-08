@@ -228,6 +228,26 @@ class Participant(models.Model):
         )
 
 
+class ParticipantAccessToken(models.Model):
+    """Retain previously emailed room links when a fresh link is issued."""
+
+    participant = models.ForeignKey(
+        Participant,
+        on_delete=models.CASCADE,
+        related_name="access_tokens",
+    )
+    digest = models.CharField(max_length=64, unique=True)
+    token_hash = models.CharField(max_length=256)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=("participant", "expires_at"))]
+
+    def verify(self, raw_token: str) -> bool:
+        return bool(raw_token) and check_password(raw_token, self.token_hash)
+
+
 class ParticipantTag(models.Model):
     participant = models.ForeignKey(
         Participant, on_delete=models.CASCADE, related_name="participant_tags"
