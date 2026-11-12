@@ -807,6 +807,7 @@ export class PerfectNegotiator {
       if (this.pc !== pc) return;
       await this._applyVideoBitrateCap();
     } catch (err) {
+      if (this.pc !== pc) return;
       console.error("[WebRTC] Error handling remote answer:", err);
       if (this.onFailure) this.onFailure("RENEGOTIATION_FAILED");
     }

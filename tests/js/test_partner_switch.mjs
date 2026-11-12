@@ -299,6 +299,23 @@ test("relay escalation restarts ICE on the same native peer without closing in-f
   transport.leave();
 });
 
+test("a late rejected answer from the previous peer does not fail the replacement", async () => {
+  const failures = [];
+  const negotiator = makeNegotiator({ onFailure: (reason) => failures.push(reason) });
+  await negotiator.acquireLocalMedia();
+  let rejectAnswer;
+  negotiator.pc.setRemoteDescription = () => new Promise((_, reject) => { rejectAnswer = reject; });
+  const oldAnswer = negotiator._handleRemoteAnswer({ sdp: "old-answer" });
+  await negotiator.prepareRound("new-room", "new-partner");
+  const replacement = negotiator.pc;
+  rejectAnswer(new Error("old peer closed"));
+  await oldAnswer;
+  assert.deepEqual(failures, []);
+  assert.equal(negotiator.pc, replacement);
+  assert.equal(replacement.closed, false);
+  negotiator.leave();
+});
+
 test("stalled SDP from an old room cannot block replacement pairing or lifecycle messages", async () => {
   const socket = { readyState: 1, send() {}, close() {} };
   const controller = new CallRoomController({ myParticipantId: "a", createWebSocket: () => socket });
