@@ -16,6 +16,16 @@ class FakeTrack {
   stop() {
     this.readyState = "ended";
   }
+  addEventListener(type, listener) {
+    this.listeners ||= new Map();
+    const listeners = this.listeners.get(type) || [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+  end() {
+    this.readyState = "ended";
+    for (const listener of this.listeners?.get("ended") || []) listener();
+  }
   getSettings() {
     return { width: 640, height: 360 };
   }
@@ -155,6 +165,9 @@ const {
   TransportState,
 } = negotiatorMod;
 const { CallRoomController, CallRoomPhase } = callRoomMod;
+const { FailoverMediaTransport } = await import(pathToFileURL(
+  path.join(repoRoot, "apps/events/static/events/js/media_transport.js"),
+).href);
 
 function makeNegotiator(overrides = {}) {
   return new PerfectNegotiator({
@@ -184,9 +197,126 @@ before(() => {
 });
 
 beforeEach(() => {
+  installBrowserMocks();
   FakePC.instances = [];
   globalThis.__gumCalls = 0;
   resetSharedLocalMediaForTests();
+});
+
+test("socket serializes round start behind delayed pairing and restores both senders", async () => {
+  let releaseIce;
+  const ice = new Promise((resolve) => { releaseIce = resolve; });
+  const socket = { readyState: 1, send() {}, close() {} };
+  const controller = new CallRoomController({
+    myParticipantId: "participant-a",
+    elements: { localVideo: { srcObject: null } },
+    createWebSocket: () => socket,
+    fetchIceServers: () => ice,
+  });
+  controller._openSocket();
+  const receive = (type, payload) => socket.onmessage({ data: JSON.stringify({ type, payload }) });
+  receive("server.pairing", pairingPayload(1, "room-1", "partner-b"));
+  receive("server.round_start", { round_number: 1 });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.negotiator, null);
+  assert.notEqual(controller.phase, CallRoomPhase.IN_ROUND);
+  releaseIce({ iceServers: [] });
+  await controller._messageQueue;
+  assert.equal(controller.phase, CallRoomPhase.IN_ROUND);
+  assert.deepEqual(controller.negotiator.pc.getSenders().map((sender) => sender.track?.kind).sort(), ["audio", "video"]);
+  assert.equal(getSharedGetUserMediaCallCount(), 1);
+  controller.disconnect();
+});
+
+test("malformed frames do not poison the socket queue and stale queued frames are ignored", async () => {
+  const socket = { readyState: 1, send() {}, close() {} };
+  const controller = new CallRoomController({ myParticipantId: "participant-a", createWebSocket: () => socket });
+  controller._openSocket();
+  const applied = [];
+  controller._handleMessage = async (message) => { applied.push(message.type); };
+  socket.onmessage({ data: "bad json" });
+  socket.onmessage({ data: JSON.stringify({ type: "valid" }) });
+  await controller._messageQueue;
+  assert.deepEqual(applied, ["valid"]);
+  socket.onmessage({ data: JSON.stringify({ type: "stale" }) });
+  controller._wsGeneration += 1;
+  await controller._messageQueue;
+  assert.deepEqual(applied, ["valid"]);
+  controller.disconnect();
+});
+
+test("duplicate pairing and round start preserve operator pause until explicit resume", async () => {
+  const controller = new CallRoomController({ myParticipantId: "participant-a" });
+  await controller._onPairing(pairingPayload(1, "room-1", "partner-b"));
+  await controller._onRoundStart({ round_number: 1 });
+  controller._onOperatorPause({ remaining_seconds: 90 });
+  await controller._onPairing(pairingPayload(1, "room-1", "partner-b"));
+  await controller._onRoundStart({ round_number: 1 });
+  assert.equal(controller.isPaused, true);
+  controller._onOperatorResume({ ends_at: Date.now() + 90_000 });
+  assert.equal(controller.isPaused, false);
+  controller.disconnect();
+});
+
+test("polite glare applies incoming offer atomically without a separate rollback", async () => {
+  const signals = [];
+  const negotiator = makeNegotiator({ sendSignalingMessage: (message) => signals.push(message) });
+  await negotiator.acquireLocalMedia();
+  negotiator.pc.signalingState = "have-local-offer";
+  negotiator.pc.setLocalDescription = async (description) => {
+    assert.notEqual(description?.type, "rollback");
+    negotiator.pc.localDescription = { type: "answer", sdp: "answer-sdp" };
+    negotiator.pc.signalingState = "stable";
+  };
+  await negotiator._handleRemoteOffer({ sdp: "remote-offer" });
+  assert.equal(negotiator.pc.remoteDescription.type, "offer");
+  assert.equal(signals.at(-1).type, "client.webrtc.answer");
+  negotiator.leave();
+});
+
+test("a pending optional bitrate update cannot hold the round-start queue indefinitely", async () => {
+  const negotiator = makeNegotiator();
+  await negotiator.acquireLocalMedia();
+  negotiator.pc.getSenders().find((sender) => sender.track.kind === "video").setParameters = () => new Promise(() => {});
+  await negotiator._applyVideoBitrateCap();
+  assert.ok(negotiator.pc);
+  negotiator.leave();
+});
+
+test("relay escalation restarts ICE on the same native peer without closing in-flight SDP", async () => {
+  const transport = new FailoverMediaTransport({ myParticipantId: "a", partnerParticipantId: "b", roomId: "relay-room" });
+  await transport.acquireLocalMedia();
+  const pc = transport.pc;
+  let restarts = 0;
+  pc.setConfiguration = (config) => { pc.config = config; };
+  pc.restartIce = () => { restarts += 1; };
+  await transport.forceFallback();
+  assert.equal(transport.pc, pc);
+  assert.equal(pc.closed, false);
+  assert.equal(pc.config.iceTransportPolicy, "relay");
+  assert.equal(restarts, 1);
+  assert.equal(transport.usingFallback, true);
+  transport.leave();
+});
+
+test("stalled SDP from an old room cannot block replacement pairing or lifecycle messages", async () => {
+  const socket = { readyState: 1, send() {}, close() {} };
+  const controller = new CallRoomController({ myParticipantId: "a", createWebSocket: () => socket });
+  controller._openSocket();
+  controller.partner = { roomId: "old-room" };
+  const applied = [];
+  controller._handleMessage = async (message) => {
+    applied.push(message.type);
+    if (message.type === "server.webrtc.offer") await new Promise(() => {});
+    if (message.type === "server.pairing") controller.partner = { roomId: "new-room" };
+  };
+  socket.onmessage({ data: JSON.stringify({ type: "server.webrtc.offer", payload: { room_id: "old-room" } }) });
+  socket.onmessage({ data: JSON.stringify({ type: "server.pairing", payload: {} }) });
+  socket.onmessage({ data: JSON.stringify({ type: "server.round_start", payload: {} }) });
+  await controller._messageQueue;
+  assert.ok(applied.includes("server.round_start"));
+  assert.equal(controller.partner.roomId, "new-room");
+  controller.disconnect();
 });
 
 afterEach(() => {
@@ -308,9 +438,11 @@ test("call room keeps one stream and local preview across three rounds", async (
   const localVideo = { srcObject: null };
   const remoteVideo = { srcObject: null };
   const errorBanner = { hidden: true, textContent: "" };
+  const statusFooter = { textContent: "" };
+  const connectionBadge = { textContent: "", dataset: {} };
   const controller = new CallRoomController({
     myParticipantId: "participant-a",
-    elements: { localVideo, remoteVideo, errorBanner },
+    elements: { localVideo, remoteVideo, errorBanner, statusFooter, connectionBadge },
   });
 
   await controller.ensureLocalMedia();
@@ -346,6 +478,8 @@ test("call room keeps one stream and local preview across three rounds", async (
   assert.equal(controller.phase, CallRoomPhase.EVENT_ENDED);
   assert.equal(controller.negotiator, null);
   assert.equal(localVideo.srcObject, null);
+  assert.match(statusFooter.textContent, /Event ended/);
+  assert.equal(connectionBadge.textContent, "CLOSED");
   assert.ok(stream.getTracks().every((track) => track.readyState === "ended"));
 });
 
@@ -489,4 +623,76 @@ test("ensureLocalMedia on reconnect does not call getUserMedia again", async () 
   await controller.ensureLocalMedia();
   assert.equal(getSharedGetUserMediaCallCount(), 1);
   controller.disconnect();
+});
+
+test("call room does not request camera or microphone until connect", async () => {
+  const controller = new CallRoomController({
+    myParticipantId: "participant-a",
+    elements: { localVideo: { srcObject: null } },
+  });
+
+  // The room page constructs its controller while the event is counting down.
+  assert.equal(getSharedGetUserMediaCallCount(), 0);
+  assert.equal(globalThis.__gumCalls, 0);
+
+  controller.connect();
+  await controller._mediaPromise;
+
+  assert.equal(getSharedGetUserMediaCallCount(), 1);
+  assert.equal(globalThis.__gumCalls, 1);
+  assert.ok(controller._sharedStream);
+  controller.disconnect();
+});
+
+test("camera denial sends no READY and a later valid stream can recover", async () => {
+  const controller = new CallRoomController({
+    myParticipantId: "participant-a",
+    elements: { localVideo: { srcObject: null } },
+  });
+  const deviceSource = navigator.mediaDevices.getUserMedia;
+  const sent = [];
+  controller.ws = { readyState: 1, send: (message) => sent.push(JSON.parse(message)) };
+  controller._serverHelloReceived = true;
+  controller._wsGeneration = 1;
+
+  navigator.mediaDevices.getUserMedia = async () => {
+    globalThis.__gumCalls += 1;
+    throw Object.assign(new Error("denied"), { name: "NotAllowedError" });
+  };
+  await assert.rejects(controller.ensureLocalMedia(), /denied/);
+  assert.equal(sent.some((message) => message.type === "client.ready"), false);
+  assert.equal(controller._sharedStream, null);
+
+  navigator.mediaDevices.getUserMedia = async (...args) => {
+    globalThis.__gumCalls += 1;
+    return deviceSource(...args);
+  };
+  const stream = await controller.ensureLocalMedia();
+  assert.equal(getSharedGetUserMediaCallCount(), 2);
+  assert.equal(stream.getAudioTracks().length, 1);
+  assert.equal(stream.getVideoTracks().length, 1);
+  assert.equal(sent.at(-1).type, "client.ready");
+  assert.equal(sent.at(-1).payload.ready, true);
+
+  stream.getVideoTracks()[0].end();
+  assert.equal(sent.at(-1).payload.ready, false);
+  const recovered = await controller.ensureLocalMedia();
+  assert.notEqual(recovered, stream);
+  assert.equal(getSharedGetUserMediaCallCount(), 3);
+  assert.equal(sent.at(-1).payload.ready, true);
+  controller.disconnect();
+});
+
+test("camera lock rejects unusable video and stops every acquired track", async () => {
+  let acquired;
+  navigator.mediaDevices.getUserMedia = async () => {
+    globalThis.__gumCalls += 1;
+    acquired = new FakeStream([new FakeTrack("audio"), new FakeTrack("video")]);
+    acquired.getVideoTracks()[0].getSettings = () => ({ width: 2, height: 2 });
+    return acquired;
+  };
+
+  await assert.rejects(acquireSharedLocalMedia(), /unusable video track/);
+  assert.ok(acquired.getTracks().every((track) => track.readyState === "ended"));
+  assert.equal(getSharedGetUserMediaCallCount(), 1);
 });

@@ -144,6 +144,20 @@ def build_server_pairing(
     return build_message(MessageType.SERVER_PAIRING, **payload)
 
 
+def build_server_waiting(
+    *, reason: str, round_number: int, server_ts: int, next_check_ts: int, message: str
+) -> dict:
+    """Build a bounded, server-authored waiting status for a participant."""
+    return build_message(
+        MessageType.SERVER_WAITING,
+        reason=reason,
+        round_number=round_number,
+        server_ts=server_ts,
+        next_check_ts=next_check_ts,
+        message=message,
+    )
+
+
 def build_server_round_start(
     *, round_number: int, room_id: str, server_ts: int
 ) -> dict:

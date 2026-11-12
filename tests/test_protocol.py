@@ -49,6 +49,7 @@ from apps.protocol.schemas import (
     build_server_round_start,
     build_server_round_warning,
     build_server_turn_credentials,
+    build_server_waiting,
     build_server_webrtc_answer,
     build_server_webrtc_offer,
     error_from_protocol_error,
@@ -125,6 +126,7 @@ class TestConstants:
             MessageType.SERVER_CLOCK_SYNC,
             MessageType.SERVER_PONG,
             MessageType.SERVER_PAIRING,
+            MessageType.SERVER_WAITING,
             MessageType.SERVER_ROUND_START,
             MessageType.SERVER_ROUND_WARNING,
             MessageType.SERVER_ROUND_END,
@@ -388,14 +390,14 @@ class TestClientPing:
 
 
 class TestClientReady:
-    @pytest.mark.parametrize("round_number", [1, 2, 3, 4, 5, 6])
+    @pytest.mark.parametrize("round_number", [0, 1, 2, 3, 4, 5, 6, 7, 8])
     def test_valid_round_numbers(self, round_number):
         raw = _wrap(MessageType.CLIENT_READY, {"round_number": round_number})
         msg_type, payload = validate_message(raw)
         assert msg_type == MessageType.CLIENT_READY
         assert payload["round_number"] == round_number
 
-    @pytest.mark.parametrize("bad", [0, 7, -1, 100])
+    @pytest.mark.parametrize("bad", [9, -1, 100])
     def test_invalid_round_number(self, bad):
         _assert_protocol_error(
             _wrap(MessageType.CLIENT_READY, {"round_number": bad}),
@@ -412,6 +414,68 @@ class TestClientReady:
             _wrap(MessageType.CLIENT_READY, {"round_number": "1"}),
             ErrorCode.ERR_INVALID_MESSAGE,
         )
+
+
+@pytest.mark.parametrize("round_number", [7, 8])
+def test_server_round_messages_accept_event_rounds_seven_and_eight(round_number):
+    pairing = build_server_pairing(
+        round_number=round_number,
+        room_id="room",
+        partner_id="partner",
+        round_start_ts=1,
+        round_end_ts=2,
+    )
+    assert pairing["payload"]["round_number"] == round_number
+    assert build_server_round_start(
+        round_number=round_number, room_id="room", server_ts=1
+    )["payload"]["round_number"] == round_number
+
+
+def test_server_pairing_rejects_round_nine():
+    with pytest.raises(ProtocolError):
+        build_server_pairing(
+            round_number=9,
+            room_id="room",
+            partner_id="partner",
+            round_start_ts=1,
+            round_end_ts=2,
+        )
+
+
+class TestServerWaiting:
+    def test_builder_and_validation(self):
+        waiting = build_server_waiting(
+            reason="waiting_for_partner",
+            round_number=8,
+            server_ts=100,
+            next_check_ts=200,
+            message="Looking for a partner.",
+        )
+        msg_type, payload = validate_message(json.dumps(waiting))
+        assert msg_type == MessageType.SERVER_WAITING
+        assert payload["round_number"] == 8
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"reason": "unknown"},
+            {"round_number": 9},
+            {"next_check_ts": 99},
+            {"message": " "},
+            {"message": "x" * 501},
+        ],
+    )
+    def test_invalid_waiting_payload(self, overrides):
+        values = {
+            "reason": "waiting_for_partner",
+            "round_number": 1,
+            "server_ts": 100,
+            "next_check_ts": 200,
+            "message": "Waiting.",
+        }
+        values.update(overrides)
+        with pytest.raises(ProtocolError):
+            build_server_waiting(**values)
 
 
 # ---------------------------------------------------------------------------
@@ -623,7 +687,7 @@ class TestServerBuilders:
     def test_server_pairing_invalid_round(self):
         with pytest.raises(ProtocolError):
             build_server_pairing(
-                round_number=7,
+                round_number=9,
                 room_id="room-1",
                 partner_id="p-2",
                 round_start_ts=1,

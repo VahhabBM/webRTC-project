@@ -29,7 +29,7 @@ from apps.events.models import (
     RegistrationStatus,
     Round,
 )
-from apps.events.scheduler import calculate_full_schedule
+from apps.events.scheduler import calculate_full_schedule, has_live_schedule_evidence
 from apps.events.scoring import build_participant_profile, build_scoring_weights
 
 
@@ -94,17 +94,22 @@ def persist_schedule(event: Event, schedule) -> None:
         A GeneratedSchedule returned by generate_schedule().
     """
     with transaction.atomic():
-        event.rounds.all().delete()
+        locked_event = Event.objects.select_for_update().get(pk=event.pk)
+        if has_live_schedule_evidence(locked_event):
+            raise ValidationError(
+                "Cannot regenerate this schedule after live pair allocation or media evidence; existing rooms must be preserved."
+            )
+        locked_event.rounds.all().delete()
 
         full_schedule = {
-            item.number: item for item in calculate_full_schedule(event)
+            item.number: item for item in calculate_full_schedule(locked_event)
         }
         round_objects: list[Round] = []
         for rnd in schedule.rounds:
             slot = full_schedule[rnd.number]
             round_objects.append(
                 Round(
-                    event=event,
+                    event=locked_event,
                     number=rnd.number,
                     status="scheduled",
                     starts_at=slot.starts_at,
@@ -124,12 +129,12 @@ def persist_schedule(event: Event, schedule) -> None:
                     pid_a, pid_b = pid_b, pid_a
 
                 room_id = hashlib.sha256(
-                    f"{event.pk}:{round_obj.number}:{pid_a}:{pid_b}".encode()
+                    f"{locked_event.pk}:{round_obj.number}:{pid_a}:{pid_b}".encode()
                 ).hexdigest()[:32]
 
                 pair_objects.append(
                     Pair(
-                        event=event,
+                        event=locked_event,
                         round=round_obj,
                         participant_a_id=pid_a,
                         participant_b_id=pid_b,
@@ -174,6 +179,10 @@ def recalculate_pairs_pre_start(
 
     with transaction.atomic():
         locked_event = Event.objects.select_for_update().get(pk=event.pk)
+        if has_live_schedule_evidence(locked_event):
+            raise ValidationError(
+                "Cannot recalculate attendance after live pair allocation or media evidence."
+            )
         if locked_event.status in forbidden_statuses:
             raise ValidationError(
                 f"Recalculation is only allowed before the event starts. Current status: '{locked_event.status}'."

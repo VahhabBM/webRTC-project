@@ -1,0 +1,215 @@
+{
+  "scope": "Isolated application, synthetic WebAudio/animated-canvas sources in separate authenticated Chrome contexts. Not a physical-device or public-participant test.",
+  "event": "02d67975-62f7-4372-bd3d-b24770cacad4",
+  "departure": {
+    "time": "2026-11-12T21:31:24.035Z",
+    "room": "live-5e7e1b8606b9457bb50486e104c5554c",
+    "reports": [
+      {
+        "payload": {
+          "room_id": "live-5e7e1b8606b9457bb50486e104c5554c",
+          "connection_type": "direct",
+          "connection_time_ms": 1931
+        },
+        "status": 200
+      },
+      {
+        "payload": {
+          "room_id": "live-5e7e1b8606b9457bb50486e104c5554c",
+          "connection_type": "direct",
+          "connection_time_ms": 3931,
+          "audio_bytes_received": 7558,
+          "video_frames_decoded": 20
+        },
+        "status": 200
+      }
+    ],
+    "inbound": [
+      {
+        "kind": "audio",
+        "bytes": 461806
+      },
+      {
+        "kind": "video",
+        "bytes": 1273429,
+        "frames": 1163
+      }
+    ]
+  },
+  "replacementWoman": {
+    "time": "2026-11-12T21:32:18.465Z",
+    "phase": "in_round",
+    "room": "live-e439dfd0852245a6b9a14622322dc4c1",
+    "calls": 1,
+    "reports": [
+      {
+        "payload": {
+          "room_id": "live-5e7e1b8606b9457bb50486e104c5554c",
+          "connection_type": "direct",
+          "connection_time_ms": 1966
+        },
+        "status": 200
+      },
+      {
+        "payload": {
+          "room_id": "live-5e7e1b8606b9457bb50486e104c5554c",
+          "connection_type": "direct",
+          "connection_time_ms": 3964,
+          "audio_bytes_received": 7497,
+          "video_frames_decoded": 21
+        },
+        "status": 200
+      },
+      {
+        "payload": {
+          "room_id": "live-e439dfd0852245a6b9a14622322dc4c1",
+          "connection_type": "direct",
+          "connection_time_ms": 3908
+        },
+        "status": 200
+      },
+      {
+        "payload": {
+          "room_id": "live-e439dfd0852245a6b9a14622322dc4c1",
+          "connection_type": "direct",
+          "connection_time_ms": 5907,
+          "audio_bytes_received": 7659,
+          "video_frames_decoded": 20
+        },
+        "status": 200
+      }
+    ],
+    "peers": [
+      {
+        "state": "closed",
+        "policy": "relay",
+        "inbound": []
+      },
+      {
+        "state": "connected",
+        "policy": "all",
+        "inbound": [
+          {
+            "kind": "audio",
+            "bytes": 123327
+          },
+          {
+            "kind": "video",
+            "bytes": 348726,
+            "frames": 312
+          }
+        ]
+      }
+    ]
+  },
+  "replacementMan": {
+    "time": "2026-11-12T21:32:18.627Z",
+    "phase": "in_round",
+    "room": "live-e439dfd0852245a6b9a14622322dc4c1",
+    "calls": 1,
+    "reports": [
+      {
+        "payload": {
+          "room_id": "live-e439dfd0852245a6b9a14622322dc4c1",
+          "connection_type": "direct",
+          "connection_time_ms": 4218
+        },
+        "status": 200
+      },
+      {
+        "payload": {
+          "room_id": "live-e439dfd0852245a6b9a14622322dc4c1",
+          "connection_type": "direct",
+          "connection_time_ms": 6218,
+          "audio_bytes_received": 7494,
+          "video_frames_decoded": 21
+        },
+        "status": 200
+      }
+    ],
+    "peers": [
+      {
+        "state": "connected",
+        "policy": "all",
+        "inbound": [
+          {
+            "kind": "audio",
+            "bytes": 123810
+          },
+          {
+            "kind": "video",
+            "bytes": 347395,
+            "frames": 314
+          }
+        ]
+      }
+    ]
+  },
+  "relayPolicySwitch": {
+    "woman": {
+      "time": "2026-11-12T21:30:08.704Z",
+      "samePeer": true,
+      "policy": "relay",
+      "peerCount": 1,
+      "room": "live-5e7e1b8606b9457bb50486e104c5554c"
+    },
+    "man": {
+      "time": "2026-11-12T21:30:09.781Z",
+      "samePeer": true,
+      "policy": "relay",
+      "peerCount": 1,
+      "room": "live-5e7e1b8606b9457bb50486e104c5554c"
+    }
+  },
+  "relayObservation": {
+    "woman": {
+      "time": "2026-11-12T21:30:50.411Z",
+      "room": "live-5e7e1b8606b9457bb50486e104c5554c",
+      "state": "connected",
+      "policy": "relay",
+      "selected": [
+        {
+          "local": "host",
+          "remote": "host"
+        }
+      ],
+      "inbound": [
+        {
+          "kind": "audio",
+          "bytes": 328257
+        },
+        {
+          "kind": "video",
+          "bytes": 909178,
+          "frames": 829
+        }
+      ],
+      "calls": 1
+    },
+    "man": {
+      "time": "2026-11-12T21:30:50.576Z",
+      "room": "live-5e7e1b8606b9457bb50486e104c5554c",
+      "state": "connected",
+      "policy": "relay",
+      "selected": [
+        {
+          "local": "host",
+          "remote": "host"
+        }
+      ],
+      "inbound": [
+        {
+          "kind": "audio",
+          "bytes": 329047
+        },
+        {
+          "kind": "video",
+          "bytes": 907726,
+          "frames": 830
+        }
+      ],
+      "calls": 1
+    }
+  },
+  "note": "Existing healthy host/host media remained selected after relay-only configuration and ICE restart. This proves connection preservation, not relay routing. Independent relay-only and two-round app relay evidence is in the adjacent evidence files."
+}

@@ -7,12 +7,13 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
+from apps.events.auth import scheduled_event_end
 from apps.events.email_notifications import send_event_access_email_once
 from apps.events.models import Event, EventStatus, Participant, RegistrationStatus
 
 
 class Command(BaseCommand):
-    help = "Send room access links to verified participants within 24 hours of an event."
+    help = "Send room access links to confirmed participants from 24 hours before an event until it ends."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -23,8 +24,8 @@ class Command(BaseCommand):
         parser.add_argument(
             "--interval-seconds",
             type=int,
-            default=300,
-            help="Delay between checks when --loop is enabled (default: 300).",
+            default=60,
+            help="Delay between checks when --loop is enabled (default: 60).",
         )
         parser.add_argument(
             "--confirm-production",
@@ -63,18 +64,19 @@ class Command(BaseCommand):
                 EventStatus.SCHEDULED,
                 EventStatus.LOCKED,
                 EventStatus.ACTIVE,
+                EventStatus.RUNNING,
             ),
-            start_time__gt=now,
             start_time__lte=now + timedelta(hours=24),
         ).order_by("start_time")
 
         sent = 0
         failed = 0
         for event in due_events:
+            if scheduled_event_end(event) <= now:
+                continue
             participant_ids = list(
                 Participant.objects.filter(
                     event=event,
-                    joined_at__isnull=False,
                     registration_status=RegistrationStatus.CONFIRMED,
                     event_access_email_sent_at__isnull=True,
                 )
@@ -83,7 +85,7 @@ class Command(BaseCommand):
             )
             for participant_id in participant_ids:
                 try:
-                    sent += send_event_access_email_once(participant_id)
+                    sent += send_event_access_email_once(participant_id, allow_event_in_progress=True)
                 except Exception as exc:
                     failed += 1
                     self.stderr.write(

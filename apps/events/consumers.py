@@ -45,15 +45,12 @@ from .orchestrator import (
     connection_channel_key,
     current_pair_for_participant,
 )
+from .presence import publish_presence, remove_presence, touch_presence
 
 logger = logging.getLogger(__name__)
 
 # In-process long-absence watches. Generation in cache is the source of truth.
 _absence_watches: dict[str, asyncio.Task] = {}
-
-
-def _hello_seen_key(participant_id) -> str:
-    return f"ws:hello-seen:{participant_id}"
 
 
 def _timestamp_ms() -> int:
@@ -101,20 +98,18 @@ def _participant_from_scope(scope):
 
 @database_sync_to_async
 def _resolve_partner_for_participant(participant, room_id: str):
-    from django.db.models import Q
-
-    from apps.events.models import Pair
+    from apps.events.models import PairStatus
 
     if not participant or not room_id:
         return None
 
-    pair = (
-        Pair.objects.filter(room_id=room_id)
-        .filter(Q(participant_a=participant) | Q(participant_b=participant))
-        .select_related("participant_a", "participant_b")
-        .first()
-    )
-    if not pair:
+    pair = current_pair_for_participant(participant.event, participant)
+    if (
+        not pair
+        or pair.room_id != room_id
+        or pair.event_id != participant.event_id
+        or pair.status not in (PairStatus.PENDING, PairStatus.ACTIVE)
+    ):
         return None
     return (
         pair.participant_b
@@ -134,6 +129,7 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
         self._rate_timestamps = deque()
         self._heartbeat_task = None
         self._session_replaced = False
+        self._media_ready = False
         self._last_telemetry_cause = None
         self._last_telemetry_detail = ""
 
@@ -185,7 +181,8 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 else:
                     cause = "network"
             try:
-                await self._record_disconnection(cause, detail)
+                if await self._is_current_connection():
+                    await self._record_disconnection(cause, detail)
             except Exception:
                 logger.exception(
                     "Failed recording disconnection for participant %s",
@@ -235,6 +232,15 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
             await self._fatal(ErrorCode.ERR_INTERNAL)
             return
 
+        # Only a validated message from the socket that still owns the identity
+        # extends its short-lived lease. Readiness is monotonic after CLIENT_READY.
+        if self.handshake_complete and self.participant:
+            await database_sync_to_async(touch_presence)(
+                self.participant,
+                self.channel_name,
+                ready=getattr(self, "_media_ready", False),
+            )
+
         try:
             await self._handle_message(msg_type, payload)
         except Exception:
@@ -280,8 +286,11 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 original_type=str(msg_type),
             )
         elif msg_type == MessageType.CLIENT_READY:
-            # Idempotent T-13 state signal. Missing/repeat ready never delays
-            # the authoritative scheduler or T-24 round_start broadcast.
+            refreshed = await database_sync_to_async(touch_presence)(
+                self.participant, self.channel_name, ready=True
+            )
+            if refreshed:
+                self._media_ready = True
             return
         elif msg_type in (
             MessageType.CLIENT_WEBRTC_OFFER,
@@ -320,6 +329,13 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
             )
         )
         await self._claim_exclusive_connection()
+        if not await self._is_current_connection():
+            self._session_replaced = True
+            await self.close(code=CLOSE_NORMAL)
+            return
+        await database_sync_to_async(publish_presence)(
+            self.participant, self.channel_name, ready=False
+        )
         await self._clear_absence_watch()
         await self._mark_reconnected()
         await self._notify_partner_presence(PartnerState.CONNECTED)
@@ -333,6 +349,10 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
             ParticipantStatus,
         )
 
+        # Repeat the ownership check next to the DB mutation so a stale socket
+        # cannot overwrite the status after a reconnect claims the identity.
+        if cache.get(connection_channel_key(self.participant.pk)) != self.channel_name:
+            return
         now = timezone.now()
         event = getattr(self.participant, "event", None)
         active_round = None
@@ -361,6 +381,8 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
 
         if not self.participant:
             return
+        if cache.get(connection_channel_key(self.participant.pk)) != self.channel_name:
+            return
         now = timezone.now()
         DisconnectionLog.objects.filter(
             participant=self.participant,
@@ -374,19 +396,6 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
     async def _maybe_send_reconnect_snapshot(self) -> None:
         """Replay current pairing/round to this socket only (T-14/T-33)."""
         if not self.participant:
-            return
-        key = _hello_seen_key(self.participant.pk)
-        ttl = getattr(settings, "PROTOCOL_RECONNECT_WINDOW_SECONDS", 300)
-        try:
-            seen = await database_sync_to_async(cache.get)(key)
-            await database_sync_to_async(cache.set)(key, True, ttl)
-        except Exception:
-            logger.exception(
-                "Reconnect window cache failed for participant %s",
-                self.participant.pk,
-            )
-            return
-        if not seen:
             return
         try:
             messages = await database_sync_to_async(self._reconnect_snapshot)()
@@ -490,6 +499,7 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
             return
         if current != self.channel_name:
             return
+        await database_sync_to_async(remove_presence)(self.participant, self.channel_name)
         try:
             await database_sync_to_async(cache.delete)(key)
         except Exception:
@@ -498,6 +508,16 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
                 self.participant.pk,
             )
         await self._begin_absence_watch()
+
+    @database_sync_to_async
+    def _is_current_connection(self) -> bool:
+        if not self.participant:
+            return False
+        try:
+            return cache.get(connection_channel_key(self.participant.pk)) == self.channel_name
+        except Exception:
+            logger.exception("Connection ownership check failed for participant %s", self.participant.pk)
+            return False
 
     async def _begin_absence_watch(self) -> None:
         participant = self.participant
@@ -536,6 +556,8 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
 
     async def _notify_partner_presence(self, state: str) -> None:
         if not self.participant:
+            return
+        if not await self._is_current_connection():
             return
         event = getattr(self.participant, "event", None)
         if event is None:

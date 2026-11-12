@@ -78,7 +78,7 @@ Also in use, worth knowing:
 | Admin | `https://<PUBLIC_HOST>/admin/` | log in first; everything below needs it |
 | Event list | `/admin/events/event/` | find `<EVENT_ID>`, see status and participant counts |
 | **Live monitoring** | `/admin/events/event/<EVENT_ID>/live-monitoring/` | main event-day screen: active round, pairs, disconnected participants, operator action log, incident notes |
-| Matching report | `/admin/events/event/<EVENT_ID>/matching-report/` | only before the event starts, to generate/lock the schedule |
+| Matching report | `/admin/events/event/<EVENT_ID>/matching-report/` | preview/static scheduling only; live matching allocates media-ready online participants automatically |
 | SSH session | `ssh <SSH_USER>@<SERVER_IP>` (port 22) | for the `docker compose` checks in §5 and §6 |
 
 Operator controls available on the live-monitoring page (`apps/events/admin.py`,
@@ -200,7 +200,7 @@ ship or manage.
 | `web` logs loop on `PostgreSQL not ready` / `Redis not ready` | `logs web`, `logs db`, `logs redis` | `docker/entrypoint.sh` is still waiting; `web` has not started yet |
 | `ImproperlyConfigured: COTURN_SHARED_SECRET must be configured` | `logs web` | `COTURN_SHARED_SECRET` missing from `.env.production` (`apps/events/turn.py`) |
 | Participants connect but see no audio/video, ICE stays `checking` | relay logs, firewall | TURN misconfigured: 3478 or the 49152–49999 UDP range blocked, or relay `min-port`/`max-port` narrower than the opened range |
-| Media works on some networks only | relay logs | UDP blocked for those clients; the `turns:` 5349/TCP path must be reachable |
+| Media works on some networks only | relay logs | UDP blocked for those clients; the production `turns:` 443/TCP path must be reachable |
 | ICE credentials rejected by the relay | `logs web`, relay config | `COTURN_SHARED_SECRET` does not match `static-auth-secret` on the relay |
 | Page loads but WebSocket never reaches `server.hello` | proxy logs, `logs web` | Proxy not forwarding the WebSocket upgrade for `/ws/events/` |
 | Admin pages load unstyled | proxy config | `collectstatic` or the proxy `/static/` route (`docs/deployment.md` §3.5) |
@@ -235,7 +235,7 @@ appear in `.env.example`; values live only in `.env.production` on the server.
 |---|---|
 | `COTURN_REGION1_DOMAIN` | The relay hostname participants reach — your `<TURN_HOST>` |
 | `COTURN_PORT` | TURN/STUN port (3478) |
-| `COTURN_TLS_PORT` | TURNS port (5349), the TCP/TLS fallback path |
+| `COTURN_TLS_PORT` | TURNS port (443 in production), the TCP/TLS fallback path; must match the actual coturn listener |
 | `COTURN_SHARED_SECRET` | Must match `static-auth-secret` on the relay. Mismatch = credentials rejected, no relayed media |
 | `COTURN_CREDENTIAL_TTL_SECONDS` | Lifetime of generated credentials; too short means mid-event renegotiation failures |
 | `COTURN_UDP_TRANSPORT_PARAM` | Shape of the UDP TURN URL; production default is plain `turn:host:port` |
@@ -274,7 +274,7 @@ Full list: `docs/deployment.md` §9.
 - [ ] 5432 and 6379 not reachable from outside (`docs/deployment.md` §5.5).
 - [ ] 3478 and 49152–49999 open and matching the relay's `min-port`/`max-port`.
 - [ ] Admin login works; live-monitoring page loads for `<EVENT_ID>`.
-- [ ] Schedule generated and locked via the matching report page.
+- [ ] Live matching enabled, event status ready for registration/scheduling, round settings checked; no manual static locking is required for live allocation.
 - [ ] One end-to-end call tested with real media before participants arrive.
 - [ ] Deployed tag recorded, and the previous tag noted as a rollback target
       (`docs/deployment.md` §6).

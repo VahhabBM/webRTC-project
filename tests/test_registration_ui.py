@@ -49,7 +49,7 @@ class TestRegistrationUI:
         response = client.get("/registration/check-email/?email=user@example.com")
         assert response.status_code == 200
         content = response.content.decode("utf-8")
-        assert "Check Your Inbox" in content
+        assert "Registration confirmed" in content
         assert "user@example.com" in content
 
     def test_verify_email_renders_html_success_page(self, client: Client):

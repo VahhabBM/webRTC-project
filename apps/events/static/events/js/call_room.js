@@ -446,14 +446,19 @@ export class CallRoomController {
     this._sharedStream =
       null;
 
+    this._observedMediaStreams = new WeakSet();
+
     this._mediaPromise =
       null;
+    this._waitingCountdownTimer = null;
 
     this._signalingDegraded =
       false;
 
     this._wsGeneration =
       0;
+    this._messageQueue = Promise.resolve();
+    this._signalQueues = new Map();
 
     this._reconnectAttempt =
       0;
@@ -485,34 +490,12 @@ export class CallRoomController {
   _liveStream(stream) {
     return Boolean(
       stream &&
-        stream
-          .getTracks()
-          .some(
-            (track) =>
-              track.readyState !==
-              "ended",
-          ),
+        stream.getAudioTracks?.().some((track) => track.readyState !== "ended") &&
+        stream.getVideoTracks?.().some((track) => track.readyState !== "ended"),
     );
   }
 
   async forceMediaFallback() {
-    const currentRoomId =
-      this.partner?.roomId ??
-      this.negotiator?.roomId ??
-      "";
-
-    if (
-      !this.mediaFallbackRoomId ||
-      String(
-        currentRoomId,
-      ) !==
-        String(
-          this.mediaFallbackRoomId,
-        )
-    ) {
-      return false;
-    }
-
     if (!this.negotiator) {
       return false;
     }
@@ -636,6 +619,8 @@ export class CallRoomController {
 
     this.ws =
       factory(url);
+    this._serverHelloReceived = false;
+    this._readySentGeneration = null;
 
     const socket =
       this.ws;
@@ -685,11 +670,34 @@ export class CallRoomController {
           return;
         }
 
-        this._handleMessage(
-          JSON.parse(
-            event.data,
-          ),
-        );
+        // Pairing awaits ICE configuration and device acquisition. Keep later
+        // round-start and signaling messages behind it so open() cannot run
+        // before preconnect() has created (and muted) the senders.
+        this._messageQueue = this._messageQueue.then(async () => {
+          if (generation !== this._wsGeneration || this.ws !== socket) return;
+          const message = JSON.parse(event.data);
+          if (message.type?.startsWith("server.webrtc.")) {
+            const roomId = message.payload?.room_id;
+            const previous = this._signalQueues.get(roomId) || Promise.resolve();
+            const pending = previous.then(async () => {
+              if (generation !== this._wsGeneration || this.ws !== socket || this.partner?.roomId !== roomId) return;
+              await this._handleMessage(message);
+            }).catch(() => {});
+            this._signalQueues.set(roomId, pending);
+            // Browser SDP promises can stay pending after an old peer closes.
+            // They must not block lifecycle messages or another assigned room.
+            for (const key of this._signalQueues.keys()) {
+              if (key !== this.partner?.roomId) this._signalQueues.delete(key);
+            }
+          } else {
+            await this._handleMessage(message);
+          }
+        }).catch(() => {
+          // A malformed frame must not poison the queue or stop heartbeats.
+          if (generation === this._wsGeneration && this.ws === socket) {
+            this._showConnectionError("A call update could not be applied. Reconnecting…");
+          }
+        });
       };
 
     socket.onclose =
@@ -748,6 +756,7 @@ export class CallRoomController {
   }
 
   disconnect() {
+    this._clearServerWaiting();
     this._intentionalClose =
       true;
 
@@ -817,9 +826,14 @@ export class CallRoomController {
         break;
 
       case "server.pairing":
+        this._clearServerWaiting();
         await this._onPairing(
           payload,
         );
+        break;
+
+      case "server.waiting":
+        this._onServerWaiting(payload || {});
         break;
 
       case "server.round_start":
@@ -904,6 +918,7 @@ export class CallRoomController {
   }
 
   _onServerHello(payload) {
+    this._serverHelloReceived = true;
     if (
       this._helloClientTs !==
         null &&
@@ -945,7 +960,7 @@ export class CallRoomController {
     if (resumeRound) {
       this._refreshQualityFromPeer();
 
-      void this.ensureLocalMedia();
+      void this.ensureLocalMedia().then(() => this._sendClientReady());
 
       this.negotiator
         ?.recoverAfterSignalingRestore?.();
@@ -957,7 +972,67 @@ export class CallRoomController {
       CallRoomPhase.IDLE,
     );
 
-    void this.ensureLocalMedia();
+    void this.ensureLocalMedia().then(() => this._sendClientReady());
+  }
+
+  _sendClientReady(ready = true) {
+    if (this.ws?.readyState !== 1 || !this._serverHelloReceived) return;
+    const hasUsableMedia = this._liveStream(this._sharedStream);
+    if (ready && !hasUsableMedia) return;
+    const readyValue = Boolean(ready && hasUsableMedia);
+    if (this._readySentGeneration === this._wsGeneration && this._readySentValue === readyValue) return;
+    const roundNumber = Math.max(0, Math.min(8, Number(this.roundNumber) || 0));
+    try {
+      this.ws.send(JSON.stringify({
+        type: "client.ready",
+        version: 1,
+        payload: { round_number: roundNumber, ready: readyValue },
+      }));
+      this._readySentGeneration = this._wsGeneration;
+      this._readySentValue = readyValue;
+    } catch {}
+  }
+
+  _clearServerWaiting() {
+    if (this._waitingCountdownTimer) clearInterval(this._waitingCountdownTimer);
+    this._waitingCountdownTimer = null;
+    if (this.elements.waitingBanner) {
+      this.elements.waitingBanner.hidden = true;
+      this.elements.waitingBanner.textContent = "";
+    }
+  }
+
+  _onServerWaiting(payload) {
+    const reason = String(payload.reason || "waiting_for_partner");
+    const safeMessages = {
+      waiting_for_partner: "Waiting for an available partner. We’ll check again shortly.",
+      limit_reached: "You’ve completed the available rounds. Waiting for the event to finish.",
+      no_compatible_partner: "Waiting for a compatible partner. We’ll check again shortly.",
+      partner_left: "Your partner left. Waiting for another available partner.",
+    };
+    const base = safeMessages[reason] || safeMessages.waiting_for_partner;
+    if (reason === "partner_left" && this.negotiator) {
+      void this.negotiator.endRound?.();
+      this.partner = null;
+      this._updatePartnerUI();
+      this._stopTimer();
+      this._setPhase(CallRoomPhase.IDLE);
+    }
+    this._clearConnectionError();
+    if (!this.elements.waitingBanner) return;
+    const checkDelayMs = Number(payload.next_check_ts) - Number(payload.server_ts);
+    const localCheckDeadline = Date.now() + (Number.isFinite(checkDelayMs) ? Math.max(0, checkDelayMs) : 0);
+    const update = () => {
+      const seconds = Math.max(0, Math.ceil((localCheckDeadline - Date.now()) / 1000));
+      this.elements.waitingBanner.textContent = seconds
+        ? `${base} Next check in ${seconds} seconds.`
+        : base;
+    };
+    this.elements.waitingBanner.hidden = false;
+    update();
+    if (checkDelayMs > 0) {
+      this._waitingCountdownTimer = setInterval(update, 1000);
+    }
   }
 
   async ensureLocalMedia() {
@@ -996,7 +1071,11 @@ export class CallRoomController {
               this._sharedStream =
                 stream;
 
+              this._watchLocalMediaTracks(stream);
+
               this._bindLocalPreview();
+
+              this._sendClientReady();
 
               return stream;
             },
@@ -1040,6 +1119,20 @@ export class CallRoomController {
     return this._mediaPromise;
   }
 
+  _watchLocalMediaTracks(stream) {
+    if (!stream || this._observedMediaStreams.has(stream)) return;
+    this._observedMediaStreams.add(stream);
+    for (const track of stream.getTracks()) {
+      track.addEventListener?.("ended", () => {
+        if (stream !== this._sharedStream) return;
+        this._readySentGeneration = null;
+        this._mediaPromise = null;
+        this._sendClientReady(false);
+        this._showConnectionError("Your camera or microphone stopped. Reconnect it, then try again.");
+      }, { once: true });
+    }
+  }
+
   async _onPairing(payload) {
     const next =
       parsePairingPayload(
@@ -1081,9 +1174,6 @@ export class CallRoomController {
     this.serverWarningActive =
       false;
 
-    this.isPaused =
-      false;
-
     this.partnerPresence =
       "connected";
 
@@ -1113,6 +1203,8 @@ export class CallRoomController {
 
     const rtcConfig =
       await this._loadRtcConfig();
+
+    this.negotiator?.setRtcConfig?.(rtcConfig);
 
     try {
       await this.ensureLocalMedia();
@@ -1188,9 +1280,6 @@ export class CallRoomController {
     );
 
     this.serverWarningActive =
-      false;
-
-    this.isPaused =
       false;
 
     if (
@@ -1570,6 +1659,12 @@ export class CallRoomController {
     }
 
     this._detachSocket();
+
+    this._applyConnectionQuality("closed");
+    this._clearConnectionError();
+    if (this.elements.statusFooter) {
+      this.elements.statusFooter.textContent = "Event ended. Thank you for participating.";
+    }
 
     this._intentionalClose =
       false;
@@ -2037,18 +2132,14 @@ export class CallRoomController {
 
       roomId,
 
-      /*
-       * CRITICAL:
-       * Fallback must be scoped to mediaFallbackRoomId.
-       *
-       * Do NOT use:
-       *   selectedRoomId: roomId
-       *
-       * because that would make every current pair automatically
-       * eligible for relay fallback.
-       */
       selectedRoomId:
+        this.mediaFallbackRoomId || roomId,
+
+      fallbackRoomId:
         this.mediaFallbackRoomId,
+
+      refreshRtcConfig:
+        () => this._loadRtcConfig(),
 
       rtcConfig,
 
@@ -2557,12 +2648,6 @@ export class CallRoomController {
     ) {
       message =
         "Connection to this partner failed. Your camera stays on; other rounds are not stopped.";
-    } else if (
-      reason ===
-      "ESCALATION_FALLBACK_UNAVAILABLE"
-    ) {
-      message =
-        "Direct call did not connect and fallback is not available for this pair. Other rooms are not affected.";
     }
 
     this._showConnectionError(
@@ -2573,7 +2658,7 @@ export class CallRoomController {
       this.elements.connectionBadge
     ) {
       this.elements.connectionBadge.textContent =
-        `FAILED: ${reason}`;
+        "Connection problem";
 
       this.elements.connectionBadge.className =
         "badge failed";

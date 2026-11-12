@@ -217,7 +217,7 @@
     <form id="registrationForm">
         {% csrf_token %}
         <div class="form-group">
-            <label>Full Name:</label>
+            <label>First/Nick name:</label>
             <input type="text" id="displayName" name="display_name" placeholder="Enter your name" required>
         </div>
 
@@ -228,13 +228,17 @@
         </div>
 
         <div class="form-group">
-            <label for="country">I am from:</label>
+            <label for="country">I live in:</label>
             <select id="country" name="country" required>
                 <option value="" selected disabled>Select your country</option>
                 {% for code, name in country_choices %}
                 <option value="{{ code }}">{{ name }}</option>
                 {% endfor %}
             </select>
+        </div>
+        <div class="form-group">
+            <label for="city">City of residence:</label>
+            <input type="text" id="city" name="city" maxlength="120" placeholder="Enter your city">
         </div>
 
         <div class="form-group">
@@ -258,6 +262,10 @@
         <div class="form-group">
             <label>Email Address:</label>
             <input type="email" id="email" name="email" placeholder="e.g., user@example.com" required>
+        </div>
+        <div class="form-group">
+            <label for="emailConfirmation">Enter email again:</label>
+            <input type="email" id="emailConfirmation" name="email_confirmation" placeholder="Re-enter your email address" required>
         </div>
 
         <div class="form-group">
@@ -417,9 +425,11 @@
             display_name: document.getElementById('displayName').value.trim(),
             age: age,
             country: document.getElementById('country').value,
+            city: document.getElementById('city').value.trim(),
             gender: document.querySelector('input[name="gender"]:checked').value,
             want_to_date: document.querySelector('input[name="want_to_date"]:checked').value,
             email: document.getElementById('email').value.trim(),
+            email_confirmation: document.getElementById('emailConfirmation').value.trim(),
             whatsapp: fullWhatsapp,
             consents: {
                 age_confirmation: document.getElementById('consentAge').checked,
@@ -445,7 +455,7 @@
                 ? await response.json()
                 : {};
             if (response.ok) {
-                window.location.href = `/registration/check-email/?email=${encodeURIComponent(payload.email)}`;
+                window.location.href = `/registration/check-email/?email=${encodeURIComponent(payload.email)}&status=${encodeURIComponent(data.registration_status)}`;
             } else {
                 errorDiv.textContent = data.error || `Registration failed (HTTP ${response.status}). Please try again.`;
                 errorDiv.style.display = 'block';

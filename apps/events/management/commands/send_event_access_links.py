@@ -43,11 +43,11 @@ class Command(BaseCommand):
 
         participants = Participant.objects.filter(
             event=event,
-            joined_at__isnull=False,
+            registration_status="confirmed",
             event_access_email_sent_at__isnull=True,
         ).exclude(email="")
         if not participants.exists():
-            self.stdout.write("No verified participants need an access email.")
+            self.stdout.write("No confirmed participants need an access email.")
             return
 
         sent = 0

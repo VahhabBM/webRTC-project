@@ -33,7 +33,8 @@ def test_authenticated_participant_gets_english_pre_event_waiting_lobby():
     assert 'id="eventWaitingLobby"' in content
     assert "Your speed-meeting starts soon" in content
     assert 'id="waitingStatus"' in content
-    assert "Your event has not started yet." in content
+    assert "waitForFreshEventStart" in content
+    assert "fetchCurrentParticipant" in content
     assert "Time until your event starts" in content
     assert "Keep this page open." in content
     assert "await waitForEventStart(" in content

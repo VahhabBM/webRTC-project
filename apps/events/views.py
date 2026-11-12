@@ -282,9 +282,7 @@ def video_room_page(request: HttpRequest) -> HttpResponse:
             # Scope relay fallback to the authenticated participant's current
             # room by default. An explicit setting can still narrow this to
             # a single diagnostic pair when needed.
-            "media_fallback_room_id": getattr(settings, "MEDIA_FALLBACK_ROOM_ID", "")
-            or room_id
-            or "",
+            "media_fallback_room_id": getattr(settings, "MEDIA_FALLBACK_ROOM_ID", ""),
             "media_fallback_escalation_timeout_ms": int(
                 getattr(
                     settings,
@@ -377,7 +375,7 @@ def submit_connection_report(request: HttpRequest) -> JsonResponse:
             status=400,
         )
 
-    if not isinstance(conn_time_ms, int) or conn_time_ms < 0:
+    if type(conn_time_ms) is not int or conn_time_ms < 0:
         return JsonResponse(
             {
                 "error": {
@@ -388,23 +386,34 @@ def submit_connection_report(request: HttpRequest) -> JsonResponse:
             status=400,
         )
 
-    # Atomic update without lock contention to support heavy round scaling (up to 905 pairs)
-    updated_a = Pair.objects.filter(
+    audio_bytes = data.get("audio_bytes_received", 0)
+    video_frames = data.get("video_frames_decoded", 0)
+    if any(type(value) is not int or value < 0 for value in (audio_bytes, video_frames)):
+        return JsonResponse({"error": {"code": "invalid_payload", "message": "Media counters must be non-negative integers."}}, status=400)
+    media_received = audio_bytes > 0 and video_frames > 0
+    now = timezone.now()
+    from apps.events.orchestrator import current_pair_for_participant
+
+    current_pair = current_pair_for_participant(participant.event, participant, now=now)
+    eligible_pairs = Pair.objects.filter(
+        pk=current_pair.pk if current_pair else None,
+        status__in=("pending", "active"),
+    )
+    report_a = {"connection_type_a": conn_type, "connection_time_ms_a": conn_time_ms}
+    report_b = {"connection_type_b": conn_type, "connection_time_ms_b": conn_time_ms}
+    if media_received:
+        report_a["media_received_a"] = True
+        report_b["media_received_b"] = True
+    updated_a = eligible_pairs.filter(
         room_id=room_id,
         participant_a=participant,
-    ).update(
-        connection_type_a=conn_type,
-        connection_time_ms_a=conn_time_ms,
-    )
+    ).update(**report_a)
 
     if not updated_a:
-        updated_b = Pair.objects.filter(
+        updated_b = eligible_pairs.filter(
             room_id=room_id,
             participant_b=participant,
-        ).update(
-            connection_type_b=conn_type,
-            connection_time_ms_b=conn_time_ms,
-        )
+        ).update(**report_b)
         if not updated_b:
             return JsonResponse(
                 {

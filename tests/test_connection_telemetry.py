@@ -17,6 +17,7 @@ def event_with_round_and_pair(db):
         num_rounds=1,
         round_duration=timedelta(minutes=5),
         break_duration=timedelta(seconds=10),
+        live_matching_enabled=False,
     )
     rnd = Round.objects.create(
         event=event,
@@ -165,6 +166,7 @@ class TestConnectionTelemetry:
             num_rounds=1,
             round_duration=timedelta(minutes=5),
             break_duration=timedelta(seconds=10),
+            live_matching_enabled=False,
         )
         rnd = Round.objects.create(
             event=event,

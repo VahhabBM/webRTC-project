@@ -308,10 +308,16 @@ def generate_schedule(match_input: MatchInput) -> GeneratedSchedule:
             _uuid_value(pid)
     except (ValueError, AttributeError, TypeError) as exc:
         raise MatchingError("Participant IDs must be valid UUID strings.") from exc
-    if any(
+    has_metadata = any(
         p.gender is not None or p.want_to_date is not None or p.max_dates is not None
         for p in match_input.participants
-    ):
+    )
+    unrestricted = all(
+        (p.want_to_date or "Any") == "Any"
+        and _participant_limit(p) >= match_input.num_rounds
+        for p in match_input.participants
+    )
+    if has_metadata and not unrestricted:
         if len(pid_list) < 2:
             raise MatchingImpossibleError(
                 f"Cannot generate a schedule with fewer than 2 participants (got {len(pid_list)})."

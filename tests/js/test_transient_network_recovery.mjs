@@ -538,9 +538,8 @@ test("permanent ICE failure is isolated to the current partner and does not end 
   setConn(controller.negotiator.pc, "failed");
   await delay(GRACE_MS + 20);
 
-  assert.equal(errorBanner.hidden, false);
-  assert.match(errorBanner.textContent, /camera stays on/i);
-  assert.match(connectionBadge.textContent, /FAILED/);
+  assert.equal(controller.negotiator.usingFallback, true);
+  assert.equal(errorBanner.hidden, true);
   assert.equal(controller.phase, CallRoomPhase.IN_ROUND);
   assert.notEqual(controller.phase, CallRoomPhase.EVENT_ENDED);
   assert.equal(controller.roundEndTs, roundEndTs);

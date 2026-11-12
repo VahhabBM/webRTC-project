@@ -25,7 +25,15 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.events.admin import EventAdmin, EventAdminForm
-from apps.events.models import Event, EventStatus, Participant, ParticipantTag, Tag
+from apps.events.models import (
+    Event,
+    EventStatus,
+    Pair,
+    Participant,
+    ParticipantTag,
+    Round,
+    Tag,
+)
 from apps.registration.forms import RegistrationError, validate_registration_data
 
 User = get_user_model()
@@ -64,7 +72,9 @@ def _registration_payload(**overrides) -> dict:
     base = {
         "display_name": "Test User",
         "email": "testuser@example.com",
+        "email_confirmation": "testuser@example.com",
         "age": 25,
+        "country": "NZ",
         "tag_ids": [],
         "consents": {
             "age_confirmation": True,
@@ -178,8 +188,6 @@ def test_multiple_participants_can_share_same_tag():
 
 @pytest.mark.django_db
 def test_http_endpoint_rejects_multiple_tags_when_unique_tags_enabled(client: Client):
-    from unittest.mock import patch
-
     event = _make_event(unique_tags=True)
     tag1 = _make_tag("DevOps")
     tag2 = _make_tag("Cloud")
@@ -188,7 +196,9 @@ def test_http_endpoint_rejects_multiple_tags_when_unique_tags_enabled(client: Cl
         {
             "display_name": "Carol",
             "email": "carol@example.com",
+            "email_confirmation": "carol@example.com",
             "age": 25,
+            "country": "NZ",
             "tag_ids": [str(tag1.id), str(tag2.id)],
             "consents": {
                 "age_confirmation": True,
@@ -199,15 +209,11 @@ def test_http_endpoint_rejects_multiple_tags_when_unique_tags_enabled(client: Cl
         }
     )
 
-    with (
-        patch("apps.registration.views.EmailService.send_verification_email"),
-        patch("apps.registration.views.is_rate_limited", return_value=False),
-    ):
-        response = client.post(
-            f"/registration/events/{event.id}/register/",
-            data=payload,
-            content_type="application/json",
-        )
+    response = client.post(
+        f"/registration/events/{event.id}/register/",
+        data=payload,
+        content_type="application/json",
+    )
 
     assert response.status_code == 400
     body = response.json()
@@ -216,8 +222,6 @@ def test_http_endpoint_rejects_multiple_tags_when_unique_tags_enabled(client: Cl
 
 @pytest.mark.django_db
 def test_http_endpoint_accepts_single_tag_when_unique_tags_enabled(client: Client):
-    from unittest.mock import patch
-
     event = _make_event(unique_tags=True)
     tag = _make_tag("Security")
 
@@ -225,7 +229,9 @@ def test_http_endpoint_accepts_single_tag_when_unique_tags_enabled(client: Clien
         {
             "display_name": "Dave",
             "email": "dave@example.com",
+            "email_confirmation": "dave@example.com",
             "age": 25,
+            "country": "NZ",
             "tag_ids": [str(tag.id)],
             "consents": {
                 "age_confirmation": True,
@@ -236,15 +242,11 @@ def test_http_endpoint_accepts_single_tag_when_unique_tags_enabled(client: Clien
         }
     )
 
-    with (
-        patch("apps.registration.views.EmailService.send_verification_email"),
-        patch("apps.registration.views.is_rate_limited", return_value=False),
-    ):
-        response = client.post(
-            f"/registration/events/{event.id}/register/",
-            data=payload,
-            content_type="application/json",
-        )
+    response = client.post(
+        f"/registration/events/{event.id}/register/",
+        data=payload,
+        content_type="application/json",
+    )
 
     assert response.status_code == 201
 
@@ -253,8 +255,6 @@ def test_http_endpoint_accepts_single_tag_when_unique_tags_enabled(client: Clien
 def test_http_endpoint_still_allows_multiple_tags_when_unique_tags_disabled(
     client: Client,
 ):
-    from unittest.mock import patch
-
     event = _make_event(unique_tags=False)
     tag1 = _make_tag("ML")
     tag2 = _make_tag("Data")
@@ -263,7 +263,9 @@ def test_http_endpoint_still_allows_multiple_tags_when_unique_tags_disabled(
         {
             "display_name": "Eve",
             "email": "eve@example.com",
+            "email_confirmation": "eve@example.com",
             "age": 25,
+            "country": "NZ",
             "tag_ids": [str(tag1.id), str(tag2.id)],
             "consents": {
                 "age_confirmation": True,
@@ -274,15 +276,11 @@ def test_http_endpoint_still_allows_multiple_tags_when_unique_tags_disabled(
         }
     )
 
-    with (
-        patch("apps.registration.views.EmailService.send_verification_email"),
-        patch("apps.registration.views.is_rate_limited", return_value=False),
-    ):
-        response = client.post(
-            f"/registration/events/{event.id}/register/",
-            data=payload,
-            content_type="application/json",
-        )
+    response = client.post(
+        f"/registration/events/{event.id}/register/",
+        data=payload,
+        content_type="application/json",
+    )
 
     assert response.status_code == 201
 
@@ -349,6 +347,12 @@ def test_admin_form_blocks_enabling_unique_tags_when_participants_have_multiple_
             "break_duration": "0:01:00",
             "scoring_weights": '{"tag_overlap": 1.0}',
             "unique_tags": True,
+            "male_date_limit": event.male_date_limit,
+            "female_date_limit": event.female_date_limit,
+            "other_date_limit": event.other_date_limit,
+            "intro_video_url": "",
+            "intro_video_duration_seconds": 0,
+            "live_matching_enabled": True,
         },
         instance=event,
     )
@@ -377,6 +381,12 @@ def test_admin_form_allows_enabling_unique_tags_when_no_participant_has_multiple
             "break_duration": "0:01:00",
             "scoring_weights": '{"tag_overlap": 1.0}',
             "unique_tags": True,
+            "male_date_limit": event.male_date_limit,
+            "female_date_limit": event.female_date_limit,
+            "other_date_limit": event.other_date_limit,
+            "intro_video_url": "",
+            "intro_video_duration_seconds": 0,
+            "live_matching_enabled": True,
         },
         instance=event,
     )
@@ -399,7 +409,116 @@ def test_admin_form_allows_enabling_unique_tags_on_new_event_with_no_participant
             "break_duration": "0:01:00",
             "scoring_weights": '{"tag_overlap": 1.0}',
             "unique_tags": True,
+            "male_date_limit": 4,
+            "female_date_limit": 8,
+            "other_date_limit": 5,
+            "intro_video_url": "",
+            "intro_video_duration_seconds": 0,
+            "live_matching_enabled": True,
         },
+    )
+    assert form.is_valid(), form.errors
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("field", "new_value"),
+    [
+        ("start_time", lambda event: (event.start_time + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")),
+        ("round_duration", lambda _event: "0:06:00"),
+        ("break_duration", lambda _event: "0:02:00"),
+        ("num_rounds", lambda event: event.num_rounds + 1),
+        ("live_matching_enabled", lambda _event: False),
+    ],
+)
+def test_admin_form_blocks_schedule_edits_after_live_pair_allocation(field, new_value):
+    event = _make_event(status=EventStatus.SCHEDULED)
+    round_obj = Round.objects.create(
+        event=event,
+        number=1,
+        starts_at=event.start_time,
+        ends_at=event.start_time + event.round_duration,
+    )
+    participant_a = Participant.objects.create(
+        event=event, display_name="Live A", join_token_hash="!"
+    )
+    participant_b = Participant.objects.create(
+        event=event, display_name="Live B", join_token_hash="!"
+    )
+    Pair.objects.create(
+        event=event,
+        round=round_obj,
+        participant_a=participant_a,
+        participant_b=participant_b,
+        room_id="admin-live-room",
+        live_allocated=True,
+    )
+    data = {
+        "name": event.name,
+        "description": "",
+        "status": event.status,
+        "start_time": event.start_time.strftime("%Y-%m-%d %H:%M:%S"),
+        "num_rounds": event.num_rounds,
+        "round_duration": str(event.round_duration),
+        "break_duration": str(event.break_duration),
+        "scoring_weights": '{"tag_overlap": 1.0}',
+        "unique_tags": event.unique_tags,
+        "male_date_limit": event.male_date_limit,
+        "female_date_limit": event.female_date_limit,
+        "other_date_limit": event.other_date_limit,
+        "intro_video_url": "",
+        "intro_video_duration_seconds": 0,
+        "live_matching_enabled": True,
+    }
+    data[field] = new_value(event) if callable(new_value) else new_value
+
+    form = EventAdminForm(data=data, instance=event)
+    assert not form.is_valid()
+    assert field in form.errors
+
+
+@pytest.mark.django_db
+def test_admin_form_allows_non_schedule_edits_after_live_pair_allocation():
+    event = _make_event(status=EventStatus.SCHEDULED)
+    round_obj = Round.objects.create(
+        event=event,
+        number=1,
+        starts_at=event.start_time,
+        ends_at=event.start_time + event.round_duration,
+    )
+    participant_a = Participant.objects.create(
+        event=event, display_name="Live A", join_token_hash="!"
+    )
+    participant_b = Participant.objects.create(
+        event=event, display_name="Live B", join_token_hash="!"
+    )
+    Pair.objects.create(
+        event=event,
+        round=round_obj,
+        participant_a=participant_a,
+        participant_b=participant_b,
+        room_id="admin-live-room-safe-edit",
+        live_allocated=True,
+    )
+    form = EventAdminForm(
+        data={
+            "name": "Name edit is safe",
+            "description": "updated description",
+            "status": event.status,
+            "start_time": event.start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "num_rounds": event.num_rounds,
+            "round_duration": str(event.round_duration),
+            "break_duration": str(event.break_duration),
+            "scoring_weights": '{"tag_overlap": 1.0}',
+            "unique_tags": event.unique_tags,
+            "male_date_limit": event.male_date_limit,
+            "female_date_limit": event.female_date_limit,
+            "other_date_limit": event.other_date_limit,
+            "intro_video_url": "",
+            "intro_video_duration_seconds": 0,
+            "live_matching_enabled": True,
+        },
+        instance=event,
     )
     assert form.is_valid(), form.errors
 

@@ -98,13 +98,16 @@ def test_registration_statistics_require_event_permissions():
 
 @pytest.mark.django_db
 @override_settings(EVENT_REGISTRATION_CAPACITY=2)
-def test_verified_waitlisted_woman_can_accept_one_use_admin_invitation():
+def test_unverified_waitlisted_woman_can_accept_one_use_admin_invitation():
     event = Event.objects.create(
         name="Waitlist", start_time=timezone.now() + timedelta(days=1)
     )
     invited = _participant(
         event, 1, gender="Female", status=RegistrationStatus.WAITLISTED
     )
+    invited.email_verified_at = None
+    invited.joined_at = None
+    invited.save(update_fields=["email_verified_at", "joined_at"])
     _participant(event, 2, gender="Male")
     client, admin = _admin_client()
     invite_url = (
@@ -134,12 +137,14 @@ def test_verified_waitlisted_woman_can_accept_one_use_admin_invitation():
 
     assert accepted.status_code == 200
     assert invited.registration_status == RegistrationStatus.CONFIRMED
+    assert invited.email_verified_at is None
+    assert invited.joined_at is None
     assert invitation.accepted_at is not None
     assert replay.status_code == 410
 
 
 @pytest.mark.django_db
-def test_admin_cannot_invite_unverified_or_non_female_waitlist_entries():
+def test_admin_cannot_invite_non_female_but_can_invite_unverified_waitlist_entries():
     event = Event.objects.create(
         name="Eligibility", start_time=timezone.now() + timedelta(days=1)
     )
@@ -162,9 +167,10 @@ def test_admin_cannot_invite_unverified_or_non_female_waitlist_entries():
         )
 
     assert male_response.status_code == 404
-    assert unverified_response.status_code == 404
-    assert send.call_count == 0
-    assert not _invitations().exists()
+    assert unverified_response.status_code == 302
+    assert send.call_count == 1
+    assert _invitations().filter(participant=unverified).exists()
+    assert not _invitations().filter(participant=male).exists()
 
 
 @pytest.mark.django_db

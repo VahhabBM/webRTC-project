@@ -21,9 +21,6 @@ from django.urls import path, reverse
 from django.utils import timezone
 
 from apps.registration.services.email_service import EmailService
-from apps.registration.services.verification_email import (
-    resend_registration_verification_email,
-)
 
 from .auth import scheduled_event_end
 from .countries import COUNTRY_NAMES
@@ -45,6 +42,7 @@ from .models import (
     Tag,
     WaitlistInvitation,
 )
+from .scheduler import has_live_schedule_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +98,32 @@ class EventAdminForm(forms.ModelForm):
         # (i.e. we are editing, not creating).
         if not self.instance.pk:
             return cleaned
+
+        if has_live_schedule_evidence(self.instance):
+            schedule_fields = (
+                "start_time",
+                "round_duration",
+                "break_duration",
+                "num_rounds",
+                "live_matching_enabled",
+            )
+            original = Event.objects.filter(pk=self.instance.pk).values(
+                *schedule_fields
+            ).first()
+            if original:
+                for field in schedule_fields:
+                    old_value = original[field]
+                    new_value = cleaned.get(field)
+                    if field == "start_time" and old_value and new_value:
+                        # Django's default admin widget round-trips to seconds,
+                        # while database timestamps may retain microseconds.
+                        old_value = old_value.replace(microsecond=0)
+                        new_value = new_value.replace(microsecond=0)
+                    if field in cleaned and new_value != old_value:
+                        self.add_error(
+                            field,
+                            "This schedule setting cannot change after live pair allocation or media evidence.",
+                        )
 
         enabling_unique = cleaned.get("unique_tags", False)
         was_unique = (
@@ -193,6 +217,7 @@ class EventAdmin(admin.ModelAdmin):
         "intro_video_url",
         "intro_video_duration_seconds",
         "unique_tags",
+        "live_matching_enabled",
     )
 
     # Override the change-form template to inject custom tool buttons.
@@ -213,6 +238,31 @@ class EventAdmin(admin.ModelAdmin):
     @admin.display(description="Participants")
     def participants_count(self, obj):
         return obj.participants_count
+
+    def save_model(self, request, obj, form, change):
+        from apps.events.auth import extend_event_access_deadlines, scheduled_event_end
+        from apps.events.scheduler import RoundScheduler, has_live_schedule_evidence
+
+        fields = (
+            "start_time", "num_rounds", "round_duration", "break_duration",
+            "intro_video_url", "intro_video_duration_seconds", "live_matching_enabled",
+        )
+        with transaction.atomic():
+            previous = Event.objects.select_for_update().get(pk=obj.pk) if change else None
+            changed = previous is None or any(getattr(previous, field) != getattr(obj, field) for field in fields)
+            if previous and changed and has_live_schedule_evidence(previous):
+                raise ValidationError("Live allocation has started. Use the live pause, resume or extend controls instead of rebuilding the schedule.")
+            old_end = scheduled_event_end(previous) if previous else None
+            super().save_model(request, obj, form, change)
+            if changed and (obj.live_matching_enabled or obj.rounds.exists()):
+                RoundScheduler(obj).persist_schedule()
+                from django.core.cache import cache
+
+                keys = [f"orchestrator:{obj.pk}:event_end"]
+                keys.extend(f"orchestrator:{obj.pk}:r{number}:{action}" for number in range(1, 9) for action in ("pairing", "round_start", "round_end", "warning"))
+                cache.delete_many(keys)
+                if old_end is not None:
+                    extend_event_access_deadlines(obj, old_end, scheduled_event_end(obj))
 
     # ------------------------------------------------------------------ #
     # Custom URLs: matching report & live monitoring                     #
@@ -289,7 +339,11 @@ class EventAdmin(admin.ModelAdmin):
                     f"{reverse('admin:events_participant_changelist')}?"
                     f"event__id__exact={object_id}"
                 )
-        return super().changeform_view(request, object_id, form_url, extra_context)
+        try:
+            return super().changeform_view(request, object_id, form_url, extra_context)
+        except ValidationError as exc:
+            self.message_user(request, "; ".join(exc.messages), level=messages.ERROR)
+            return redirect(request.path)
 
     def operations_dashboard_view(self, request):
         """Show staff a live, event-level overview and its operational tools."""
@@ -569,7 +623,6 @@ class EventAdmin(admin.ModelAdmin):
             event.participants.filter(
                 registration_status=RegistrationStatus.WAITLISTED,
                 gender="Female",
-                email_verified_at__isnull=False,
             )
             .exclude(email="")
             .order_by("created_at")
@@ -684,7 +737,6 @@ class EventAdmin(admin.ModelAdmin):
                 event=locked_event,
                 gender="Female",
                 registration_status=RegistrationStatus.WAITLISTED,
-                email_verified_at__isnull=False,
             )
             if not participant.email:
                 raise Http404
@@ -827,6 +879,8 @@ class EventAdmin(admin.ModelAdmin):
                                 )
                     except MatchingError as exc:
                         error_message = str(exc)
+                    except ValidationError as exc:
+                        error_message = str(exc)
                     except Exception as exc:  # noqa: BLE001
                         error_message = f"Unexpected error during matching: {exc}"
 
@@ -966,24 +1020,9 @@ class ParticipantAdmin(admin.ModelAdmin):
                 )
                 if (
                     participant.registration_status == RegistrationStatus.CONFIRMED
-                    and participant.email_verified_at is not None
-                    and participant.joined_at is not None
                 ):
                     if send_event_access_email_manually(participant_id):
                         access_sent += 1
-                    else:
-                        skipped += 1
-                elif (
-                    participant.registration_status
-                    in {
-                        RegistrationStatus.PENDING,
-                        RegistrationStatus.CONFIRMED,
-                        RegistrationStatus.WAITLISTED,
-                    }
-                    and participant.email_verified_at is None
-                ):
-                    if resend_registration_verification_email(participant_id):
-                        verification_sent += 1
                     else:
                         skipped += 1
                 else:

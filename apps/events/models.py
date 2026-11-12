@@ -108,6 +108,10 @@ class Event(models.Model):
             "When disabled, the existing multiple-tag behavior remains unchanged."
         ),
     )
+    live_matching_enabled = models.BooleanField(
+        default=True,
+        help_text="Allocate pairs from currently online, media-ready participants.",
+    )
 
     def clean(self):
         super().clean()
@@ -161,6 +165,7 @@ class Participant(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     age = models.IntegerField(null=True, blank=True)
     country = models.CharField(max_length=2, blank=True, default="")
+    city = models.CharField(max_length=120, blank=True, default="")
     gender = models.CharField(max_length=50, default="Other/Prefer Not to Say")
     want_to_date = models.CharField(max_length=50, default="Any")
     whatsapp = models.CharField(max_length=50, blank=True, null=True)
@@ -197,11 +202,6 @@ class Participant(models.Model):
     )
 
     class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=("event", "display_name"), name="uniq_participant_name_per_event"
-            ),
-        ]
         indexes = [
             models.Index(fields=("event", "status")),
             models.Index(fields=("event", "created_at")),
@@ -320,6 +320,9 @@ class Pair(models.Model):
     )
     room_id = models.CharField(max_length=100, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    live_allocated = models.BooleanField(default=False)
+    media_received_a = models.BooleanField(default=False)
+    media_received_b = models.BooleanField(default=False)
 
     # T-53: Path Type Tracking (Direct vs TURN)
     path_type = models.CharField(
@@ -367,10 +370,12 @@ class Pair(models.Model):
             ),
             models.UniqueConstraint(
                 fields=("round", "participant_a"),
+                condition=~models.Q(status=PairStatus.CANCELLED),
                 name="uniq_pair_participant_a_per_round",
             ),
             models.UniqueConstraint(
                 fields=("round", "participant_b"),
+                condition=~models.Q(status=PairStatus.CANCELLED),
                 name="uniq_pair_participant_b_per_round",
             ),
         ]

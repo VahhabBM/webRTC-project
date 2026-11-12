@@ -14,6 +14,7 @@ timestamps use the same UTC Unix-ms clock as T-14/T-15.
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -23,6 +24,7 @@ from channels.db import database_sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
 from django.core.cache import cache
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -47,6 +49,7 @@ ORCHESTRATOR_CHANNEL_TYPE = "orchestrator.message"
 
 DEFAULT_FINAL_SECONDS_WARNING = 30
 _SENT_CACHE_TTL_SECONDS = 24 * 60 * 60
+_PENDING_CACHE_TTL_SECONDS = 60
 _UNSET = object()
 
 
@@ -82,10 +85,12 @@ def current_pair_for_participant(
     if timezone.is_naive(current):
         current = timezone.make_aware(current, UTC)
     phase, active_round, _remaining = RoundScheduler(event).get_current_phase(current)
-    if not active_round or phase not in (EventPhase.PRECONNECT, EventPhase.IN_ROUND):
+    if not active_round or phase not in (EventPhase.PRECONNECT, EventPhase.IN_ROUND, EventPhase.PAUSED):
         return None
     return (
         Pair.objects.filter(event_id=event.pk, round_id=active_round.pk)
+        .exclude(status__in=("cancelled", "completed"))
+        .filter(Q(live_allocated=True) | Q(event__live_matching_enabled=False))
         .filter(Q(participant_a=participant) | Q(participant_b=participant))
         .select_related("participant_a", "participant_b", "round")
         .first()
@@ -145,6 +150,8 @@ def select_pairing_recipients(round_obj: Round) -> list[PairingRecipient]:
     """
     pairs = (
         Pair.objects.filter(round_id=round_obj.pk, event_id=round_obj.event_id)
+        .exclude(status="cancelled")
+        .filter(Q(live_allocated=True) | Q(event__live_matching_enabled=False))
         .select_related("participant_a", "participant_b")
         .prefetch_related("participant_a__tags", "participant_b__tags")
     )
@@ -272,11 +279,49 @@ class OrchestratorRealtime:
         cache.set(self._mark_key(key), True, timeout=_SENT_CACHE_TTL_SECONDS)
 
     def _send_once(self, key: str, factory) -> bool:
-        if self._already_sent(key):
+        marker = self._mark_key(key)
+        if cache.get(marker):
             return False
-        factory()
-        self._mark_sent(key)
+        claim_key = f"{marker}:pending"
+        claim = uuid.uuid4().hex
+        if not cache.add(claim_key, claim, timeout=_PENDING_CACHE_TTL_SECONDS):
+            return False
+        try:
+            result = factory()
+            expected = result.get("recipients", 1)
+            if result.get("delivered", 0) < expected:
+                return False
+            cache.set(marker, True, timeout=_SENT_CACHE_TTL_SECONDS)
+        except Exception:
+            raise
+        finally:
+            # The token check avoids deleting another worker's newer claim if
+            # this send outlives the bounded lease. Django's cache API has no
+            # cross-backend compare-and-delete primitive; the lease is long
+            # enough for a normal send and expires automatically on a crash.
+            if cache.get(claim_key) == claim:
+                cache.delete(claim_key)
         return True
+
+    def _publish_once(self, key: str, group: str, message: dict) -> bool:
+        """Publish one recipient's envelope at most once after success."""
+        if cache.get(self._mark_key(key)):
+            return True
+        return self._send_once(
+            key,
+            lambda: {
+                "recipients": 1,
+                "delivered": int(self._publish(group, message)),
+            },
+        )
+
+    @staticmethod
+    def pairing_delivery_key(round_number: int, room_id: str, participant_id: str) -> str:
+        return f"r{round_number}:pairing:{room_id}:{participant_id}"
+
+    @staticmethod
+    def round_start_delivery_key(round_number: int, room_id: str, participant_id: str) -> str:
+        return f"r{round_number}:round_start:{room_id}:{participant_id}"
 
     def _pairing_message(self, recipient: PairingRecipient, round_obj: Round) -> dict:
         return build_server_pairing(
@@ -298,8 +343,12 @@ class OrchestratorRealtime:
         recipients = select_pairing_recipients(round_obj)
         delivered = 0
         for recipient in recipients:
-            if self._publish(
-                recipient.group, self._pairing_message(recipient, round_obj)
+            if self._publish_once(
+                self.pairing_delivery_key(
+                    round_obj.number, recipient.room_id, recipient.participant_id
+                ),
+                recipient.group,
+                self._pairing_message(recipient, round_obj),
             ):
                 delivered += 1
         return {
@@ -322,7 +371,13 @@ class OrchestratorRealtime:
                 room_id=recipient.room_id,
                 server_ts=server_ts,
             )
-            if self._publish(recipient.group, message):
+            if self._publish_once(
+                self.round_start_delivery_key(
+                    round_obj.number, recipient.room_id, recipient.participant_id
+                ),
+                recipient.group,
+                message,
+            ):
                 delivered += 1
         return {
             "type": MessageType.SERVER_ROUND_START,
@@ -417,7 +472,14 @@ class OrchestratorRealtime:
         current = self._now(now)
         scheduler = RoundScheduler(self.event)
         phase, active_round, remaining = scheduler.get_current_phase(current)
+        self._transition_event_status(phase)
         sent: list[str] = []
+        attempted: list[str] = []
+
+        def send_once(key: str, factory, message_type: str) -> bool:
+            if not self._already_sent(key):
+                attempted.append(message_type)
+            return self._send_once(key, factory)
 
         if active_round and phase in (EventPhase.PRECONNECT, EventPhase.IN_ROUND):
             previous_round = (
@@ -430,54 +492,62 @@ class OrchestratorRealtime:
                 .order_by("-number")
                 .first()
             )
-            if previous_round and self._send_once(
+            if previous_round and send_once(
                 f"r{previous_round.number}:round_end",
                 lambda: self.broadcast_round_end(previous_round, now=current),
+                MessageType.SERVER_ROUND_END,
             ):
                 sent.append(MessageType.SERVER_ROUND_END)
 
         if phase == EventPhase.PRECONNECT and active_round:
-            if self._send_once(
+            if send_once(
                 f"r{active_round.number}:pairing",
                 lambda: self.broadcast_pairing(active_round, now=current),
+                MessageType.SERVER_PAIRING,
             ):
                 sent.append(MessageType.SERVER_PAIRING)
         elif phase == EventPhase.IN_ROUND and active_round:
-            if self._send_once(
+            if send_once(
                 f"r{active_round.number}:pairing",
                 lambda: self.broadcast_pairing(active_round, now=current),
+                MessageType.SERVER_PAIRING,
             ):
                 sent.append(MessageType.SERVER_PAIRING)
-            if self._send_once(
+            if send_once(
                 f"r{active_round.number}:round_start",
                 lambda: self.broadcast_round_start(active_round, now=current),
+                MessageType.SERVER_ROUND_START,
             ):
                 sent.append(MessageType.SERVER_ROUND_START)
             remaining_s = remaining.total_seconds() if remaining else 0
             if remaining_s <= self.final_seconds:
-                if self._send_once(
+                if send_once(
                     f"r{active_round.number}:warning",
                     lambda: self.broadcast_final_seconds_warning(
                         active_round, now=current
                     ),
+                    MessageType.SERVER_ROUND_WARNING,
                 ):
                     sent.append(MessageType.SERVER_ROUND_WARNING)
         elif phase == EventPhase.BREAK and active_round:
-            if self._send_once(
+            if send_once(
                 f"r{active_round.number}:round_end",
                 lambda: self.broadcast_round_end(active_round, now=current),
+                MessageType.SERVER_ROUND_END,
             ):
                 sent.append(MessageType.SERVER_ROUND_END)
         elif phase == EventPhase.COMPLETED:
             if active_round:
-                if self._send_once(
+                if send_once(
                     f"r{active_round.number}:round_end",
                     lambda: self.broadcast_round_end(active_round, now=current),
+                    MessageType.SERVER_ROUND_END,
                 ):
                     sent.append(MessageType.SERVER_ROUND_END)
-            if self._send_once(
+            if send_once(
                 "event_end",
                 lambda: self.broadcast_event_end(now=current),
+                MessageType.SERVER_EVENT_END,
             ):
                 sent.append(MessageType.SERVER_EVENT_END)
 
@@ -486,8 +556,38 @@ class OrchestratorRealtime:
             "phase": phase.value,
             "round_number": active_round.number if active_round else None,
             "sent": sent,
+            "attempted": attempted,
             "server_time": current.isoformat(),
         }
+
+    def _transition_event_status(self, phase: EventPhase) -> None:
+        """Persist actual event start/end without reviving paused/cancelled rows."""
+        from apps.events.models import EventStatus
+
+        if phase in (EventPhase.IN_ROUND, EventPhase.BREAK):
+            allowed = (
+                EventStatus.SCHEDULED,
+                EventStatus.REGISTRATION_OPEN,
+                EventStatus.LOCKED,
+                EventStatus.ACTIVE,
+                EventStatus.RUNNING,
+            )
+            target = EventStatus.RUNNING
+        elif phase == EventPhase.COMPLETED:
+            allowed = (
+                EventStatus.SCHEDULED,
+                EventStatus.REGISTRATION_OPEN,
+                EventStatus.LOCKED,
+                EventStatus.ACTIVE,
+                EventStatus.RUNNING,
+            )
+            target = EventStatus.COMPLETED
+        else:
+            return
+        with transaction.atomic():
+            Event.objects.filter(pk=self.event.pk, status__in=allowed).update(
+                status=target, updated_at=timezone.now()
+            )
 
     async def abroadcast_prepared(self, jobs: list[tuple[str, dict]]) -> int:
         """Publish already-built (group, envelope) jobs on the running loop."""
@@ -515,7 +615,7 @@ class OrchestratorRealtime:
         current = self._now(now)
         scheduler = RoundScheduler(self.event)
         phase, active_round, _remaining = scheduler.get_current_phase(current)
-        messages = self.interest_prompt_messages_for_participant(
+        messages = [] if phase == EventPhase.PAUSED else self.interest_prompt_messages_for_participant(
             participant, now=current
         )
         if phase == EventPhase.COMPLETED:
@@ -528,6 +628,7 @@ class OrchestratorRealtime:
         if not active_round or phase not in (
             EventPhase.PRECONNECT,
             EventPhase.IN_ROUND,
+            EventPhase.PAUSED,
         ):
             return messages
 
@@ -541,8 +642,11 @@ class OrchestratorRealtime:
             return messages
 
         recipient = recipients[0]
-        messages.append(self._pairing_message(recipient, active_round))
-        if phase == EventPhase.IN_ROUND:
+        pairing = self._pairing_message(recipient, active_round)
+        if phase == EventPhase.PAUSED and _remaining is not None:
+            pairing["payload"]["round_end_ts"] = self._server_ts_ms(current) + int(_remaining.total_seconds() * 1000)
+        messages.append(pairing)
+        if phase in (EventPhase.IN_ROUND, EventPhase.PAUSED):
             messages.append(
                 build_server_round_start(
                     round_number=active_round.number,
@@ -550,6 +654,13 @@ class OrchestratorRealtime:
                     server_ts=self._server_ts_ms(current),
                 )
             )
+        if phase == EventPhase.PAUSED:
+            log = self.event.operator_logs.filter(action="pause").first()
+            messages.append({"type": "operator.pause", "payload": {
+                "round_number": active_round.number,
+                "remaining_seconds": int(_remaining.total_seconds()) if _remaining else 0,
+                "paused_at": log.details.get("paused_at") if log else current.isoformat(),
+            }})
         return messages
 
     def interest_prompt_jobs(
@@ -563,7 +674,7 @@ class OrchestratorRealtime:
 
         pairs = Pair.objects.filter(
             round_id=round_obj.pk, event_id=self.event.pk
-        ).select_related(
+        ).exclude(status="cancelled").select_related(
             "participant_a",
             "participant_b",
             "interest",

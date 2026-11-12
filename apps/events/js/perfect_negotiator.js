@@ -8,7 +8,7 @@
  *  - getUserMedia once per session; partner switch never re-requests devices
  *  - Transient ICE/network recovery without tearing down the room (T-32)
  *  - Deterministic W3C Perfect Negotiation with rollback
- *  - Hardware lock detection & simulated canvas fallback for multi-tab testing
+ *  - Camera/microphone acquisition and reuse for every round
  *  - Direct vs Relay connection path and establishment telemetry reporting (T-37)
  */
 
@@ -51,53 +51,12 @@ export const ConnectionQuality = Object.freeze({
 let sharedLocalStream = null;
 let sharedAcquirePromise = null;
 let sharedGetUserMediaCalls = 0;
-let simulatedTimerId = null;
-let simulatedAudioCtx = null;
-
 function streamHasLiveTracks(stream) {
   return Boolean(
-    stream && stream.getTracks().some((track) => track.readyState !== "ended"),
+    stream &&
+      stream.getAudioTracks?.().some((track) => track.readyState !== "ended") &&
+      stream.getVideoTracks?.().some((track) => track.readyState !== "ended"),
   );
-}
-
-function createSimulatedStream(label = "local") {
-  const canvas = document.createElement("canvas");
-  canvas.width = 640;
-  canvas.height = 360;
-  const ctx = canvas.getContext("2d");
-  let angle = 0;
-
-  if (simulatedTimerId != null) {
-    clearInterval(simulatedTimerId);
-  }
-  simulatedTimerId = setInterval(() => {
-    ctx.fillStyle = "#1e293b";
-    ctx.fillRect(0, 0, 640, 360);
-    ctx.fillStyle = "#38bdf8";
-    ctx.beginPath();
-    ctx.arc(320 + Math.cos(angle) * 160, 180 + Math.sin(angle) * 80, 26, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "20px monospace";
-    ctx.fillText(`ID: ${String(label).slice(0, 8)}`, 20, 40);
-    angle += 0.05;
-  }, 1000 / 30);
-
-  const stream = canvas.captureStream(30);
-
-  try {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = audioCtx.createOscillator();
-    const dst = audioCtx.createMediaStreamDestination();
-    osc.connect(dst);
-    osc.start();
-    dst.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
-    simulatedAudioCtx = audioCtx;
-  } catch {
-    // AudioContext fallback ignored
-  }
-
-  return stream;
 }
 
 export function getSharedGetUserMediaCallCount() {
@@ -105,18 +64,6 @@ export function getSharedGetUserMediaCallCount() {
 }
 
 export function releaseSharedLocalMedia() {
-  if (simulatedTimerId != null) {
-    clearInterval(simulatedTimerId);
-    simulatedTimerId = null;
-  }
-  if (simulatedAudioCtx) {
-    try {
-      simulatedAudioCtx.close();
-    } catch {
-      // ignore
-    }
-    simulatedAudioCtx = null;
-  }
   if (sharedLocalStream) {
     sharedLocalStream.getTracks().forEach((track) => {
       try {
@@ -136,7 +83,7 @@ export function resetSharedLocalMediaForTests() {
 }
 
 /**
- * Acquire camera/mic once and reuse the same MediaStream for every round.
+ * Acquire camera and microphone once and reuse them for every round.
  * Subsequent callers receive the live stream without calling getUserMedia.
  */
 export async function acquireSharedLocalMedia(
@@ -145,22 +92,36 @@ export async function acquireSharedLocalMedia(
   if (streamHasLiveTracks(sharedLocalStream)) {
     return sharedLocalStream;
   }
+  if (sharedLocalStream) {
+    sharedLocalStream.getTracks().forEach((track) => {
+      try { track.stop(); } catch {}
+    });
+    sharedLocalStream = null;
+    sharedAcquirePromise = null;
+  }
   if (!sharedAcquirePromise) {
     sharedAcquirePromise = (async () => {
       sharedGetUserMediaCalls += 1;
+      let stream;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        const videoTrack = stream.getVideoTracks()[0];
-        const settings = videoTrack?.getSettings?.() || {};
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        const audioTrack = stream.getAudioTracks?.().find((track) => track.readyState !== "ended");
+        const videoTrack = stream.getVideoTracks?.().find((track) => track.readyState !== "ended");
+        if (!audioTrack || !videoTrack) {
+          throw new Error("Camera and microphone are both required.");
+        }
+        const settings = videoTrack.getSettings?.() || {};
         if (settings.width <= 2 && settings.height <= 2) {
-          throw new Error("Webcam exclusive lock detected (2x2 frame)");
+          throw new Error("Camera returned an unusable video track.");
         }
         sharedLocalStream = stream;
-        return sharedLocalStream;
+        return stream;
       } catch (err) {
-        console.warn("[WebRTC] Hardware camera locked/unavailable. Using test stream:", err);
-        sharedLocalStream = createSimulatedStream("local");
-        return sharedLocalStream;
+        stream?.getTracks?.().forEach((track) => {
+          try { track.stop(); } catch {}
+        });
+        sharedAcquirePromise = null;
+        throw err;
       }
     })();
   }
@@ -219,6 +180,11 @@ export class PerfectNegotiator {
     this._iceRestartTimer = null;
     this._permanentFailureTimer = null;
     this._deferPermanentFailure = deferPermanentFailure;
+    // Trickle ICE can arrive before the matching offer/answer has been applied.
+    this._pendingRemoteCandidates = [];
+    this._mediaReceivedReported = false;
+    this._mediaReportInFlight = false;
+    this._mediaReportAbort = null;
 
     // T-37 Telemetry Tracking
     this._connectionStartTime = Date.now();
@@ -237,6 +203,9 @@ export class PerfectNegotiator {
   _initPeerConnection() {
     this._connectionStartTime = Date.now();
     this._telemetryReported = false;
+    this._mediaReceivedReported = false;
+    this._mediaReportInFlight = false;
+    this._mediaReportAbort = null;
     this.pc = new RTCPeerConnection(this.rtcConfig);
     this._setupPeerEvents();
   }
@@ -247,9 +216,11 @@ export class PerfectNegotiator {
     // 1. Perfect Negotiation Offer Generation
     pc.onnegotiationneeded = async () => {
       if (this.pc !== pc) return;
+      if (this.isMakingOffer || pc.signalingState !== "stable") return;
       try {
         this.isMakingOffer = true;
         await pc.setLocalDescription();
+        if (this.pc !== pc) return;
         this.sendSignal({
           type: "client.webrtc.offer",
           version: 1,
@@ -261,7 +232,7 @@ export class PerfectNegotiator {
       } catch (err) {
         console.error("[WebRTC] Negotiation offer error:", err);
       } finally {
-        this.isMakingOffer = false;
+        if (this.pc === pc) this.isMakingOffer = false;
       }
     };
 
@@ -338,6 +309,7 @@ export class PerfectNegotiator {
     if (connState === "closed") {
       this._clearRecoveryTimers();
       this._stopStatsMonitor();
+      this._cancelMediaReceiptReport();
       this._emitQuality(ConnectionQuality.CLOSED);
     }
   }
@@ -380,14 +352,17 @@ export class PerfectNegotiator {
   }
 
   async _legacyIceRestartOffer() {
-    if (!this.pc) {
+    const pc = this.pc;
+    if (!pc) {
       this._iceRestartInFlight = false;
       return;
     }
     try {
       this.isMakingOffer = true;
-      const offer = await this.pc.createOffer({ iceRestart: true });
-      await this.pc.setLocalDescription(offer);
+      const offer = await pc.createOffer({ iceRestart: true });
+      if (this.pc !== pc) return;
+      await pc.setLocalDescription(offer);
+      if (this.pc !== pc) return;
       this.sendSignal({
         type: "client.webrtc.offer",
         version: 1,
@@ -398,9 +373,9 @@ export class PerfectNegotiator {
       });
     } catch (err) {
       console.warn("[WebRTC] ICE restart offer failed:", err);
-      this._iceRestartInFlight = false;
+      if (this.pc === pc) this._iceRestartInFlight = false;
     } finally {
-      this.isMakingOffer = false;
+      if (this.pc === pc) this.isMakingOffer = false;
     }
   }
 
@@ -461,6 +436,7 @@ export class PerfectNegotiator {
     this._clearRecoveryTimers();
     this._iceRestartInFlight = false;
     this._stopStatsMonitor();
+    this._cancelMediaReceiptReport();
     this._telemetryReported = false;
     const pc = this.pc;
     if (!pc) return;
@@ -506,8 +482,7 @@ export class PerfectNegotiator {
   }
 
   /**
-   * Acquire local hardware media. Fallback to synthetic canvas
-   * if physical webcam is exclusively locked by another process/tab.
+   * Acquire camera and microphone media.
    * Never re-prompts when a live shared stream already exists (T-31).
    */
   async acquireLocalMedia(constraints = DEFAULT_MEDIA_CONSTRAINTS) {
@@ -516,10 +491,6 @@ export class PerfectNegotiator {
     }
     this._attachTracksToPC();
     return this.localStream;
-  }
-
-  _createSimulatedStream() {
-    return createSimulatedStream(this.myId);
   }
 
   _attachTracksToPC() {
@@ -605,16 +576,26 @@ export class PerfectNegotiator {
 
     if (!videoSender) return;
 
+    let timeout;
     try {
       const params = videoSender.getParameters();
       if (!params.encodings || params.encodings.length === 0) {
         params.encodings = [{}];
       }
       params.encodings[0].maxBitrate = VIDEO_MAX_BITRATE_BPS;
-      await videoSender.setParameters(params);
+      // This optional optimization must never block signaling or round changes
+      // if a browser leaves setParameters pending during peer replacement.
+      await Promise.race([
+        videoSender.setParameters(params),
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("Bitrate update timed out")), 1000);
+        }),
+      ]);
       console.log(`[WebRTC] Video bitrate cap enforced at ${VIDEO_MAX_BITRATE_BPS / 1000} kbps`);
     } catch (err) {
       console.warn("[WebRTC] Failed to set video maxBitrate:", err);
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -622,11 +603,17 @@ export class PerfectNegotiator {
    * Manual offer generation triggered by UI button or round transitions.
    */
   async createManualOffer() {
-    if (!this.pc) return;
+    const pc = this.pc;
+    if (!pc) return;
+    // Track attachment raises negotiationneeded asynchronously. Reuse that
+    // offer when it already won the race instead of dispatching a second SDP.
+    if (this.isMakingOffer || pc.signalingState !== "stable") return;
     try {
       this.isMakingOffer = true;
-      const offer = await this.pc.createOffer({ offerToReceiveVideo: true, offerToReceiveAudio: true });
-      await this.pc.setLocalDescription(offer);
+      const offer = await pc.createOffer({ offerToReceiveVideo: true, offerToReceiveAudio: true });
+      if (this.pc !== pc) return;
+      await pc.setLocalDescription(offer);
+      if (this.pc !== pc) return;
       this.sendSignal({
         type: "client.webrtc.offer",
         version: 1,
@@ -639,8 +626,19 @@ export class PerfectNegotiator {
     } catch (err) {
       console.error("[WebRTC] Failed to create manual offer:", err);
     } finally {
-      this.isMakingOffer = false;
+      if (this.pc === pc) this.isMakingOffer = false;
     }
+  }
+
+  async enableRelay(rtcConfig = this.rtcConfig) {
+    this.rtcConfig = { ...rtcConfig, iceTransportPolicy: "relay" };
+    const pc = this.pc;
+    if (!pc || typeof pc.setConfiguration !== "function") return false;
+    // Retain the peer's SDP and transceivers while changing ICE policy. Closing
+    // and replacing it here can strand in-flight SDP operations on the old PC.
+    pc.setConfiguration(this.rtcConfig);
+    pc.restartIce();
+    return true;
   }
 
   /**
@@ -656,6 +654,7 @@ export class PerfectNegotiator {
       this.partnerId = String(newPartnerId);
       this.isPolite = this.myId < this.partnerId;
       this.remoteStream = new MediaStream();
+      this._pendingRemoteCandidates = [];
       this.isMakingOffer = false;
       this.ignoreOffer = false;
       this._lastBytesSent = 0;
@@ -685,6 +684,7 @@ export class PerfectNegotiator {
     this._stopStatsMonitor();
     this.isMuted = true;
     this._teardownPeerConnection();
+    this._pendingRemoteCandidates = [];
     this.remoteStream = new MediaStream();
     this.state = TransportState.PRECONNECTED;
     console.log("[WebRTC Lifecycle] Round ended; peer connection closed, media retained.");
@@ -702,6 +702,7 @@ export class PerfectNegotiator {
       this.partnerId = String(newPartnerId);
       this.isPolite = this.myId < this.partnerId;
       this.remoteStream = new MediaStream();
+      this._pendingRemoteCandidates = [];
       this.isMakingOffer = false;
       this.ignoreOffer = false;
       this._lastBytesSent = 0;
@@ -761,8 +762,9 @@ export class PerfectNegotiator {
   }
 
   async _handleRemoteOffer(payload) {
-    if (!this.pc) return;
-    const offerCollision = this.isMakingOffer || this.pc.signalingState !== "stable";
+    const pc = this.pc;
+    if (!pc) return;
+    const offerCollision = this.isMakingOffer || pc.signalingState !== "stable";
     this.ignoreOffer = !this.isPolite && offerCollision;
 
     if (this.ignoreOffer) {
@@ -771,31 +773,38 @@ export class PerfectNegotiator {
     }
 
     try {
-      if (offerCollision) {
-        await this.pc.setLocalDescription({ type: "rollback" });
-      }
-      await this.pc.setRemoteDescription({ type: "offer", sdp: payload.sdp });
-      await this.pc.setLocalDescription();
-      await this._applyVideoBitrateCap();
-
+      // Implicit rollback is atomic with the incoming offer. A separate local
+      // rollback can trigger negotiationneeded between these two operations.
+      // https://www.w3.org/TR/webrtc/#perfect-negotiation-example
+      await pc.setRemoteDescription({ type: "offer", sdp: payload.sdp });
+      if (this.pc !== pc) return;
+      await this._flushRemoteCandidates(pc);
+      await pc.setLocalDescription();
+      if (this.pc !== pc) return;
       this.sendSignal({
         type: "client.webrtc.answer",
         version: 1,
         payload: {
           room_id: this.roomId,
-          sdp: this.pc.localDescription.sdp,
+          sdp: pc.localDescription.sdp,
         },
       });
+      void this._applyVideoBitrateCap();
     } catch (err) {
+      if (this.pc !== pc) return;
       console.error("[WebRTC] Error handling remote offer:", err);
       if (this.onFailure) this.onFailure("RENEGOTIATION_FAILED");
     }
   }
 
   async _handleRemoteAnswer(payload) {
-    if (!this.pc) return;
+    const pc = this.pc;
+    if (!pc) return;
     try {
-      await this.pc.setRemoteDescription({ type: "answer", sdp: payload.sdp });
+      await pc.setRemoteDescription({ type: "answer", sdp: payload.sdp });
+      if (this.pc !== pc) return;
+      await this._flushRemoteCandidates(pc);
+      if (this.pc !== pc) return;
       await this._applyVideoBitrateCap();
     } catch (err) {
       console.error("[WebRTC] Error handling remote answer:", err);
@@ -805,15 +814,32 @@ export class PerfectNegotiator {
 
   async _handleRemoteIceCandidate(payload) {
     if (!this.pc) return;
+    const candidate = {
+      candidate: payload.candidate,
+      sdpMid: payload.sdp_mid,
+      sdpMLineIndex: payload.sdp_mline_index,
+    };
+    if (!this.pc.remoteDescription) {
+      this._pendingRemoteCandidates.push(candidate);
+      return;
+    }
     try {
-      await this.pc.addIceCandidate({
-        candidate: payload.candidate,
-        sdpMid: payload.sdp_mid,
-        sdpMLineIndex: payload.sdp_mline_index,
-      });
+      await this.pc.addIceCandidate(candidate);
     } catch (err) {
       if (!this.ignoreOffer) {
         console.error("[WebRTC] Failed to add ICE candidate:", err);
+      }
+    }
+  }
+
+  async _flushRemoteCandidates(pc = this.pc) {
+    if (!pc?.remoteDescription || !this._pendingRemoteCandidates.length) return;
+    const pending = this._pendingRemoteCandidates.splice(0);
+    for (const candidate of pending) {
+      try {
+        await pc.addIceCandidate(candidate);
+      } catch (err) {
+        if (!this.ignoreOffer) console.warn("[WebRTC] Queued ICE candidate rejected:", err);
       }
     }
   }
@@ -823,9 +849,12 @@ export class PerfectNegotiator {
   _startStatsMonitor() {
     this._stopStatsMonitor();
     this.statsInterval = setInterval(async () => {
-      if (!this.pc || this.pc.connectionState !== "connected") return;
+      const pc = this.pc;
+      const roomId = this.roomId;
+      if (!pc || pc.connectionState !== "connected") return;
       try {
-        const stats = await this.pc.getStats();
+        const stats = await pc.getStats();
+        if (this.pc !== pc || this.roomId !== roomId) return;
         let bytesSent = 0;
         let timestamp = 0;
 
@@ -848,6 +877,7 @@ export class PerfectNegotiator {
 
         this._lastBytesSent = bytesSent;
         this._lastStatsTimestamp = timestamp;
+        await this._reportInboundMedia(stats, pc, roomId);
       } catch {
         // Ignored during connection state transitions
       }
@@ -860,16 +890,89 @@ export class PerfectNegotiator {
       this.statsInterval = null;
     }
   }
+
+  _cancelMediaReceiptReport() {
+    this._mediaReportAbort?.abort();
+    this._mediaReportAbort = null;
+    this._mediaReportInFlight = false;
+  }
+
+  async _reportInboundMedia(stats, pc = this.pc, roomId = this.roomId) {
+    if (
+      this._mediaReceivedReported ||
+      this._mediaReportInFlight ||
+      !pc ||
+      !roomId ||
+      this.pc !== pc ||
+      this.roomId !== roomId
+    ) return false;
+
+    let audioBytesReceived = 0;
+    let videoFramesReceived = 0;
+    stats?.forEach?.((report) => {
+      if (report.type !== "inbound-rtp") return;
+      const kind = report.kind || report.mediaType;
+      if (kind === "audio") {
+        audioBytesReceived += Number(report.bytesReceived) || 0;
+      } else if (kind === "video") {
+        // framesDecoded is preferred; framesReceived supports older browsers.
+        videoFramesReceived += Number(report.framesDecoded ?? report.framesReceived) || 0;
+      }
+    });
+    if (audioBytesReceived <= 0 || videoFramesReceived <= 0) return false;
+
+    const connection = await extractConnectionTelemetry(pc, this._connectionStartTime, stats);
+    if (
+      !connection ||
+      this.pc !== pc ||
+      this.roomId !== roomId
+    ) return false;
+
+    const controller = new AbortController();
+    this._mediaReportAbort = controller;
+    this._mediaReportInFlight = true;
+    try {
+      const response = await fetch("/api/telemetry/connection/", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          room_id: roomId,
+          connection_type: connection.connectionType,
+          connection_time_ms: connection.connectionTimeMs,
+          audio_bytes_received: audioBytesReceived,
+          video_frames_decoded: videoFramesReceived,
+        }),
+        signal: controller.signal,
+      });
+      if (
+        !response?.ok ||
+        controller.signal.aborted ||
+        this.pc !== pc ||
+        this.roomId !== roomId
+      ) return false;
+      this._mediaReceivedReported = true;
+      return true;
+    } catch {
+      // The monitor retries on a later stats sample. Avoid logging room/user data.
+      return false;
+    } finally {
+      if (this._mediaReportAbort === controller) {
+        this._mediaReportAbort = null;
+        this._mediaReportInFlight = false;
+      }
+    }
+  }
 }
 
 /**
  * استخراج قطعی نوع کاندید برنده (Direct vs Relay) و زمان سپری‌شده (T-37).
  */
-export async function extractConnectionTelemetry(pc, connectionStartTimeMs) {
-  if (!pc || typeof pc.getStats !== "function") return null;
+export async function extractConnectionTelemetry(pc, connectionStartTimeMs, statsOverride = null) {
+  if (!pc || (!statsOverride && typeof pc.getStats !== "function")) return null;
 
   try {
-    const stats = await pc.getStats();
+    const stats = statsOverride || await pc.getStats();
     let selectedPair = null;
 
     stats.forEach((report) => {

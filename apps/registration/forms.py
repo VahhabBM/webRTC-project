@@ -1,4 +1,8 @@
 from decimal import Decimal, InvalidOperation
+from uuid import UUID
+
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 
 from apps.events.countries import COUNTRY_CODES
 from apps.registration.legal_documents import REQUIRED_CONSENTS
@@ -11,7 +15,7 @@ class RegistrationError(Exception):
         super().__init__(self.message)
 
 
-def validate_registration_data(event, data):
+def validate_registration_data(event, data=None):
     if event is not None and isinstance(event, dict) and data is None:
         data = event
         event = None
@@ -19,12 +23,34 @@ def validate_registration_data(event, data):
     if not isinstance(data, dict):
         raise RegistrationError("Invalid request data format.", "invalid_json")
 
-    display_name = data.get("display_name", "").strip()
+    raw_display_name = data.get("display_name", "")
+    if not isinstance(raw_display_name, str):
+        raise RegistrationError("Enter a valid first name or nickname.", "invalid_display_name")
+    display_name = raw_display_name.strip()
     if not display_name:
-        raise RegistrationError("Full name is required.", "missing_full_name")
+        raise RegistrationError("First or nickname is required.", "missing_full_name")
+    if len(display_name) > 200:
+        raise RegistrationError("Name must be 200 characters or fewer.", "invalid_display_name")
 
-    email = data.get("email", "").strip()
-    if not email or "@" not in email:
+    raw_email = data.get("email", "")
+    email = raw_email.strip().casefold() if isinstance(raw_email, str) else ""
+    repeated_email = data.get(
+        "email_confirmation", data.get("email_confirm", data.get("confirm_email", ""))
+    )
+    repeated_email = (
+        repeated_email.strip().casefold()
+        if isinstance(repeated_email, str)
+        else ""
+    )
+    if not repeated_email:
+        raise RegistrationError(
+            "Please enter your email address again.", "email_confirmation_required"
+        )
+    if email != repeated_email:
+        raise RegistrationError("The email addresses do not match.", "email_mismatch")
+    try:
+        validate_email(email)
+    except ValidationError:
         raise RegistrationError("A valid email address is required.", "invalid_email")
 
     consents = data.get("consents")
@@ -38,8 +64,14 @@ def validate_registration_data(event, data):
 
     tag_selection_provided = "tag_ids" in data or "tags" in data
     tag_ids = data.get("tag_ids") or data.get("tags") or []
+    if not isinstance(tag_ids, list):
+        raise RegistrationError("Choose valid tags.", "invalid_tags")
     if len(tag_ids) > 5:
         raise RegistrationError("Too many tags selected.", "invalid_tag_count")
+    try:
+        tag_ids = [str(UUID(str(tag_id))) for tag_id in tag_ids]
+    except (TypeError, ValueError, AttributeError):
+        raise RegistrationError("Choose valid tags.", "invalid_tags")
 
     # Check unique tags rule if event requires it
     if event and getattr(event, "unique_tags", False) and tag_selection_provided:
@@ -72,8 +104,14 @@ def validate_registration_data(event, data):
     if not isinstance(country, str):
         raise RegistrationError("Choose a valid country.", "invalid_country")
     country = country.strip().upper()
-    if country and country not in COUNTRY_CODES:
+    if not country or country not in COUNTRY_CODES:
         raise RegistrationError("Choose a valid country.", "invalid_country")
+    city = data.get("city", "")
+    if not isinstance(city, str):
+        raise RegistrationError("Enter a valid city.", "invalid_city")
+    city = city.strip()
+    if len(city) > 120:
+        raise RegistrationError("City must be 120 characters or fewer.", "invalid_city")
 
     gender = data.get("gender", "Other/Prefer Not to Say")
     if gender not in {"Male", "Female", "Other/Prefer Not to Say"}:
@@ -91,6 +129,7 @@ def validate_registration_data(event, data):
         "display_name": display_name,
         "age": age,
         "country": country,
+        "city": city,
         "gender": gender,
         "want_to_date": want_to_date,
         "email": email,

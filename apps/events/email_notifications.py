@@ -43,8 +43,6 @@ def _send_event_access_email(
     now = timezone.now()
     if (
         (participant.event_access_email_sent_at and not allow_resend)
-        or participant.joined_at is None
-        or participant.email_verified_at is None
         or participant.registration_status != RegistrationStatus.CONFIRMED
         or not participant.email
         or participant.event.status

@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from apps.events.models import (
     Event,
+    EventStatus,
     OperatorActionLog,
     OperatorActionType,
     Round,
@@ -41,10 +42,17 @@ class OperatorService:
                 },
             )
 
+    def _broadcast_after_commit(self, action: str, payload: dict) -> None:
+        transaction.on_commit(lambda: self._broadcast(action, payload))
+
     @transaction.atomic
     def pause(self) -> dict:
         """متوقف‌سازی موقت راند جاری و فریز کردن زمان باقیمانده"""
         self._ensure_leader()
+        locked_event = Event.objects.select_for_update().get(pk=self.event.pk)
+        self.event = locked_event
+        if locked_event.status == EventStatus.PAUSED:
+            raise ValidationError("Event is already paused.")
         now = timezone.now()
 
         scheduler = RoundScheduler(self.event)
@@ -54,7 +62,7 @@ class OperatorService:
             raise ValidationError("Event cannot be paused outside of an active round.")
 
         # بررسی اینکه آیا از قبل متوقف است یا خیر
-        last_log = self.event.operator_logs.first()
+        last_log = locked_event.operator_logs.select_for_update().first()
         if last_log and last_log.action == OperatorActionType.PAUSE:
             raise ValidationError("Event is already paused.")
 
@@ -67,6 +75,7 @@ class OperatorService:
             details={
                 "remaining_seconds": remaining_seconds,
                 "paused_at": now.isoformat(),
+                "status_before_pause": locked_event.status,
             },
             performed_at=now,
         )
@@ -76,22 +85,30 @@ class OperatorService:
             "remaining_seconds": remaining_seconds,
             "paused_at": now.isoformat(),
         }
-        self._broadcast("pause", payload)
+        locked_event.status = EventStatus.PAUSED
+        locked_event.save(update_fields=["status", "updated_at"])
+        self._broadcast_after_commit("pause", payload)
         return {"status": "paused", "log_id": str(log.pk), **payload}
 
     @transaction.atomic
     def resume(self) -> dict:
         """از سرگیری رویداد متوقف‌شده و شیفت دادن راندهای باقیمانده به جلو"""
         self._ensure_leader()
+        locked_event = Event.objects.select_for_update().get(pk=self.event.pk)
+        self.event = locked_event
         now = timezone.now()
 
-        last_log = self.event.operator_logs.first()
+        last_log = locked_event.operator_logs.select_for_update().first()
         if not last_log or last_log.action != OperatorActionType.PAUSE:
             raise ValidationError("Event is not in a paused state.")
 
-        active_round = last_log.round
-        if not active_round:
+        if not last_log.round_id:
             raise ValidationError("Target round for resume not found.")
+        active_round = Round.objects.select_for_update().get(pk=last_log.round_id)
+
+        from apps.events.auth import extend_event_access_deadlines, scheduled_event_end
+
+        previous_event_end = scheduled_event_end(locked_event)
 
         paused_at_str = last_log.details.get("paused_at")
         if paused_at_str:
@@ -105,14 +122,27 @@ class OperatorService:
         active_round.save(update_fields=["ends_at"])
 
         # شیفت دادن راندهای بعدی متناسب با وقفه ایجادشده
-        subsequent_rounds = Round.objects.filter(
-            event=self.event, number__gt=active_round.number
+        subsequent_rounds = Round.objects.select_for_update().filter(
+            event=locked_event, number__gt=active_round.number
         ).order_by("number")
 
         for r in subsequent_rounds:
             r.starts_at += time_shift
             r.ends_at += time_shift
             r.save(update_fields=["starts_at", "ends_at"])
+
+        restored_status = last_log.details.get(
+            "status_before_pause", EventStatus.RUNNING
+        )
+        valid_statuses = {choice for choice, _label in EventStatus.choices}
+        if restored_status not in valid_statuses or restored_status == EventStatus.PAUSED:
+            restored_status = EventStatus.RUNNING
+        locked_event.status = restored_status
+        locked_event.save(update_fields=["status", "updated_at"])
+        self.event = locked_event
+        extend_event_access_deadlines(
+            locked_event, previous_event_end, scheduled_event_end(locked_event)
+        )
 
         remaining_seconds = max(int((active_round.ends_at - now).total_seconds()), 0)
 
@@ -134,18 +164,23 @@ class OperatorService:
             "ends_at": active_round.ends_at.isoformat(),
             "remaining_seconds": remaining_seconds,
         }
-        self._broadcast("resume", payload)
+        self._broadcast_after_commit("resume", payload)
         return {"status": "resumed", "log_id": str(log.pk), **payload}
 
     @transaction.atomic
     def extend(self, extra_seconds: int) -> dict:
         """افزایش زمان راند جاری و شیفت دادن راندهای بعدی"""
         self._ensure_leader()
+        locked_event = Event.objects.select_for_update().get(pk=self.event.pk)
+        self.event = locked_event
         if extra_seconds <= 0:
             raise ValidationError("Extension duration must be greater than zero.")
 
+        from apps.events.auth import extend_event_access_deadlines, scheduled_event_end
+
         now = timezone.now()
-        scheduler = RoundScheduler(self.event)
+        previous_event_end = scheduled_event_end(locked_event)
+        scheduler = RoundScheduler(locked_event)
         phase, active_round, _ = scheduler.get_current_phase(now)
 
         if phase != EventPhase.IN_ROUND or not active_round:
@@ -156,14 +191,18 @@ class OperatorService:
         active_round.save(update_fields=["ends_at"])
 
         # شیفت راندهای بعدی
-        subsequent_rounds = Round.objects.filter(
-            event=self.event, number__gt=active_round.number
+        subsequent_rounds = Round.objects.select_for_update().filter(
+            event=locked_event, number__gt=active_round.number
         ).order_by("number")
 
         for r in subsequent_rounds:
             r.starts_at += extension
             r.ends_at += extension
             r.save(update_fields=["starts_at", "ends_at"])
+
+        extend_event_access_deadlines(
+            locked_event, previous_event_end, scheduled_event_end(locked_event)
+        )
 
         log = OperatorActionLog.objects.create(
             event=self.event,
@@ -181,7 +220,7 @@ class OperatorService:
             "extended_by_seconds": extra_seconds,
             "ends_at": active_round.ends_at.isoformat(),
         }
-        self._broadcast("extend", payload)
+        self._broadcast_after_commit("extend", payload)
         return {"status": "extended", "log_id": str(log.pk), **payload}
 
     def recalculate_pairs(

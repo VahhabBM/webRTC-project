@@ -17,7 +17,7 @@ SECURE_HSTS_PRELOAD = True
 # environment only; no real secret is ever committed to this repository.
 COTURN_REGION1_DOMAIN = os.environ.get("COTURN_REGION1_DOMAIN", "turn.meetakk.com")
 COTURN_PORT = env_int("COTURN_PORT", 3478)  # noqa: F405
-COTURN_TLS_PORT = env_int("COTURN_TLS_PORT", 5349)  # noqa: F405
+COTURN_TLS_PORT = env_int("COTURN_TLS_PORT", 443)  # noqa: F405
 COTURN_SHARED_SECRET = os.environ.get("COTURN_SHARED_SECRET", "")
 COTURN_CREDENTIAL_TTL_SECONDS = env_int("COTURN_CREDENTIAL_TTL_SECONDS", 1800)  # noqa: F405
 

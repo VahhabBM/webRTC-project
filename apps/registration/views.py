@@ -3,7 +3,6 @@ import json
 import logging
 import re
 
-from django.conf import settings
 from django.db import transaction
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
@@ -32,7 +31,6 @@ from apps.registration.models import (
     Participant,
     TermsAcceptance,
 )
-from apps.registration.services.email_service import EmailService
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +95,7 @@ def register_view(request, event_id=None):
         with transaction.atomic():
             if event:
                 event = Event.objects.select_for_update().get(pk=event.pk)
-            query = Participant.objects.filter(email=email)
+            query = Participant.objects.filter(email__iexact=email)
             if event:
                 query = query.filter(event=event)
             if query.exists():
@@ -108,21 +106,19 @@ def register_view(request, event_id=None):
                     },
                     status=400,
                 )
+            tag_ids = payload.get("tag_ids") or []
+            if tag_ids and Tag.objects.filter(id__in=tag_ids).count() != len(set(tag_ids)):
+                return JsonResponse(
+                    {"error": "Choose valid tags.", "code": "invalid_tags"},
+                    status=400,
+                )
 
             now = timezone.now()
             has_capacity = not event or has_registration_capacity(event, now=now)
             registration_status = (
-                RegistrationStatus.PENDING
+                RegistrationStatus.CONFIRMED
                 if has_capacity
                 else RegistrationStatus.WAITLISTED
-            )
-            reservation_expires_at = (
-                now
-                + timezone.timedelta(
-                    hours=getattr(settings, "EMAIL_VERIFICATION_TTL_HOURS", 24)
-                )
-                if registration_status == RegistrationStatus.PENDING and event
-                else None
             )
             participant = Participant.objects.create(
                 event=event,
@@ -130,11 +126,12 @@ def register_view(request, event_id=None):
                 email=email,
                 age=payload.get("age"),
                 country=payload.get("country", ""),
+                city=payload.get("city", ""),
                 gender=payload.get("gender", "Other/Prefer Not to Say"),
                 want_to_date=payload.get("want_to_date", "Any"),
                 whatsapp=payload.get("whatsapp", ""),
                 registration_status=registration_status,
-                reservation_expires_at=reservation_expires_at,
+                reservation_expires_at=None,
             )
             TermsAcceptance.objects.create(
                 participant=participant,
@@ -142,29 +139,14 @@ def register_view(request, event_id=None):
                 privacy_version=PRIVACY_VERSION,
                 consents=payload["consents"],
             )
-            tag_ids = payload.get("tag_ids") or payload.get("tags") or []
             if tag_ids:
                 participant.tags.set(Tag.objects.filter(id__in=tag_ids))
 
-            if hasattr(EmailVerificationToken, "create_for"):
-                token_obj = EmailVerificationToken.create_for(participant)
-            else:
-                token_obj = EmailVerificationToken.objects.create(
-                    participant=participant,
-                    expires_at=now + timezone.timedelta(hours=24),
-                )
-
-        EmailService.send_verification_email(
-            recipient_email=email,
-            name=participant.display_name,
-            token=token_obj.token,
-            event_title=participant.event.name,
-            registration_status=participant.registration_status,
-        )
-    except Exception as exc:
+    except Exception:
+        logger.exception("Registration failed")
         return JsonResponse(
             {
-                "error": f"Registration failed: {exc}",
+                "error": "Registration could not be completed. Please try again.",
                 "code": "server_error",
             },
             status=500,
@@ -173,10 +155,9 @@ def register_view(request, event_id=None):
     return JsonResponse(
         {
             "message": (
-                "You are on the event waitlist. Please verify your email; a place "
-                "is not confirmed until you accept an invitation."
+                "You are on the event waitlist. We will email you if a place becomes available."
                 if participant.registration_status == RegistrationStatus.WAITLISTED
-                else "Your place is reserved for 24 hours. Please verify your email to confirm it."
+                else "Your registration is confirmed. Your personal event access link will be emailed 24 hours before the event."
             ),
             "participant_id": str(participant.id),
             "registration_status": participant.registration_status,
@@ -284,7 +265,6 @@ def verify_email_view(request, token):
             locked_token.used_at = now
             locked_token.save(update_fields=["used_at"])
             participant.email_verified_at = participant.email_verified_at or now
-            participant.joined_at = participant.joined_at or now
             if participant.registration_status == RegistrationStatus.PENDING:
                 has_active_reservation = bool(
                     participant.reservation_expires_at
@@ -394,7 +374,7 @@ def verify_email_view(request, token):
 
 
 def check_email_view(request):
-    """Renders the 'Check Your Inbox' page or returns JSON if requested via API."""
+    """Render the registration completion page or return a lookup response."""
     email = request.GET.get("email", "").strip()
     is_json_request = request.headers.get(
         "Accept"
@@ -402,15 +382,23 @@ def check_email_view(request):
     if is_json_request:
         if not email:
             return JsonResponse({"error": "Email parameter is required."}, status=400)
-        exists = Participant.objects.filter(email=email).exists()
+        exists = Participant.objects.filter(email__iexact=email).exists()
         return JsonResponse({"exists": exists}, status=200)
 
     return _safe_render(
         request,
         ["registration/check_email.html", "registration/check_inbox.html"],
-        {"email": email},
+        {
+            "email": email,
+            "registration_status": request.GET.get("status", ""),
+            "completion_message": (
+                "We will email you if a place becomes available."
+                if request.GET.get("status") == RegistrationStatus.WAITLISTED
+                else "Your personal event access link will be emailed 24 hours before the event."
+            ),
+        },
         status=200,
-        fallback_html=f"<!DOCTYPE html><html dir='ltr'><body><h1>Check Your Inbox</h1><p>{email}</p></body></html>",
+        fallback_html=f"<!DOCTYPE html><html dir='ltr'><body><h1>Registration complete</h1><p>{email}</p></body></html>",
     )
 
 
@@ -493,7 +481,6 @@ def accept_waitlist_invitation(request, token):
             or invitation.expires_at <= now
             or participant.registration_status != RegistrationStatus.WAITLISTED
             or participant.gender != "Female"
-            or participant.email_verified_at is None
         ):
             return invitation_response(invitation, participant, status=410)
         if not has_registration_capacity(

@@ -4,10 +4,13 @@ import time
 from datetime import timedelta
 
 from django.core.management.base import BaseCommand
+from django.db import close_old_connections
 from django.utils import timezone
 
-from apps.events.models import Event, Round
-from apps.events.orchestrator import OrchestratorRealtime
+from apps.events.auth import scheduled_event_end
+from apps.events.live_dispatch import dispatch_live_event
+from apps.events.models import Event
+from apps.events.scheduler import RoundScheduler
 
 
 class Command(BaseCommand):
@@ -29,16 +32,19 @@ class Command(BaseCommand):
 
         self.stdout.write("Event orchestrator started.")
         while True:
+            close_old_connections()
             now = timezone.now()
-            event_ids = Round.objects.filter(
-                starts_at__lte=now + timedelta(seconds=20),
-                ends_at__gte=now - timedelta(minutes=10),
-            ).values_list("event_id", flat=True).distinct()
-
-            for event in Event.objects.filter(pk__in=event_ids).iterator():
+            events = Event.objects.filter(start_time__lte=now + timedelta(seconds=20)).exclude(
+                status__in=("draft", "cancelled", "paused")
+            )
+            for event in events.iterator():
+                if scheduled_event_end(event) < now - timedelta(minutes=10):
+                    continue
                 try:
-                    result = OrchestratorRealtime(event).dispatch(now=now)
-                    if result["sent"]:
+                    if not event.rounds.exists():
+                        RoundScheduler(event).persist_schedule()
+                    result = dispatch_live_event(event, now=now)
+                    if result["sent"] or result.get("allocated"):
                         self.stdout.write(
                             f"Event {event.pk}: phase={result['phase']} "
                             f"round={result['round_number']} sent={result['sent']}"

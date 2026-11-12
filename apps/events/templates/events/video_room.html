@@ -424,6 +424,7 @@
   </div>
 
   <div id="mediaErrorBanner" class="error-banner" hidden></div>
+  <div id="serverWaitingBanner" class="partner-gone-banner" aria-live="polite" hidden></div>
   <div id="partnerGoneBanner" class="partner-gone-banner" hidden></div>
 
   <div class="top-bar">
@@ -483,11 +484,7 @@
 
   <script type="module">
     import { CallRoomController, CallRoomPhase } from '/static/events/js/call_room.js';
-    import {
-      estimateServerNowMs,
-      formatEventStartCountdown,
-      remainingUntilEventStartMs,
-    } from '/static/events/js/event_waiting_lobby.js';
+    import { waitForEventStart as waitForFreshEventStart } from '/static/events/js/event_waiting_lobby.js';
     import { initVideoSwap } from '/static/events/js/video_swap.js';
 
     const WARNING_THRESHOLD_SECONDS = {{ warning_threshold_seconds }};
@@ -518,6 +515,7 @@
         connectionBadge: document.getElementById('connectionBadge'),
         qualityBanner: document.getElementById('qualityBanner'),
         errorBanner: document.getElementById('mediaErrorBanner'),
+        waitingBanner: document.getElementById('serverWaitingBanner'),
         partnerGoneBanner: document.getElementById('partnerGoneBanner'),
         statusFooter: document.getElementById('statusFooter'),
         interestDialog: document.getElementById('interestDialog'),
@@ -578,55 +576,24 @@
     const eventStartCountdown = document.getElementById('eventStartCountdown');
     const waitingStatus = document.getElementById('waitingStatus');
 
-    function waitForEventStart(eventStartAt, serverTime, requestStartedAt, responseReceivedAt) {
-      const getRemainingMs = () => {
-        const estimatedServerNow = estimateServerNowMs(
-          serverTime,
-          requestStartedAt,
-          responseReceivedAt,
-          performance.now(),
-        );
-        return remainingUntilEventStartMs(eventStartAt, estimatedServerNow);
-      };
-
-      const initialRemaining = getRemainingMs();
-      if (initialRemaining === null) {
-        waitingStatus.textContent =
-          'We could not verify the event start time. Please refresh this page or reopen your event link.';
-        document.querySelector('.waiting-countdown').hidden = true;
-        return Promise.resolve(false);
-      }
-      if (initialRemaining === 0) {
-        waitingLobby.hidden = true;
-        return Promise.resolve(true);
-      }
-
+    function waitForEventStart(initialData, requestStartedAt, responseReceivedAt) {
       waitingLobby.hidden = false;
-      waitingStatus.textContent = 'Your event has not started yet.';
-      eventStartCountdown.textContent = formatEventStartCountdown(initialRemaining);
-      return new Promise((resolve) => {
-        const updateCountdown = () => {
-          const remaining = getRemainingMs();
-          if (remaining === null) {
-            window.clearInterval(intervalId);
-            waitingStatus.textContent =
-              'We could not verify the event start time. Please refresh this page or reopen your event link.';
-            document.querySelector('.waiting-countdown').hidden = true;
-            resolve(false);
-            return;
-          }
-          if (remaining === 0) {
-            eventStartCountdown.textContent = '00:00:00';
-            window.clearInterval(intervalId);
-            waitingLobby.hidden = true;
-            resolve(true);
-            return;
-          }
-          eventStartCountdown.textContent = formatEventStartCountdown(remaining);
-        };
-
-        const intervalId = window.setInterval(updateCountdown, 1000);
-        updateCountdown();
+      return waitForFreshEventStart(initialData, {
+        initialRequestStartedAtMs: requestStartedAt,
+        initialResponseReceivedAtMs: responseReceivedAt,
+        fetchCurrentParticipant: async () => {
+          const response = await fetch('/participant/me/', {
+            credentials: 'same-origin',
+          });
+          if (!response.ok) throw new Error('Could not refresh event schedule');
+          return response.json();
+        },
+        onCountdown: (value) => {
+          eventStartCountdown.textContent = value;
+        },
+        onStatus: (message) => {
+          waitingStatus.textContent = message;
+        },
       });
     }
 
@@ -665,14 +632,14 @@
       controller.myParticipantId = meData.participant.id;
       window.__t38ForceMediaFallback = () => controller.forceMediaFallback();
 
-      const intro = meData.participant.intro_video;
-      const canEnterRoom = await waitForEventStart(
-        intro?.event_start_at || meData.participant.event_start_at,
-        meData.server_time,
+      const freshMeData = await waitForEventStart(
+        meData,
         requestStartedAt,
         responseReceivedAt,
       );
-      if (!canEnterRoom) return;
+      if (!freshMeData) return;
+      waitingLobby.hidden = true;
+      const intro = freshMeData.participant.intro_video;
       if (!intro?.configured || intro.completed) {
         controller.connect();
         return;

@@ -1,0 +1,67 @@
+{
+  "recorded_at_utc": "2026-11-12T16:27:01Z",
+  "result": "passed",
+  "test_scope": "Two synthetic WebRTC peers in isolated browser contexts; no application login, matchmaking, real participant, or human capture device used.",
+  "browser": "Chrome 157 via isolated Chrome DevTools contexts",
+  "secure_origin": "https://app.meetakk.com/",
+  "turn_server": "turn.meetakk.com",
+  "turn_url": "turns:turn.meetakk.com:443?transport=tcp",
+  "credential_handling": {
+    "source": "TurnCredentialService in the authorized app container",
+    "lifetime_seconds": 300,
+    "separate_synthetic_peer_identities": true,
+    "credentials_in_artifact": false,
+    "credentials_cleared_from_test_runtime": true
+  },
+  "peer_configuration": {
+    "ice_transport_policy": "relay",
+    "ice_servers": "TLS TURN entry only; no STUN or UDP/TCP 3478 entries",
+    "media": "Canvas-generated video plus WebAudio oscillator track",
+    "signaling": "Gathered SDP exchanged manually between the two peer connections"
+  },
+  "gathered_candidates": {
+    "offerer": { "total": 2, "relay": 2 },
+    "answerer": { "total": 1, "relay": 1 }
+  },
+  "connection_and_receipt": {
+    "offerer": {
+      "connection_state": "connected",
+      "ice_connection_state": "connected",
+      "inbound_audio_bytes_before": 47609,
+      "inbound_audio_bytes_after": 71099,
+      "inbound_audio_bytes_delta": 23490,
+      "inbound_video_counter": "framesDecoded",
+      "inbound_video_frames_before": 57,
+      "inbound_video_frames_after": 75,
+      "inbound_video_frames_delta": 18
+    },
+    "answerer": {
+      "connection_state": "connected",
+      "ice_connection_state": "connected",
+      "inbound_audio_bytes_before": 89160,
+      "inbound_audio_bytes_after": 113217,
+      "inbound_audio_bytes_delta": 24057,
+      "inbound_video_counter": "framesDecoded",
+      "inbound_video_frames_before": 55,
+      "inbound_video_frames_after": 77,
+      "inbound_video_frames_delta": 22
+    }
+  },
+  "candidate_pair_observation": {
+    "both_peers_reported_nominated_pairs": true,
+    "local_and_remote_candidate_types": "relay on both peers",
+    "browser_candidate_pair_state": "in-progress while connection and inbound media counters were progressing",
+    "selected_boolean": "false in this Chrome stats snapshot; relay-only policy plus connected state, nominated relay candidates, and bidirectional inbound media establish relay media flow"
+  },
+  "cleanup": {
+    "peer_connections_closed": true,
+    "synthetic_tracks_stopped": true,
+    "isolated_pages_closed": true,
+    "short_lived_credentials_discarded": true
+  },
+  "limitations": [
+    "This proves browser-to-browser relay-only media transport through the configured TLS TURN endpoint, not the application WebSocket signaling, server allocator, API media receipt persistence, or event UI journey.",
+    "Chrome reported candidate pairs as nominated and in-progress rather than selected/succeeded in the sampled stats; no selected flag is claimed.",
+    "Synthetic sources do not validate physical camera or microphone capture."
+  ]
+}

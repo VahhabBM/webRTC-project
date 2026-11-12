@@ -320,7 +320,7 @@ test("timeout activates T-38 fallback for this pair and reuses tracks", async ()
   transport.leave();
 });
 
-test("no escalation when fallback is not configured; failure is visible", async () => {
+test("default escalation enables relay fallback for the current assigned pair", async () => {
   const scheduler = createManualScheduler();
   const failures = [];
   const states = [];
@@ -339,13 +339,12 @@ test("no escalation when fallback is not configured; failure is visible", async 
   await transport.open();
   await scheduler.firePending();
 
-  assert.equal(transport.usingFallback, false);
-  assert.equal(transport.adapterKind, AdapterKind.DIRECT);
-  assert.deepEqual(failures, ["ESCALATION_FALLBACK_UNAVAILABLE"]);
-  assert.ok(states.includes("failed"));
-  assert.equal(transport.lastEscalationLog.result, "skipped");
-  assert.equal(transport.lastEscalationLog.reason, "FALLBACK_UNAVAILABLE");
-  assert.equal(transport.lastEscalationLog.fallback_configured, false);
+  assert.equal(transport.usingFallback, true);
+  assert.equal(transport.adapterKind, AdapterKind.RELAY);
+  assert.deepEqual(failures, []);
+  assert.equal(transport.lastEscalationLog.result, "activated");
+  assert.equal(transport.lastEscalationLog.fallback_allowed, true);
+  assert.equal(transport.lastEscalationLog.fallback_configured, true);
   const blob = JSON.stringify(transport.lastEscalationLog).toLowerCase();
   assert.equal(blob.includes("token"), false);
   assert.equal(blob.includes("secret"), false);
@@ -467,7 +466,7 @@ test("T-38 explicit forceFallback still switches without waiting for timeout", a
   transport.leave();
 });
 
-test("call room shows failure when timeout fires without fallback", async () => {
+test("call room activates relay fallback by default", async () => {
   const scheduler = createManualScheduler();
   const controller = new CallRoomController({
     myParticipantId: "participant-a",
@@ -479,14 +478,9 @@ test("call room shows failure when timeout fires without fallback", async () => 
   await controller._onRoundStart({ round_number: 1 });
   await scheduler.firePending();
 
-  assert.equal(controller.negotiator.usingFallback, false);
+  assert.equal(controller.negotiator.usingFallback, true);
   assert.equal(controller.phase, CallRoomPhase.IN_ROUND);
-  assert.equal(controller.elements.errorBanner.hidden, false);
-  assert.match(
-    controller.elements.errorBanner.textContent,
-    /fallback is not available for this pair/,
-  );
-  assert.match(controller.elements.connectionBadge.textContent, /FAILED/);
+  assert.equal(controller.elements.errorBanner.hidden, true);
   controller._stopTimer();
   controller.disconnect();
 });

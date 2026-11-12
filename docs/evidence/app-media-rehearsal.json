@@ -1,0 +1,274 @@
+{
+  "scope": "Isolated application event; synthetic WebAudio and animated canvas sources, not physical hardware or real participants",
+  "event": "7acbbe67-4810-4ff4-a2ab-588338eaf020",
+  "registration": "Three authenticated synthetic participants, prior real form POST rehearsal confirmed",
+  "round1": {
+    "woman": {
+      "time": "2026-11-12T20:41:07.565Z",
+      "calls": 1,
+      "audio": "running",
+      "messages": [
+        "server.webrtc.ice_candidate",
+        "server.webrtc.ice_candidate",
+        "server.webrtc.ice_candidate",
+        "server.clock_sync",
+        "server.clock_sync",
+        "server.clock_sync",
+        "server.clock_sync",
+        "server.clock_sync"
+      ],
+      "reports": [
+        {
+          "payload": {
+            "room_id": "live-bd00dc33157f4e1aacd5f9803bafc480",
+            "connection_type": "relay",
+            "connection_time_ms": 16379
+          },
+          "status": 200
+        },
+        {
+          "payload": {
+            "room_id": "live-bd00dc33157f4e1aacd5f9803bafc480",
+            "connection_type": "relay",
+            "connection_time_ms": 18380,
+            "audio_bytes_received": 4967,
+            "video_frames_decoded": 7
+          },
+          "status": 200
+        }
+      ],
+      "peers": [
+        {
+          "state": "closed",
+          "senders": [
+            null,
+            null
+          ],
+          "inbound": []
+        },
+        {
+          "state": "connected",
+          "senders": [
+            "audio",
+            "video"
+          ],
+          "inbound": [
+            {
+              "kind": "audio",
+              "bytes": 33272
+            },
+            {
+              "kind": "video",
+              "bytes": 126999,
+              "frames": 125
+            }
+          ]
+        }
+      ]
+    },
+    "man": {
+      "time": "2026-11-12T20:41:07.746Z",
+      "calls": 1,
+      "audio": "running",
+      "messages": [
+        "server.webrtc.ice_candidate",
+        "server.webrtc.ice_candidate",
+        "server.webrtc.ice_candidate",
+        "server.clock_sync",
+        "server.clock_sync",
+        "server.clock_sync",
+        "server.clock_sync",
+        "server.clock_sync"
+      ],
+      "reports": [
+        {
+          "payload": {
+            "room_id": "live-bd00dc33157f4e1aacd5f9803bafc480",
+            "connection_type": "relay",
+            "connection_time_ms": 16687
+          },
+          "status": 200
+        },
+        {
+          "payload": {
+            "room_id": "live-bd00dc33157f4e1aacd5f9803bafc480",
+            "connection_type": "relay",
+            "connection_time_ms": 18688,
+            "audio_bytes_received": 2394,
+            "video_frames_decoded": 9
+          },
+          "status": 200
+        }
+      ],
+      "peers": [
+        {
+          "state": "closed",
+          "senders": [
+            null,
+            null
+          ],
+          "inbound": []
+        },
+        {
+          "state": "connected",
+          "senders": [
+            "audio",
+            "video"
+          ],
+          "inbound": [
+            {
+              "kind": "audio",
+              "bytes": 36537
+            },
+            {
+              "kind": "video",
+              "bytes": 130940,
+              "frames": 171
+            }
+          ]
+        }
+      ]
+    },
+    "waiting": {
+      "time": "2026-11-12T20:41:07.925Z",
+      "calls": 1,
+      "audio": "running",
+      "messages": [
+        "server.clock_sync",
+        "server.clock_sync",
+        "server.clock_sync",
+        "server.clock_sync",
+        "server.clock_sync",
+        "server.waiting",
+        "server.waiting",
+        "server.waiting"
+      ],
+      "reports": [],
+      "peers": []
+    }
+  },
+  "round2": {
+    "woman": {
+      "time": "2026-11-12T20:43:12.464Z",
+      "calls": 1,
+      "reports": [
+        {
+          "payload": {
+            "room_id": "live-bd00dc33157f4e1aacd5f9803bafc480",
+            "connection_type": "relay",
+            "connection_time_ms": 16379
+          },
+          "status": 200
+        },
+        {
+          "payload": {
+            "room_id": "live-bd00dc33157f4e1aacd5f9803bafc480",
+            "connection_type": "relay",
+            "connection_time_ms": 18380,
+            "audio_bytes_received": 4967,
+            "video_frames_decoded": 7
+          },
+          "status": 200
+        },
+        {
+          "payload": {
+            "room_id": "live-9b846f37f209431db082632ee7422f59",
+            "connection_type": "direct",
+            "connection_time_ms": 8027
+          },
+          "status": 200
+        },
+        {
+          "payload": {
+            "room_id": "live-9b846f37f209431db082632ee7422f59",
+            "connection_type": "direct",
+            "connection_time_ms": 10041,
+            "audio_bytes_received": 7216,
+            "video_frames_decoded": 21
+          },
+          "status": 200
+        }
+      ],
+      "peers": [
+        {
+          "state": "closed",
+          "senders": [
+            null,
+            null
+          ],
+          "inbound": []
+        },
+        {
+          "state": "closed",
+          "senders": [
+            null,
+            null
+          ],
+          "inbound": []
+        },
+        {
+          "state": "connected",
+          "senders": [
+            "audio",
+            "video"
+          ],
+          "inbound": [
+            {
+              "kind": "audio",
+              "bytes": 217006
+            },
+            {
+              "kind": "video",
+              "bytes": 614423,
+              "frames": 554
+            }
+          ]
+        }
+      ]
+    },
+    "newPartner": {
+      "time": "2026-11-12T20:43:12.640Z",
+      "calls": 1,
+      "reports": [
+        {
+          "payload": {
+            "room_id": "live-9b846f37f209431db082632ee7422f59",
+            "connection_type": "direct",
+            "connection_time_ms": 8030
+          },
+          "status": 200
+        },
+        {
+          "payload": {
+            "room_id": "live-9b846f37f209431db082632ee7422f59",
+            "connection_type": "direct",
+            "connection_time_ms": 10031,
+            "audio_bytes_received": 7255,
+            "video_frames_decoded": 21
+          },
+          "status": 200
+        }
+      ],
+      "peers": [
+        {
+          "state": "connected",
+          "senders": [
+            "audio",
+            "video"
+          ],
+          "inbound": [
+            {
+              "kind": "audio",
+              "bytes": 217774
+            },
+            {
+              "kind": "video",
+              "bytes": 614656,
+              "frames": 555
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

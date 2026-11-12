@@ -10,10 +10,13 @@ from apps.events.models import (
     EventStatus,
     OperatorActionLog,
     OperatorActionType,
+    Pair,
+    PairStatus,
     Participant,
+    Round,
 )
 from apps.events.operator import OperatorService
-from apps.events.scheduling import recalculate_pairs_pre_start
+from apps.events.scheduling import persist_schedule, recalculate_pairs_pre_start
 
 
 @pytest.mark.django_db
@@ -129,3 +132,52 @@ class TestAttendanceRecalculationT42:
 
         for absent_id in absent_ids:
             assert absent_id not in all_paired_pids
+
+    @pytest.mark.parametrize(
+        "evidence",
+        [
+            {"live_allocated": True},
+            {"media_received_a": True},
+        ],
+    )
+    def test_schedule_regeneration_preserves_live_room_and_history(
+        self, setup_event, evidence
+    ):
+        setup_event.status = EventStatus.SCHEDULED
+        setup_event.save(update_fields=["status"])
+        round_obj = Round.objects.create(
+            event=setup_event,
+            number=1,
+            starts_at=setup_event.start_time,
+            ends_at=setup_event.start_time + timedelta(minutes=5),
+        )
+        participant_a = Participant.objects.create(
+            event=setup_event, display_name="Live A", join_token_hash="!"
+        )
+        participant_b = Participant.objects.create(
+            event=setup_event, display_name="Live B", join_token_hash="!"
+        )
+        pair = Pair.objects.create(
+            event=setup_event,
+            round=round_obj,
+            participant_a=participant_a,
+            participant_b=participant_b,
+            room_id="preserve-this-live-room",
+            status=PairStatus.CANCELLED,
+            **evidence,
+        )
+
+        with pytest.raises(ValidationError, match="live pair allocation"):
+            persist_schedule(setup_event, schedule=None)
+        with pytest.raises(ValidationError, match="live pair allocation"):
+            recalculate_pairs_pre_start(
+                setup_event,
+                operator_confirmed=True,
+                absent_participant_ids={str(participant_a.pk)},
+            )
+
+        assert Round.objects.filter(pk=round_obj.pk).exists()
+        assert setup_event.participants.filter(pk=participant_a.pk).exists()
+        pair.refresh_from_db()
+        assert pair.room_id == "preserve-this-live-room"
+        assert pair.status == PairStatus.CANCELLED

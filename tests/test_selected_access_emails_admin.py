@@ -37,8 +37,8 @@ def _verified_participant(*, start_delta=timedelta(hours=12), email_sent_at=None
         email="participant@example.com",
         gender="Female",
         join_token_hash="previous-token-hash",
-        joined_at=now,
-        email_verified_at=now,
+        joined_at=None,
+        email_verified_at=None,
         registration_status=RegistrationStatus.CONFIRMED,
         event_access_email_sent_at=email_sent_at,
     )
@@ -105,7 +105,7 @@ def test_admin_access_link_action_resends_outside_window_and_during_event():
 
 
 @pytest.mark.django_db
-def test_admin_action_resends_verification_then_sends_room_link_after_confirmation():
+def test_admin_access_action_does_not_resend_legacy_verification_email():
     event, participant = _verified_participant()
     participant.registration_status = RegistrationStatus.PENDING
     participant.joined_at = None
@@ -134,24 +134,37 @@ def test_admin_action_resends_verification_then_sends_room_link_after_confirmati
     )
 
     assert response.status_code == 302
-    assert len(mail.outbox) == 1
-    assert mail.outbox[0].subject == f"Registration Verification for: {event.name}"
+    assert mail.outbox == []
     old_token.refresh_from_db()
-    assert old_token.used_at is not None
-
-    new_token = EmailVerificationToken.objects.get(
-        participant=participant, used_at__isnull=True
-    )
-    verify_response = Client().get(
-        reverse("registration:verify-email", args=[new_token.token])
-    )
+    assert old_token.used_at is None
     participant.refresh_from_db()
-    assert verify_response.status_code == 200
-    assert participant.registration_status == RegistrationStatus.CONFIRMED
+    assert participant.registration_status == RegistrationStatus.PENDING
+    assert participant.event_access_email_sent_at is None
+
+
+@pytest.mark.django_db
+def test_confirmed_unverified_unjoined_participant_can_receive_manual_access_link():
+    event, participant = _verified_participant()
+    participant.joined_at = None
+    participant.email_verified_at = None
+    participant.save(update_fields=["joined_at", "email_verified_at"])
+
+    response = _admin_client().post(
+        reverse("admin:events_participant_changelist"),
+        {
+            "action": "send_selected_access_links",
+            "_selected_action": [str(participant.pk)],
+        },
+    )
+
+    participant.refresh_from_db()
+    assert response.status_code == 302
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].subject == f"Your access link for: {event.name}"
+    assert "/join/" in mail.outbox[0].body
+    assert participant.joined_at is None
+    assert participant.email_verified_at is None
     assert participant.event_access_email_sent_at is not None
-    assert len(mail.outbox) == 2
-    assert mail.outbox[1].subject == f"Your access link for: {event.name}"
-    assert "/join/" in mail.outbox[1].body
 
 
 @pytest.mark.django_db

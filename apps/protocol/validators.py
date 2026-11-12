@@ -31,7 +31,9 @@ import json
 from typing import Any
 
 from .constants import (
+    MAX_EVENT_ROUNDS,
     SUPPORTED_VERSIONS,
+    WAITING_REASONS,
     ErrorCode,
     EventEndReason,
     MessageType,
@@ -61,6 +63,7 @@ _SERVER_MESSAGE_TYPES: frozenset[str] = frozenset(
         MessageType.SERVER_CLOCK_SYNC,
         MessageType.SERVER_PONG,
         MessageType.SERVER_PAIRING,
+        MessageType.SERVER_WAITING,
         MessageType.SERVER_ROUND_START,
         MessageType.SERVER_ROUND_WARNING,
         MessageType.SERVER_ROUND_END,
@@ -211,10 +214,10 @@ def _validate_client_ready(payload: dict) -> None:
     round_number = _require_int(
         payload, "round_number", original_type=MessageType.CLIENT_READY
     )
-    if not (1 <= round_number <= 6):
+    if not (0 <= round_number <= MAX_EVENT_ROUNDS):
         raise ProtocolError(
             ErrorCode.ERR_INVALID_MESSAGE,
-            "Field 'round_number' must be between 1 and 6",
+            f"Field 'round_number' must be between 0 and {MAX_EVENT_ROUNDS}",
             original_type=MessageType.CLIENT_READY,
             detail={"field": "round_number", "got": round_number},
         )
@@ -324,10 +327,10 @@ def _validate_server_pairing(payload: dict) -> None:
     round_number = _require_int(
         payload, "round_number", original_type=MessageType.SERVER_PAIRING
     )
-    if not (1 <= round_number <= 6):
+    if not (1 <= round_number <= MAX_EVENT_ROUNDS):
         raise ProtocolError(
             ErrorCode.ERR_INVALID_MESSAGE,
-            "Field 'round_number' must be between 1 and 6",
+            f"Field 'round_number' must be between 1 and {MAX_EVENT_ROUNDS}",
             original_type=MessageType.SERVER_PAIRING,
             detail={"field": "round_number", "got": round_number},
         )
@@ -361,14 +364,60 @@ def _validate_server_pairing(payload: dict) -> None:
             )
 
 
+def _validate_server_waiting(payload: dict) -> None:
+    reason = _require_nonempty_str(
+        payload, "reason", original_type=MessageType.SERVER_WAITING
+    )
+    if reason not in WAITING_REASONS:
+        raise ProtocolError(
+            ErrorCode.ERR_INVALID_MESSAGE,
+            f"Field 'reason' must be one of {sorted(WAITING_REASONS)}",
+            original_type=MessageType.SERVER_WAITING,
+            detail={"field": "reason", "got": reason},
+        )
+    round_number = _require_int(
+        payload, "round_number", original_type=MessageType.SERVER_WAITING
+    )
+    if not (1 <= round_number <= MAX_EVENT_ROUNDS):
+        raise ProtocolError(
+            ErrorCode.ERR_INVALID_MESSAGE,
+            f"Field 'round_number' must be between 1 and {MAX_EVENT_ROUNDS}",
+            original_type=MessageType.SERVER_WAITING,
+            detail={"field": "round_number", "got": round_number},
+        )
+    server_ts = _require_positive_int(
+        payload, "server_ts", original_type=MessageType.SERVER_WAITING
+    )
+    next_check_ts = _require_positive_int(
+        payload, "next_check_ts", original_type=MessageType.SERVER_WAITING
+    )
+    if next_check_ts < server_ts:
+        raise ProtocolError(
+            ErrorCode.ERR_INVALID_MESSAGE,
+            "Field 'next_check_ts' must be greater than or equal to 'server_ts'",
+            original_type=MessageType.SERVER_WAITING,
+            detail={"field": "next_check_ts", "got": next_check_ts},
+        )
+    message = _require_nonempty_str(
+        payload, "message", original_type=MessageType.SERVER_WAITING
+    )
+    if len(message) > 500:
+        raise ProtocolError(
+            ErrorCode.ERR_INVALID_MESSAGE,
+            "Field 'message' must be at most 500 characters",
+            original_type=MessageType.SERVER_WAITING,
+            detail={"field": "message", "max_length": 500},
+        )
+
+
 def _validate_server_round_start(payload: dict) -> None:
     round_number = _require_int(
         payload, "round_number", original_type=MessageType.SERVER_ROUND_START
     )
-    if not (1 <= round_number <= 6):
+    if not (1 <= round_number <= MAX_EVENT_ROUNDS):
         raise ProtocolError(
             ErrorCode.ERR_INVALID_MESSAGE,
-            "Field 'round_number' must be between 1 and 6",
+            f"Field 'round_number' must be between 1 and {MAX_EVENT_ROUNDS}",
             original_type=MessageType.SERVER_ROUND_START,
             detail={"field": "round_number", "got": round_number},
         )
@@ -384,10 +433,10 @@ def _validate_server_round_warning(payload: dict) -> None:
     round_number = _require_int(
         payload, "round_number", original_type=MessageType.SERVER_ROUND_WARNING
     )
-    if not (1 <= round_number <= 6):
+    if not (1 <= round_number <= MAX_EVENT_ROUNDS):
         raise ProtocolError(
             ErrorCode.ERR_INVALID_MESSAGE,
-            "Field 'round_number' must be between 1 and 6",
+            f"Field 'round_number' must be between 1 and {MAX_EVENT_ROUNDS}",
             original_type=MessageType.SERVER_ROUND_WARNING,
             detail={"field": "round_number", "got": round_number},
         )
@@ -406,10 +455,10 @@ def _validate_server_round_end(payload: dict) -> None:
     round_number = _require_int(
         payload, "round_number", original_type=MessageType.SERVER_ROUND_END
     )
-    if not (1 <= round_number <= 6):
+    if not (1 <= round_number <= MAX_EVENT_ROUNDS):
         raise ProtocolError(
             ErrorCode.ERR_INVALID_MESSAGE,
-            "Field 'round_number' must be between 1 and 6",
+            f"Field 'round_number' must be between 1 and {MAX_EVENT_ROUNDS}",
             original_type=MessageType.SERVER_ROUND_END,
             detail={"field": "round_number", "got": round_number},
         )
@@ -425,10 +474,10 @@ def _validate_server_interest_prompt(payload: dict) -> None:
     round_number = _require_int(
         payload, "round_number", original_type=MessageType.SERVER_INTEREST_PROMPT
     )
-    if not (1 <= round_number <= 6):
+    if not (1 <= round_number <= MAX_EVENT_ROUNDS):
         raise ProtocolError(
             ErrorCode.ERR_INVALID_MESSAGE,
-            "Field 'round_number' must be between 1 and 6",
+            f"Field 'round_number' must be between 1 and {MAX_EVENT_ROUNDS}",
             original_type=MessageType.SERVER_INTEREST_PROMPT,
             detail={"field": "round_number", "got": round_number},
         )
@@ -613,6 +662,7 @@ _PAYLOAD_VALIDATORS: dict[str, Any] = {
     MessageType.SERVER_CLOCK_SYNC: _validate_server_clock_sync,
     MessageType.SERVER_PONG: _validate_server_pong,
     MessageType.SERVER_PAIRING: _validate_server_pairing,
+    MessageType.SERVER_WAITING: _validate_server_waiting,
     MessageType.SERVER_ROUND_START: _validate_server_round_start,
     MessageType.SERVER_ROUND_WARNING: _validate_server_round_warning,
     MessageType.SERVER_ROUND_END: _validate_server_round_end,

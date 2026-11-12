@@ -13,8 +13,10 @@ import time
 from datetime import timedelta
 
 import pytest
+from channels.db import database_sync_to_async
 from channels.layers import channel_layers
 from channels.testing import WebsocketCommunicator
+from django.core.cache import cache
 from django.utils import timezone
 
 from apps.events.models import Event, Pair, Participant, Round, Tag
@@ -96,7 +98,7 @@ def _envelopes(layer: RecordingChannelLayer) -> list[dict]:
 
 @pytest.fixture
 def setup_round(db):
-    event = _make_event()
+    event = _make_event(live_matching_enabled=False)
     p1 = _participant(event, "Alice")
     p2 = _participant(event, "Bob")
     p3 = _participant(event, "Cara")
@@ -344,13 +346,22 @@ def _communicator(cookie):
     )
 
 
-async def _connect_hello(cookie):
+async def _connect_hello(cookie, participant):
     comm = _communicator(cookie)
     connected, _ = await comm.connect()
     assert connected
     await comm.send_json_to(_hello())
     hello = await comm.receive_json_from()
     assert hello["type"] == MessageType.SERVER_HELLO
+    expected = await database_sync_to_async(
+        OrchestratorRealtime(participant.event).reconnect_snapshot_messages
+    )(participant)
+    for expected_message in expected:
+        snapshot = await comm.receive_json_from()
+        assert snapshot["type"] == expected_message["type"]
+        if snapshot["type"] == MessageType.SERVER_PAIRING:
+            assert snapshot["payload"]["room_id"] == expected_message["payload"]["room_id"]
+            assert snapshot["payload"]["partner_id"] == expected_message["payload"]["partner_id"]
     return comm
 
 
@@ -367,8 +378,8 @@ def test_cross_instance_event_broadcast_reaches_all_connections(
     cookie_b = _cookie_for(setup_round["p2"])
 
     async def scenario():
-        comm_a = await _connect_hello(cookie_a)
-        comm_b = await _connect_hello(cookie_b)
+        comm_a = await _connect_hello(cookie_a, setup_round["p1"])
+        comm_b = await _connect_hello(cookie_b, setup_round["p2"])
         orch = OrchestratorRealtime(event)
         await orch.abroadcast_event_end(reason=EventEndReason.COMPLETED)
         msg_a = await receive_ignoring_partner_state(comm_a)
@@ -392,9 +403,9 @@ def test_pairing_and_round_start_reach_only_allocated_clients(
     cookie_u = _cookie_for(setup_round["unmatched"])
 
     async def scenario():
-        comm_a = await _connect_hello(cookie_a)
-        comm_b = await _connect_hello(cookie_b)
-        comm_u = await _connect_hello(cookie_u)
+        comm_a = await _connect_hello(cookie_a, setup_round["p1"])
+        comm_b = await _connect_hello(cookie_b, setup_round["p2"])
+        comm_u = await _connect_hello(cookie_u, setup_round["unmatched"])
         orch = OrchestratorRealtime(event)
         await orch.abroadcast_pairing(setup_round["r1"])
         await orch.abroadcast_round_start(setup_round["r1"])
@@ -446,9 +457,9 @@ def test_disconnected_websocket_does_not_delay_others(setup_round, inmemory_chan
     cookie_c = _cookie_for(setup_round["p3"])
 
     async def scenario():
-        comm_a = await _connect_hello(cookie_a)
-        comm_b = await _connect_hello(cookie_b)
-        comm_c = await _connect_hello(cookie_c)
+        comm_a = await _connect_hello(cookie_a, setup_round["p1"])
+        comm_b = await _connect_hello(cookie_b, setup_round["p2"])
+        comm_c = await _connect_hello(cookie_c, setup_round["p3"])
         await comm_c.disconnect()
         orch = OrchestratorRealtime(event)
         started = time.perf_counter()
@@ -566,6 +577,99 @@ def test_dispatch_is_idempotent(setup_round):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("initial_status", ["scheduled", "registration_open"])
+def test_dispatch_retries_failed_recipient_without_replaying_healthy_pairing(
+    setup_round, initial_status
+):
+    event = setup_round["event"]
+    event.status = initial_status
+    event.save(update_fields=["status"])
+    p1 = setup_round["p1"]
+    layer = RecordingChannelLayer(fail_groups={participant_channel_group(p1.pk)})
+    orch = OrchestratorRealtime(event, channel_layer=layer)
+    now = setup_round["r1"].starts_at + timedelta(seconds=1)
+
+    first = orch.dispatch(now=now)
+    assert MessageType.SERVER_PAIRING not in first["sent"]
+    assert event.__class__.objects.get(pk=event.pk).status == "running"
+    layer.fail_groups.clear()
+    second = orch.dispatch(now=now + timedelta(seconds=1))
+    assert MessageType.SERVER_PAIRING in second["sent"]
+
+    for participant in (setup_round["p2"], setup_round["p3"], setup_round["p4"]):
+        group_messages = [
+            message for group, message in layer.messages
+            if group == participant_channel_group(participant.pk)
+        ]
+        assert sum(message["message"]["type"] == MessageType.SERVER_PAIRING for message in group_messages) == 1
+        assert sum(message["message"]["type"] == MessageType.SERVER_ROUND_START for message in group_messages) == 1
+    p1_messages = [
+        message for group, message in layer.messages
+        if group == participant_channel_group(p1.pk)
+    ]
+    assert sum(message["message"]["type"] == MessageType.SERVER_PAIRING for message in p1_messages) == 1
+    assert sum(message["message"]["type"] == MessageType.SERVER_ROUND_START for message in p1_messages) == 1
+
+
+@pytest.mark.django_db
+def test_abandoned_pending_claim_expires_without_a_permanent_sent_marker(setup_round):
+    event = setup_round["event"]
+    event.status = "scheduled"
+    event.save(update_fields=["status"])
+    layer = RecordingChannelLayer()
+    orch = OrchestratorRealtime(event, channel_layer=layer)
+    pending_key = f"orchestrator:{event.pk}:r1:pairing:pending"
+    assert cache.add(pending_key, "abandoned-worker", timeout=60)
+    now = setup_round["r1"].starts_at + timedelta(seconds=1)
+
+    first = orch.dispatch(now=now)
+    assert MessageType.SERVER_PAIRING not in first["sent"]
+    assert not cache.get(f"orchestrator:{event.pk}:r1:pairing")
+
+    # Simulate expiration of a worker claim left behind by a process crash.
+    cache.delete(pending_key)
+    second = orch.dispatch(now=now + timedelta(seconds=1))
+    assert MessageType.SERVER_PAIRING in second["sent"]
+
+
+@pytest.mark.django_db
+def test_dispatch_completes_event_and_retries_final_lifecycle(setup_round):
+    event = setup_round["event"]
+    event.status = "scheduled"
+    event.save(update_fields=["status"])
+    layer = RecordingChannelLayer(fail_groups={event_channel_group(event.pk)})
+    orch = OrchestratorRealtime(event, channel_layer=layer)
+    final_time = setup_round["r2"].ends_at + timedelta(seconds=1)
+
+    first = orch.dispatch(now=final_time)
+    assert first["phase"] == "completed"
+    assert event.__class__.objects.get(pk=event.pk).status == "completed"
+    assert MessageType.SERVER_EVENT_END not in first["sent"]
+
+    layer.fail_groups.clear()
+    second = orch.dispatch(now=final_time + timedelta(seconds=1))
+    assert MessageType.SERVER_EVENT_END in second["sent"]
+    third = orch.dispatch(now=final_time + timedelta(seconds=2))
+    assert third["sent"] == []
+    assert sum(
+        message["type"] == MessageType.SERVER_EVENT_END
+        for message in _envelopes(layer)
+    ) == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("status", ["paused", "cancelled"])
+def test_dispatch_never_overwrites_paused_or_cancelled_status(setup_round, status):
+    event = setup_round["event"]
+    event.status = status
+    event.save(update_fields=["status"])
+    orch = OrchestratorRealtime(event, channel_layer=RecordingChannelLayer())
+    orch.dispatch(now=setup_round["r1"].starts_at + timedelta(seconds=1))
+    event.refresh_from_db()
+    assert event.status == status
+
+
+@pytest.mark.django_db
 def test_missing_channel_layer_does_not_raise(setup_round):
     orch = OrchestratorRealtime(setup_round["event"], channel_layer=None)
     result = orch.broadcast_event_end()
@@ -583,7 +687,7 @@ def test_local_dispatch_latency_target(setup_round, inmemory_channels):
     cookie = _cookie_for(setup_round["p1"])
 
     async def scenario():
-        comm = await _connect_hello(cookie)
+        comm = await _connect_hello(cookie, setup_round["p1"])
         orch = OrchestratorRealtime(event)
         started = time.perf_counter()
         await orch.abroadcast_round_end(setup_round["r1"])
@@ -605,7 +709,7 @@ def test_client_ready_is_accepted_after_handshake(setup_round, inmemory_channels
     cookie = _cookie_for(setup_round["p1"])
 
     async def scenario():
-        comm = await _connect_hello(cookie)
+        comm = await _connect_hello(cookie, setup_round["p1"])
         await comm.send_json_to(
             {
                 "type": MessageType.CLIENT_READY,

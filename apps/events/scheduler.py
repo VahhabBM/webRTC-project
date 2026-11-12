@@ -2,10 +2,26 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from apps.events.models import Event, Round
+from apps.events.models import Event, EventStatus, OperatorActionType, Pair, Round
+
+
+def has_live_schedule_evidence(event: Event) -> bool:
+    """Whether pair allocation or media/connection evidence exists for an event."""
+    from django.db.models import Q
+
+    return Pair.objects.filter(event_id=event.pk).filter(
+        Q(live_allocated=True)
+        | Q(media_received_a=True)
+        | Q(media_received_b=True)
+        | Q(connection_type_a__isnull=False)
+        | Q(connection_type_b__isnull=False)
+        | Q(connection_time_ms_a__isnull=False)
+        | Q(connection_time_ms_b__isnull=False)
+    ).exists()
 
 
 class EventPhase(StrEnum):
@@ -14,6 +30,7 @@ class EventPhase(StrEnum):
     IN_ROUND = "in_round"
     BREAK = "break"
     COMPLETED = "completed"
+    PAUSED = "paused"
 
 
 @dataclass(frozen=True)
@@ -80,13 +97,39 @@ class RoundScheduler:
     @transaction.atomic
     def persist_schedule(self, start_time: datetime | None = None) -> list[Round]:
         """پایدارسازی بازه‌های زمانی در دیتابیس (ایمن در برابر اجرای مجدد)"""
+        event = Event.objects.select_for_update().get(pk=self.event.pk)
+        if has_live_schedule_evidence(event):
+            raise ValidationError(
+                "Cannot regenerate round times after live pair allocation or media evidence."
+            )
+        if event.operator_logs.filter(
+            action__in=(
+                OperatorActionType.PAUSE,
+                OperatorActionType.RESUME,
+                OperatorActionType.EXTEND,
+            )
+        ).exists():
+            raise ValidationError(
+                "Cannot regenerate round times after an operator pause, resume, or extension."
+            )
         calculated = calculate_full_schedule(
-            self.event,
+            event,
             start_time=start_time,
             preconnect_duration=self.preconnect_duration,
         )
 
-        existing_rounds = {r.number: r for r in Round.objects.filter(event=self.event)}
+        existing_rounds = {
+            r.number: r
+            for r in Round.objects.select_for_update().filter(event=event)
+        }
+        expected_numbers = {item.number for item in calculated}
+        obsolete_numbers = set(existing_rounds) - expected_numbers
+        if obsolete_numbers:
+            Round.objects.filter(
+                event=event, number__in=obsolete_numbers
+            ).delete()
+            for number in obsolete_numbers:
+                existing_rounds.pop(number, None)
         persisted_rounds: list[Round] = []
 
         for item in calculated:
@@ -97,7 +140,7 @@ class RoundScheduler:
                 round_obj.save(update_fields=["starts_at", "ends_at"])
             else:
                 round_obj = Round.objects.create(
-                    event=self.event,
+                    event=event,
                     number=item.number,
                     starts_at=item.starts_at,
                     ends_at=item.ends_at,
@@ -114,7 +157,15 @@ class RoundScheduler:
         خروجی: (فاز رویداد، آبجکت راند مربوطه، زمان باقیمانده تا گذار بعدی)
         """
         current_time = now or timezone.now()
-        rounds = list(Round.objects.filter(event=self.event).order_by("number"))
+        event = Event.objects.get(pk=self.event.pk)
+        if event.status == EventStatus.PAUSED:
+            pause = event.operator_logs.select_related("round").first()
+            if pause and pause.action == OperatorActionType.PAUSE and pause.round_id:
+                remaining = max(0, int(pause.details.get("remaining_seconds", 0)))
+                return EventPhase.PAUSED, pause.round, timedelta(seconds=remaining)
+            return EventPhase.PAUSED, None, None
+
+        rounds = list(Round.objects.filter(event=event).order_by("number"))
 
         if not rounds:
             return EventPhase.NOT_STARTED, None, None
