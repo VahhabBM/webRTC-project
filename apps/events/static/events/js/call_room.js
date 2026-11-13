@@ -458,6 +458,7 @@ export class CallRoomController {
       0;
     this._messageQueue = Promise.resolve();
     this._signalQueues = new Map();
+    this._sessionInactive = false;
 
     this._reconnectAttempt =
       0;
@@ -529,6 +530,7 @@ export class CallRoomController {
   }
 
   connect() {
+    if (this._sessionInactive || this.phase === CallRoomPhase.EVENT_ENDED) return;
     void this.ensureLocalMedia();
 
     this._bindOnlineListener();
@@ -712,12 +714,16 @@ export class CallRoomController {
         if (
           event &&
           (
-            event.code === 4001 ||
             event.reason ===
               "session_replaced"
           )
         ) {
           this._onSessionReplaced();
+          return;
+        }
+
+        if (event?.code === 4001) {
+          this._onSessionReplaced(true);
           return;
         }
 
@@ -813,7 +819,7 @@ export class CallRoomController {
 
     // Queued room updates must not revive an event that has already ended.
     // A final interest prompt may still arrive after the closing message.
-    if (this.phase === CallRoomPhase.EVENT_ENDED && type !== "server.interest_prompt") return;
+    if (this._sessionInactive || (this.phase === CallRoomPhase.EVENT_ENDED && type !== "server.interest_prompt")) return;
 
     switch (type) {
       case "server.hello":
@@ -1004,7 +1010,7 @@ export class CallRoomController {
   }
 
   _onServerWaiting(payload) {
-    if (this.phase === CallRoomPhase.EVENT_ENDED) return;
+    if (this._sessionInactive || this.phase === CallRoomPhase.EVENT_ENDED) return;
     const reason = String(payload.reason || "waiting_for_partner");
     const message = reason === "limit_reached"
       ? "You’ve completed your available rounds. Thank you for taking part."
@@ -1683,6 +1689,11 @@ export class CallRoomController {
       payload?.error ||
       "";
 
+    if (code === "ERR_NOT_AUTHENTICATED" || code === "4001") {
+      this._onSessionReplaced(true);
+      return;
+    }
+
     if (
       code ===
         "ERR_ALREADY_CONNECTED" ||
@@ -1690,7 +1701,6 @@ export class CallRoomController {
         "session_replaced" ||
       reason ===
         "session_replaced" ||
-      code === "4001" ||
       /another window/i.test(
         msg,
       )
@@ -1706,7 +1716,14 @@ export class CallRoomController {
     );
   }
 
-  _onSessionReplaced() {
+  _onSessionReplaced(authenticationRequired = false) {
+    if (this._sessionInactive) return;
+    this._sessionInactive = true;
+    this._wsGeneration += 1;
+    this._clearServerWaiting();
+    const message = authenticationRequired
+      ? "Your access session is no longer valid. Reopen your personal event link from your email."
+      : "Your personal link is active in another tab or device. Close the other room tabs, then reopen your personal event link here.";
     this._intentionalClose =
       true;
 
@@ -1718,6 +1735,8 @@ export class CallRoomController {
     this._unbindBeforeUnloadListener();
 
     this._stopTimer();
+    this.roundEndTs = null;
+    this._renderTimer("--:--", TimerVisualState.WAITING);
     this.clockSync.stop();
 
     if (this.negotiator) {
@@ -1757,21 +1776,21 @@ export class CallRoomController {
         false;
 
       this.elements.errorBanner.textContent =
-        "You joined from another window. This session is no longer active.";
+        message;
     }
 
     if (
       this.elements.statusFooter
     ) {
       this.elements.statusFooter.textContent =
-        "You joined from another window. This session is no longer active.";
+        message;
     }
 
     if (
       this.elements.connectionBadge
     ) {
       this.elements.connectionBadge.textContent =
-        "SESSION REPLACED";
+        authenticationRequired ? "ACCESS LINK REQUIRED" : "SESSION REPLACED";
 
       this.elements.connectionBadge.className =
         "badge failed";
@@ -1785,7 +1804,7 @@ export class CallRoomController {
       }
 
       this.elements.connectionBadge.dataset.quality =
-        "session-replaced";
+        authenticationRequired ? "authentication-required" : "session-replaced";
     }
   }
 
