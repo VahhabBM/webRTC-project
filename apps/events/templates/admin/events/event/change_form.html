@@ -1,5 +1,39 @@
 ﻿{% extends "admin/change_form.html" %}
+{% block extrastyle %}
+  {{ block.super }}
+  <style>
+    #content-main ul.object-tools { display:flex; float:none; clear:both; flex-wrap:wrap; align-items:stretch; gap:8px; height:auto; max-width:100%; padding:12px; margin:0 0 20px; border:1px solid var(--hairline-color, #ddd); border-radius:10px; background:var(--darkened-bg, #f8f8f8); }
+    #content-main ul.object-tools li { display:flex; float:none; height:auto; padding:0; margin:0; }
+    #content-main ul.object-tools a,
+    #content-main .registration-toggle-button { display:inline-flex; float:none; align-items:center; justify-content:center; box-sizing:border-box; min-height:36px; padding:8px 12px; border-radius:6px; white-space:normal; line-height:1.3; font-size:12px; }
+    #content-main .registration-toggle-form { display:flex; margin:0; }
+    #content-main .registration-toggle-button {
+      border:0;
+      background:var(--button-bg, #417690); color:var(--button-fg, #fff);
+      cursor:pointer; font-weight:600;
+    }
+    #content-main .registration-toggle-button:hover { background:var(--button-hover-bg, #205067); }
+    @media (max-width:767px) {
+      #content-main ul.object-tools { justify-content:flex-start; }
+      #content-main ul.object-tools li { max-width:100%; flex:1 1 160px; }
+      #content-main ul.object-tools a,
+      #content-main .registration-toggle-form,
+      #content-main .registration-toggle-button { width:100%; }
+    }
+  </style>
+{% endblock %}
 {% block object-tools-items %}
+  {% if registration_pause_url and can_toggle_registration_pause %}
+    <li>
+      <form class="registration-toggle-form" method="post" action="{{ registration_pause_url }}">
+        {% csrf_token %}
+        <input type="hidden" name="registration_paused" value="{% if registration_paused %}0{% else %}1{% endif %}">
+        <button class="registration-toggle-button" type="submit">
+          {% if registration_paused %}Reopen registration{% else %}Pause registration{% endif %}
+        </button>
+      </form>
+    </li>
+  {% endif %}
   {% if operations_dashboard_url %}
     <li>
       <a href="{{ operations_dashboard_url }}" class="historylink">Operations Dashboard</a>

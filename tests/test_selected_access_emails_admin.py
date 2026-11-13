@@ -217,6 +217,6 @@ def test_view_only_staff_cannot_send_selected_access_links():
 
     assert response.status_code == 200
     assert (
-        b"Manually send room links or registration verification emails"
+        b"Send or resend selected room access links"
         not in response.content
     )

@@ -210,20 +210,31 @@ secret.
 | `MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS` | T-39; default 6000. |
 | `PARTICIPANT_JOIN_BASE_URL` | Public base URL used to build join links. |
 | `FRONTEND_URL` | Public base URL used in registration/magic-link emails. |
-| `DJANGO_EMAIL_BACKEND` | Defaults to the console backend; set a real backend to send registration email. |
+| `DJANGO_EMAIL_BACKEND` | Production defaults to SMTP; local settings use the console backend. |
 | `DEFAULT_FROM_EMAIL` | Sender name and address for outgoing email; defaults to `Meetakk <admin@meetakk.com>`. |
+| `EMAIL_TIMEOUT` | SMTP timeout in seconds; defaults to 10. Failed registration receipts stay queued for retry. |
 
-The production Compose stack runs `email_scheduler`, which checks every five
-minutes for verified participants in upcoming events and sends each room link
-once when the event is within 24 hours. The verification email explains this
-schedule; the room link is not sent immediately after verification. It also
+New public registrations complete without an email-verification step. A separate
+registration receipt is sent after the registration transaction commits; a failed
+receipt remains queued. Existing registrations are not automatically backfilled.
+Waitlisted registrants receive a waitlist receipt without a room link or a promise
+of a confirmed place.
+
+The production Compose stack runs `email_scheduler`, which checks every minute
+for queued receipts and confirmed participants' room links. Each automatic room
+link is sent once, starting 9 hours before the event and until the event ends.
+Late registrants are included. The admin's selected-participant send/resend action
+can still send a room link explicitly outside this automatic window. The stack also
 runs `data_retention`, which removes participants and their related registration
 records two days after an event ends, checking once per hour.
 
-SMTP host/port/credentials are not currently read from the environment by
-`config/settings/base.py`. Sending real email therefore needs a backend that
-does not require them, or a follow-up settings change — do not assume
-`EMAIL_HOST`-style variables work today.
+SMTP settings use `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`, `EMAIL_HOST_USER`,
+`EMAIL_HOST_PASSWORD`, and `EMAIL_TIMEOUT` from the environment.
+
+The event change page provides POST-only **Pause registration** / **Reopen
+registration** controls. Pausing prevents new submissions and waitlist acceptance;
+it does not change event timing or confirmed participants' room access. The
+Participants list defaults to newest registrations first.
 
 ### Deployment-only
 

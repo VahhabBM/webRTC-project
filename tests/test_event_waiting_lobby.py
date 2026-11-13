@@ -31,7 +31,7 @@ def test_authenticated_participant_gets_english_pre_event_waiting_lobby():
     assert response.status_code == 200
     content = response.content.decode()
     assert 'id="eventWaitingLobby"' in content
-    assert "Your speed-meeting starts soon" in content
+    assert "Your speed dating starts soon" in content
     assert 'id="waitingStatus"' in content
     assert "waitForFreshEventStart" in content
     assert "fetchCurrentParticipant" in content

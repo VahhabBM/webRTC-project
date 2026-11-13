@@ -7,6 +7,34 @@ from apps.events.auth import personal_join_link
 
 class EmailService:
     @staticmethod
+    def send_registration_receipt_email(
+        recipient_email, name, event_title, registration_status
+    ):
+        waitlisted = registration_status == "waitlisted"
+        subject = (
+            f"Registration received for: {event_title}"
+            if waitlisted
+            else f"Registration complete for: {event_title}"
+        )
+        note = (
+            "You are on the waitlist; your place is not yet confirmed. "
+            "We will email you if a place becomes available."
+            if waitlisted
+            else "Your registration is complete. No further action is needed. "
+            "Your personal event access link will be emailed 9 hours before the event starts. "
+            "If you register within the final 9 hours, it will be sent shortly."
+        )
+        delivered = send_mail(
+            subject=subject,
+            message=f"Hello {name},\n\nThank you for registering for {event_title}.\n{note}\n\nMeetakk",
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[recipient_email],
+            fail_silently=False,
+        )
+        if delivered != 1:
+            raise RuntimeError("Registration receipt was not accepted for delivery")
+
+    @staticmethod
     def send_registration_invitation_email(
         recipient_email, event_title, registration_url
     ):
@@ -50,8 +78,8 @@ class EmailService:
             registration_note = (
                 "Your place is reserved for 24 hours. After you verify your email, "
                 "your registration is complete and your personal event access link "
-                "will be emailed 24 hours before the event starts. If you verify "
-                "during the final 24 hours, the room link will be sent shortly "
+                "will be emailed 9 hours before the event starts. If you verify "
+                "during the final 9 hours, the room link will be sent shortly "
                 "after verification."
             )
 
@@ -87,7 +115,7 @@ class EmailService:
         subject = f"Your access link for: {event_title}"
         message = (
             f"Hello {name},\n\n"
-            f"Your registration for {event_title} is verified. Use your personal "
+            f"Your registration for {event_title} is confirmed. Use your personal "
             f"link below to enter the event room:\n\n"
             f"{join_url}\n\n"
             "This link is personal and expires when the event ends. "
@@ -106,9 +134,7 @@ class EmailService:
             raise RuntimeError(f"Error sending event access email: {str(e)}")
 
     @staticmethod
-    def send_waitlist_invitation_email(
-        recipient_email, name, event_title, message
-    ):
+    def send_waitlist_invitation_email(recipient_email, name, event_title, message):
         subject = f"A place is available for: {event_title}"
         body = f"Hello {name},\n\n{message}"
         try:

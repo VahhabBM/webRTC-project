@@ -24,9 +24,16 @@ class TestRegistrationUI:
         assert response.status_code == 200
         content = response.content.decode("utf-8")
         assert 'dir="ltr"' in content
-        assert event.name in content
+        assert "SPEED DATING REGISTRATION" in content
+        assert "Meetakk Matching Form" in content
+        assert "Fill out the form below to register." in content
+        assert "Join us for an exciting evening" not in content
         assert tag.name in content
         assert "tag-search" in content
+        assert 'id="countrySearch"' not in content
+        assert 'id="country" name="country"' in content
+        assert 'value="+44" selected' in content
+        assert "country-search.js" not in content
 
     def test_registration_heading_omits_date_suffix_from_event_name(
         self, client: Client

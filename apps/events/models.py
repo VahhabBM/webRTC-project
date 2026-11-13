@@ -112,6 +112,10 @@ class Event(models.Model):
         default=True,
         help_text="Allocate pairs from currently online, media-ready participants.",
     )
+    registration_paused = models.BooleanField(
+        default=False,
+        help_text="Temporarily prevent new public registrations for this event.",
+    )
 
     def clean(self):
         super().clean()
@@ -195,6 +199,8 @@ class Participant(models.Model):
     reservation_expires_at = models.DateTimeField(null=True, blank=True)
     intro_video_completed_at = models.DateTimeField(null=True, blank=True)
     event_access_email_sent_at = models.DateTimeField(null=True, blank=True)
+    registration_receipt_pending = models.BooleanField(default=False, db_index=True)
+    registration_receipt_sent_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     tags = models.ManyToManyField(

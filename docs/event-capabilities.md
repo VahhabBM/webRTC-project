@@ -17,9 +17,10 @@ registration capacity, waitlist invitations, and the event introduction video.
   unmatched per round and the longest scheduled gap; it does not claim a fixed
   10-minute guarantee when no compatible free partner exists.
 - At most 200 participants may hold a confirmed seat. A transaction on the
-  event row serializes seat allocation. An unverified seat reservation lasts
-  24 hours; once verified, it becomes confirmed. Additional applicants enter
-  the waitlist.
+  event row serializes seat allocation. Registration immediately confirms a
+  place when capacity is available; additional applicants enter the waitlist.
+  Both receive an informational receipt without email verification. Confirmed
+  participants receive their room link starting 9 hours before the event.
 - Only email-verified women on the waitlist can be invited by an authorized
   event administrator. An invitation is a hashed, single-use token, expires
   after 48 hours, and can be accepted only while a seat is available. Issuing
@@ -48,9 +49,9 @@ registration capacity, waitlist invitations, and the event introduction video.
   unconditional promise: participant caps, no-repeat constraints, and a lack
   of compatible free partners can make it impossible. Matching prioritizes
   overdue participants and exposes gaps in the admin report.
-- The capacity reservation begins at form submission and lasts as long as the
-  existing 24-hour email verification token. This prevents simultaneous
-  requests from overselling seats while allowing unverified seats to expire.
+- Seat allocation is committed at form submission under the event row lock.
+  An operator can pause/reopen registration without changing the event schedule
+  or invalidating confirmed participants' room access.
 - Waitlist invitations are manual and operator-selected. The system does not
   reveal invite eligibility or the invite list to participants.
 - Public registration invitations are sent from the event's admin page to

@@ -193,6 +193,7 @@ EMAIL_BACKEND = env(
 )
 EMAIL_HOST = env("EMAIL_HOST", default="smtp.gmail.com")
 EMAIL_PORT = env_int("EMAIL_PORT", default=587)
+EMAIL_TIMEOUT = env_int("EMAIL_TIMEOUT", default=10)
 EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", default=True)
 EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")

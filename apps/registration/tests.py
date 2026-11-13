@@ -62,7 +62,9 @@ class RegistrationTests(TestCase):
         self.assertEqual(participant.registration_status, "confirmed")
         self.assertIsNone(participant.email_verified_at)
         self.assertFalse(EmailVerificationToken.objects.filter(participant=participant).exists())
-        self.assertEqual(mail.outbox, [])
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("Registration complete", mail.outbox[0].subject)
+        self.assertNotIn("/verify/", mail.outbox[0].body)
 
     def test_duplicate_email_in_same_event_is_rejected(self):
         self._register()

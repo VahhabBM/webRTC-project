@@ -30,7 +30,7 @@ def _confirmed_participant(*, start_delta):
 
 @pytest.mark.django_db
 def test_due_access_email_is_sent_once_with_a_personal_room_link():
-    event, participant = _confirmed_participant(start_delta=timedelta(hours=12))
+    event, participant = _confirmed_participant(start_delta=timedelta(hours=8))
 
     call_command("send_due_event_access_emails", confirm_production=True)
 
@@ -48,8 +48,12 @@ def test_due_access_email_is_sent_once_with_a_personal_room_link():
 
 
 @pytest.mark.django_db
-def test_access_email_is_not_sent_more_than_24_hours_before_event():
-    _event, participant = _confirmed_participant(start_delta=timedelta(days=2))
+@pytest.mark.parametrize(
+    "start_delta",
+    [timedelta(hours=9, minutes=1), timedelta(hours=12), timedelta(days=2)],
+)
+def test_access_email_is_not_sent_more_than_9_hours_before_event(start_delta):
+    _event, participant = _confirmed_participant(start_delta=start_delta)
 
     call_command("send_due_event_access_emails", confirm_production=True)
 
@@ -93,7 +97,7 @@ def test_ended_event_does_not_send_access_email():
 
 @pytest.mark.django_db
 def test_failed_access_email_remains_retryable():
-    _event, participant = _confirmed_participant(start_delta=timedelta(hours=12))
+    _event, participant = _confirmed_participant(start_delta=timedelta(hours=8))
 
     with patch(
         "apps.registration.services.email_service.EmailService.send_event_access_email",

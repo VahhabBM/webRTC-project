@@ -9,6 +9,45 @@ from apps.events.auth import event_end, issue_join_token
 from apps.events.models import EventStatus, Participant, RegistrationStatus
 from apps.registration.services.email_service import EmailService
 
+EVENT_ACCESS_LEAD_HOURS = 9
+
+
+@transaction.atomic
+def send_registration_receipt_once(participant_id) -> bool:
+    """Deliver an explicitly queued receipt; leave failed sends retryable."""
+    participant = (
+        Participant.objects.select_for_update()
+        .select_related("event")
+        .get(pk=participant_id)
+    )
+    if (
+        not participant.registration_receipt_pending
+        or participant.registration_receipt_sent_at
+        or not participant.email
+        or participant.registration_status
+        not in {
+            RegistrationStatus.CONFIRMED,
+            RegistrationStatus.WAITLISTED,
+        }
+    ):
+        return False
+    EmailService.send_registration_receipt_email(
+        recipient_email=participant.email,
+        name=participant.display_name,
+        event_title=participant.event.name,
+        registration_status=participant.registration_status,
+    )
+    participant.registration_receipt_pending = False
+    participant.registration_receipt_sent_at = timezone.now()
+    participant.save(
+        update_fields=[
+            "registration_receipt_pending",
+            "registration_receipt_sent_at",
+            "updated_at",
+        ]
+    )
+    return True
+
 
 def send_event_access_email_once(
     participant_id, *, allow_event_in_progress: bool = False
@@ -55,7 +94,8 @@ def _send_event_access_email(
         }
         or (participant.event.start_time <= now and not allow_event_in_progress)
         or (
-            participant.event.start_time > now + timedelta(hours=24)
+            participant.event.start_time
+            > now + timedelta(hours=EVENT_ACCESS_LEAD_HOURS)
             and not allow_resend
         )
         or event_end(participant) <= now

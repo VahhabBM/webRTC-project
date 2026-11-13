@@ -8,12 +8,15 @@ from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from apps.events.auth import scheduled_event_end
-from apps.events.email_notifications import send_event_access_email_once
+from apps.events.email_notifications import (
+    EVENT_ACCESS_LEAD_HOURS,
+    send_event_access_email_once,
+)
 from apps.events.models import Event, Participant
 
 
 class Command(BaseCommand):
-    help = "Send personal event-room access links to verified event participants."
+    help = "Send due personal event-room access links to confirmed participants."
 
     def add_arguments(self, parser):
         parser.add_argument("event_id", help="UUID of the event")
@@ -34,12 +37,14 @@ class Command(BaseCommand):
         except (Event.DoesNotExist, ValidationError, ValueError) as exc:
             raise CommandError("Event not found; check the event UUID.") from exc
         now = timezone.now()
-        if event.start_time > now + timedelta(hours=24):
+        if event.start_time > now + timedelta(hours=EVENT_ACCESS_LEAD_HOURS):
             raise CommandError(
-                "Event access links are only sent within 24 hours of the event."
+                "Event access links are only sent within 9 hours of the event."
             )
         if self.event_end(event) <= now:
-            raise CommandError("The event has already ended; access links would expire.")
+            raise CommandError(
+                "The event has already ended; access links would expire."
+            )
 
         participants = Participant.objects.filter(
             event=event,

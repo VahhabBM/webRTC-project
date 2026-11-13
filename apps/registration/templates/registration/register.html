@@ -119,6 +119,16 @@
             font-size: 13px;
             font-weight: 700;
         }
+        .registration-closed-notice {
+            margin: 0 0 18px;
+            padding: 12px;
+            border: 1px solid #e7c98a;
+            border-radius: 8px;
+            background: #fff8e8;
+            color: #684b15;
+            font-size: 14px;
+            text-align: center;
+        }
         .session-free-note svg { flex: 0 0 auto; }
         .payment-icons {
             display: flex;
@@ -197,6 +207,7 @@
         button.submit-btn:hover {
             background-color: #2d4373;
         }
+        button.submit-btn:disabled { background-color: #777; cursor: not-allowed; }
         .error-msg {
             color: #d9534f;
             font-size: 13px;
@@ -208,11 +219,12 @@
 <body>
 
 <div class="card">
-    <h1>Speed Dating Registration</h1>
-    {% if event %}
-        <div class="event-title-header">{{ event_title }}</div>
+    <h1>SPEED DATING REGISTRATION</h1>
+    <div class="event-title-header">Meetakk Matching Form</div>
+    <p class="subtitle">Fill out the form below to register.</p>
+    {% if registration_paused %}
+        <p class="registration-closed-notice" role="status">Registration for this event is temporarily closed. Please check back later.</p>
     {% endif %}
-    <p class="subtitle">Join us for an exciting evening of connections!<br>Fill out the form below to register.</p>
 
     <form id="registrationForm">
         {% csrf_token %}
@@ -272,7 +284,8 @@
             <label>WhatsApp Number:</label>
             <div class="whatsapp-box">
                 <select id="countryCode">
-                    <option value="+64" selected>🇳🇿 +64 (NZ)</option>
+                    <option value="+44" selected>🇬🇧 +44 (UK)</option>
+                    <option value="+64">🇳🇿 +64 (NZ)</option>
                     <optgroup label="Europe">
                     <option value="+355">🇦🇱 +355 (Albania)</option>
                     <option value="+376">🇦🇩 +376 (Andorra)</option>
@@ -397,7 +410,9 @@
 
         <div id="errorContainer" class="error-msg"></div>
 
-        <button type="submit" class="submit-btn">Register Now</button>
+        <button type="submit" class="submit-btn" {% if registration_paused %}disabled{% endif %}>
+            {% if registration_paused %}Registration Closed{% else %}Register Now{% endif %}
+        </button>
     </form>
 </div>
 

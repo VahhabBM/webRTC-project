@@ -14,7 +14,10 @@ from django.views.decorators.http import require_http_methods
 
 from apps.events.auth import event_end
 from apps.events.countries import COUNTRY_CHOICES
-from apps.events.email_notifications import send_event_access_email_once
+from apps.events.email_notifications import (
+    send_event_access_email_once,
+    send_registration_receipt_once,
+)
 from apps.events.models import Event, RegistrationStatus, Tag, WaitlistInvitation
 from apps.registration.capacity import has_registration_capacity
 from apps.registration.forms import RegistrationError, validate_registration_data
@@ -95,6 +98,14 @@ def register_view(request, event_id=None):
         with transaction.atomic():
             if event:
                 event = Event.objects.select_for_update().get(pk=event.pk)
+                if event.registration_paused:
+                    return JsonResponse(
+                        {
+                            "error": "Registration is paused for this event.",
+                            "code": "registration_paused",
+                        },
+                        status=409,
+                    )
             query = Participant.objects.filter(email__iexact=email)
             if event:
                 query = query.filter(event=event)
@@ -132,6 +143,7 @@ def register_view(request, event_id=None):
                 whatsapp=payload.get("whatsapp", ""),
                 registration_status=registration_status,
                 reservation_expires_at=None,
+                registration_receipt_pending=True,
             )
             TermsAcceptance.objects.create(
                 participant=participant,
@@ -152,12 +164,18 @@ def register_view(request, event_id=None):
             status=500,
         )
 
+    try:
+        send_registration_receipt_once(participant.pk)
+    except Exception:
+        # Registration is committed. The scheduler retries its durable receipt queue.
+        logger.exception("Registration receipt delivery failed for participant %s", participant.pk)
+
     return JsonResponse(
         {
             "message": (
                 "You are on the event waitlist. We will email you if a place becomes available."
                 if participant.registration_status == RegistrationStatus.WAITLISTED
-                else "Your registration is confirmed. Your personal event access link will be emailed 24 hours before the event."
+                else "Your registration is confirmed. Your personal event access link will be emailed 9 hours before the event."
             ),
             "participant_id": str(participant.id),
             "registration_status": participant.registration_status,
@@ -327,7 +345,7 @@ def verify_email_view(request, token):
         elif access_link_email_scheduled:
             verification_message = (
                 "Your email is verified and your registration is complete. "
-                "Your personal event access link will be emailed within 24 hours of the event."
+                "Your personal event access link will be emailed 9 hours before the event starts."
             )
         else:
             verification_message = (
@@ -394,7 +412,7 @@ def check_email_view(request):
             "completion_message": (
                 "We will email you if a place becomes available."
                 if request.GET.get("status") == RegistrationStatus.WAITLISTED
-                else "Your personal event access link will be emailed 24 hours before the event."
+                else "Your personal event access link will be emailed 9 hours before the event."
             ),
         },
         status=200,
@@ -431,14 +449,18 @@ def accept_waitlist_invitation(request, token):
                     and invitation.accepted_at is None
                     and invitation.revoked_at is None
                     and invitation.expires_at > now
+                    and not invitation.event.registration_paused
                 ),
+                "registration_paused": invitation.event.registration_paused,
                 "message": (
                     "Your place is confirmed. Your event access link has been emailed."
                     if accepted and access_link_sent
-                    else "Your place is confirmed. Your event access link will arrive by email 24 hours before the event."
+                    else "Your place is confirmed. Your event access link will arrive by email 9 hours before the event."
                     if accepted
                     else "This invitation is no longer valid or has already been used."
                     if status == 410
+                    else "Registration is paused for this event. Your waitlist status has not changed."
+                    if invitation.event.registration_paused
                     else "There is no available place right now. Your waitlist status has not changed."
                     if status == 409
                     else "Accept this invitation to confirm your place at the event."
@@ -483,6 +505,8 @@ def accept_waitlist_invitation(request, token):
             or participant.gender != "Female"
         ):
             return invitation_response(invitation, participant, status=410)
+        if event.registration_paused:
+            return invitation_response(invitation, participant, status=409)
         if not has_registration_capacity(
             event, now=now, exclude_participant_id=participant.pk
         ):
@@ -592,6 +616,7 @@ class RegisterView(View):
                 "event_id": event_id,
                 "tags": tags,
                 "country_choices": COUNTRY_CHOICES,
+                "registration_paused": bool(event and event.registration_paused),
                 "legal_url": (
                     reverse("registration:legal-event", kwargs={"event_id": event_id})
                     if event_id

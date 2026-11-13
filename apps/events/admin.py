@@ -14,7 +14,12 @@ from django.core.exceptions import ValidationError
 from django.core.validators import EmailValidator
 from django.db import transaction
 from django.db.models import Count, Q
-from django.http import Http404, HttpResponse, HttpResponseForbidden
+from django.http import (
+    Http404,
+    HttpResponse,
+    HttpResponseForbidden,
+    HttpResponseNotAllowed,
+)
 from django.shortcuts import get_object_or_404, redirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
@@ -218,7 +223,9 @@ class EventAdmin(admin.ModelAdmin):
         "intro_video_duration_seconds",
         "unique_tags",
         "live_matching_enabled",
+        "registration_paused",
     )
+    readonly_fields = ("registration_paused",)
 
     # Override the change-form template to inject custom tool buttons.
     change_form_template = "admin/events/event/change_form.html"
@@ -292,6 +299,11 @@ class EventAdmin(admin.ModelAdmin):
                 name="events_event_registration_stats",
             ),
             path(
+                "<uuid:object_id>/toggle-registration-pause/",
+                self.admin_site.admin_view(self.toggle_registration_pause_view),
+                name="events_event_toggle_registration_pause",
+            ),
+            path(
                 "<uuid:object_id>/waitlist/",
                 self.admin_site.admin_view(self.waitlist_view),
                 name="events_event_waitlist",
@@ -319,6 +331,15 @@ class EventAdmin(admin.ModelAdmin):
             "admin:events_event_operations_dashboard"
         )
         if object_id:
+            extra_context["registration_pause_url"] = reverse(
+                "admin:events_event_toggle_registration_pause", args=[object_id]
+            )
+            extra_context["registration_paused"] = Event.objects.filter(
+                pk=object_id
+            ).values_list("registration_paused", flat=True).first()
+            extra_context["can_toggle_registration_pause"] = (
+                request.user.has_perm("events.change_event")
+            )
             extra_context["matching_report_url"] = reverse(
                 "admin:events_event_matching_report", args=[object_id]
             )
@@ -344,6 +365,31 @@ class EventAdmin(admin.ModelAdmin):
         except ValidationError as exc:
             self.message_user(request, "; ".join(exc.messages), level=messages.ERROR)
             return redirect(request.path)
+
+    def toggle_registration_pause_view(self, request, object_id):
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+        event = get_object_or_404(Event, pk=object_id)
+        if not self.has_change_permission(request, event):
+            return HttpResponseForbidden(
+                "You do not have permission to change this event."
+            )
+
+        desired_state = request.POST.get("registration_paused")
+        if desired_state not in ("0", "1"):
+            return HttpResponse("Choose whether to pause or reopen registration.", status=400)
+
+        with transaction.atomic():
+            event = Event.objects.select_for_update().get(pk=object_id)
+            paused = desired_state == "1"
+            if event.registration_paused != paused:
+                event.registration_paused = paused
+                event.save(update_fields=["registration_paused", "updated_at"])
+                self.log_change(request, event, "Public registration paused." if paused else "Public registration reopened.")
+
+        state = "paused" if event.registration_paused else "reopened"
+        self.message_user(request, f"Public registration {state} for this event.")
+        return redirect(reverse("admin:events_event_change", args=[object_id]))
 
     def operations_dashboard_view(self, request):
         """Show staff a live, event-level overview and its operational tools."""
@@ -953,6 +999,7 @@ class TagAdmin(admin.ModelAdmin):
 
 @admin.register(Participant)
 class ParticipantAdmin(admin.ModelAdmin):
+    ordering = ("-created_at", "-pk")
     list_display = (
         "display_name",
         "country_name",
@@ -973,6 +1020,8 @@ class ParticipantAdmin(admin.ModelAdmin):
         "join_token_hash",
         "join_token_digest",
         "join_token_expires_at",
+        "registration_receipt_pending",
+        "registration_receipt_sent_at",
         "created_at",
         "updated_at",
     )
@@ -999,7 +1048,7 @@ class ParticipantAdmin(admin.ModelAdmin):
         return "Configured" if obj.join_token_digest else "Missing"
 
     @admin.action(
-        description="Manually send room links or registration verification emails",
+        description="Send or resend selected room access links",
         permissions=["change"],
     )
     def send_selected_access_links(self, request, queryset):
