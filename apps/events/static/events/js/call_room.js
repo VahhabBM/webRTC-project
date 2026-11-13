@@ -450,7 +450,6 @@ export class CallRoomController {
 
     this._mediaPromise =
       null;
-    this._waitingCountdownTimer = null;
 
     this._signalingDegraded =
       false;
@@ -812,6 +811,10 @@ export class CallRoomController {
     const { type, payload } =
       msg;
 
+    // Queued room updates must not revive an event that has already ended.
+    // A final interest prompt may still arrive after the closing message.
+    if (this.phase === CallRoomPhase.EVENT_ENDED && type !== "server.interest_prompt") return;
+
     switch (type) {
       case "server.hello":
         this._onServerHello(
@@ -994,8 +997,6 @@ export class CallRoomController {
   }
 
   _clearServerWaiting() {
-    if (this._waitingCountdownTimer) clearInterval(this._waitingCountdownTimer);
-    this._waitingCountdownTimer = null;
     if (this.elements.waitingBanner) {
       this.elements.waitingBanner.hidden = true;
       this.elements.waitingBanner.textContent = "";
@@ -1003,36 +1004,27 @@ export class CallRoomController {
   }
 
   _onServerWaiting(payload) {
+    if (this.phase === CallRoomPhase.EVENT_ENDED) return;
     const reason = String(payload.reason || "waiting_for_partner");
-    const safeMessages = {
-      waiting_for_partner: "Waiting for an available partner. We’ll check again shortly.",
-      limit_reached: "You’ve completed the available rounds. Waiting for the event to finish.",
-      no_compatible_partner: "Waiting for a compatible partner. We’ll check again shortly.",
-      partner_left: "Your partner left. Waiting for another available partner.",
-    };
-    const base = safeMessages[reason] || safeMessages.waiting_for_partner;
-    if (reason === "partner_left" && this.negotiator) {
+    const message = reason === "limit_reached"
+      ? "You’ve completed your available rounds. Thank you for taking part."
+      : "Waiting for your next partner. You’ll be connected automatically when someone is available.";
+    if (reason === "partner_left" && this.negotiator && this.partner) {
       void this.negotiator.endRound?.();
       this.partner = null;
       this._updatePartnerUI();
       this._stopTimer();
+      this.roundEndTs = null;
+      this._renderTimer("--:--", TimerVisualState.WAITING);
       this._setPhase(CallRoomPhase.IDLE);
     }
     this._clearConnectionError();
     if (!this.elements.waitingBanner) return;
-    const checkDelayMs = Number(payload.next_check_ts) - Number(payload.server_ts);
-    const localCheckDeadline = Date.now() + (Number.isFinite(checkDelayMs) ? Math.max(0, checkDelayMs) : 0);
-    const update = () => {
-      const seconds = Math.max(0, Math.ceil((localCheckDeadline - Date.now()) / 1000));
-      this.elements.waitingBanner.textContent = seconds
-        ? `${base} Next check in ${seconds} seconds.`
-        : base;
-    };
-    this.elements.waitingBanner.hidden = false;
-    update();
-    if (checkDelayMs > 0) {
-      this._waitingCountdownTimer = setInterval(update, 1000);
+    // Server checks continue silently; repeated checks do not rewrite the live region.
+    if (this.elements.waitingBanner.textContent !== message) {
+      this.elements.waitingBanner.textContent = message;
     }
+    if (this.elements.waitingBanner.hidden) this.elements.waitingBanner.hidden = false;
   }
 
   async ensureLocalMedia() {
@@ -1602,6 +1594,7 @@ export class CallRoomController {
   }
 
   async _onEventEnd(payload) {
+    this._clearServerWaiting();
     this._intentionalClose =
       true;
 
@@ -1630,6 +1623,10 @@ export class CallRoomController {
     this._wsGeneration += 1;
 
     this._stopTimer();
+
+    this.roundEndTs = null;
+    this.serverWarningActive = false;
+    this._renderTimer("--:--", TimerVisualState.WAITING);
 
     this.clockSync.stop();
 
@@ -2812,18 +2809,21 @@ export class CallRoomController {
     if (
       this.elements.timerDisplay
     ) {
-      this.elements.timerDisplay.textContent =
-        display;
+      if (this.elements.timerDisplay.textContent !== display) {
+        this.elements.timerDisplay.textContent = display;
+      }
 
-      this.elements.timerDisplay.dataset.state =
-        visual;
+      if (this.elements.timerDisplay.dataset.state !== visual) {
+        this.elements.timerDisplay.dataset.state = visual;
+      }
     }
 
     if (
       this.elements.timerContainer
     ) {
-      this.elements.timerContainer.dataset.state =
-        visual;
+      if (this.elements.timerContainer.dataset.state !== visual) {
+        this.elements.timerContainer.dataset.state = visual;
+      }
     }
   }
 

@@ -56,7 +56,6 @@
     .badge.reconnecting, .badge[data-quality="reconnecting"] {
       background: var(--warning);
       color: #1e293b;
-      animation: pulse 1s ease-in-out infinite;
     }
     .badge.failed, .badge[data-phase="disconnected"] { background: var(--danger); }
     .badge.partner-gone, .badge[data-quality="partner-gone"] {
@@ -72,9 +71,8 @@
     }
     .timer-block[data-state="waiting"] .timer-value { color: var(--muted); }
     .timer-block[data-state="normal"] .timer-value { color: var(--text); }
-    .timer-block[data-state="warning"] .timer-value { color: var(--warning); animation: pulse 1s ease-in-out infinite; }
+    .timer-block[data-state="warning"] .timer-value { color: var(--warning); }
     .timer-block[data-state="expired"] .timer-value { color: var(--danger); }
-    @keyframes pulse { 50% { opacity: 0.65; } }
     .timer-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
     .timer-value { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
 
@@ -589,10 +587,10 @@
           return response.json();
         },
         onCountdown: (value) => {
-          eventStartCountdown.textContent = value;
+          if (eventStartCountdown.textContent !== value) eventStartCountdown.textContent = value;
         },
         onStatus: (message) => {
-          waitingStatus.textContent = message;
+          if (waitingStatus.textContent !== message) waitingStatus.textContent = message;
         },
       });
     }

@@ -456,9 +456,64 @@ test("server waiting notice clears partner media but keeps the camera stream ali
   assert.equal(controller.partner, null);
   assert.equal(controller.negotiator.localStream, stream);
   assert.equal(waitingBanner.hidden, false);
-  assert.match(waitingBanner.textContent, /Next check in 2 seconds/);
+  assert.match(waitingBanner.textContent, /connected automatically/);
+  assert.doesNotMatch(waitingBanner.textContent, /seconds|check again|Next check/);
   assert.equal(controller.elements.errorBanner.hidden, true);
   controller._clearServerWaiting();
+  controller.disconnect();
+});
+
+test("repeated background matching checks keep one stable waiting message", () => {
+  let text = "";
+  let writes = 0;
+  const waitingBanner = {
+    hidden: true,
+    get textContent() { return text; },
+    set textContent(value) { text = value; writes += 1; },
+  };
+  const controller = new CallRoomController({ elements: { waitingBanner } });
+  for (const reason of ["partner_left", "waiting_for_partner", "no_compatible_partner", "waiting_for_partner"]) {
+    controller._onServerWaiting({ reason, server_ts: 1000, next_check_ts: 3000 });
+  }
+  assert.equal(writes, 1);
+  assert.equal(waitingBanner.hidden, false);
+  assert.match(text, /connected automatically/);
+  controller.disconnect();
+});
+
+test("event end removes waiting text and stale timer; late updates cannot reopen it", async () => {
+  const waitingBanner = { hidden: true, textContent: "" };
+  const timerDisplay = { textContent: "00:21", dataset: { state: "warning" } };
+  const controller = new CallRoomController({ elements: { waitingBanner, timerDisplay } });
+  controller._onServerWaiting({ reason: "waiting_for_partner", next_check_ts: Date.now() + 2000 });
+  controller.roundEndTs = Date.now() + 21000;
+  await controller._handleMessage({ type: "server.event_end", payload: { reason: "completed" } });
+  for (const type of ["server.waiting", "server.hello", "server.pairing", "server.round_start", "operator.resume"]) {
+    await controller._handleMessage({ type, payload: { reason: "partner_left" } });
+  }
+  controller._onServerWaiting({ reason: "waiting_for_partner" });
+  assert.equal(controller.phase, CallRoomPhase.EVENT_ENDED);
+  assert.equal(waitingBanner.hidden, true);
+  assert.equal(waitingBanner.textContent, "");
+  assert.equal(timerDisplay.textContent, "--:--");
+  assert.equal(controller.roundEndTs, null);
+  assert.equal(controller._timerInterval, null);
+  controller.disconnect();
+});
+
+test("subsecond timer ticks do not rewrite unchanged countdown text", () => {
+  let text = "";
+  let writes = 0;
+  const timerDisplay = {
+    dataset: {},
+    get textContent() { return text; },
+    set textContent(value) { text = value; writes += 1; },
+  };
+  const controller = new CallRoomController({ elements: { timerDisplay } });
+  for (let tick = 0; tick < 4; tick += 1) controller._renderTimer("00:21", "warning");
+  assert.equal(writes, 1);
+  controller._renderTimer("00:20", "warning");
+  assert.equal(writes, 2);
   controller.disconnect();
 });
 
