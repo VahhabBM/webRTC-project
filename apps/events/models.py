@@ -87,6 +87,16 @@ class Event(models.Model):
     male_date_limit = models.PositiveSmallIntegerField(default=4)
     female_date_limit = models.PositiveSmallIntegerField(default=8)
     other_date_limit = models.PositiveSmallIntegerField(default=5)
+    male_registration_cap = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Maximum male participants allowed to register (leave blank for unlimited).",
+    )
+    female_registration_cap = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Maximum female participants allowed to register (leave blank for unlimited).",
+    )
     intro_video_url = models.URLField(
         blank=True,
         default="",
@@ -171,7 +181,9 @@ class Participant(models.Model):
     country = models.CharField(max_length=2, blank=True, default="")
     city = models.CharField(max_length=120, blank=True, default="")
     gender = models.CharField(max_length=50, default="Other/Prefer Not to Say")
-    want_to_date = models.CharField(max_length=50, default="Any")
+    want_to_date = models.CharField(max_length=120, default="Any")
+    age_pref_min = models.PositiveSmallIntegerField(null=True, blank=True)
+    age_pref_max = models.PositiveSmallIntegerField(null=True, blank=True)
     whatsapp = models.CharField(max_length=50, blank=True, null=True)
     event = models.ForeignKey(
         Event, on_delete=models.CASCADE, related_name="participants"
@@ -201,6 +213,7 @@ class Participant(models.Model):
     event_access_email_sent_at = models.DateTimeField(null=True, blank=True)
     registration_receipt_pending = models.BooleanField(default=False, db_index=True)
     registration_receipt_sent_at = models.DateTimeField(null=True, blank=True)
+    matches_email_sent_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     tags = models.ManyToManyField(

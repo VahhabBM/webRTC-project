@@ -57,13 +57,89 @@
       background: var(--warning);
       color: #1e293b;
     }
+    .badge.break, .badge[data-phase="round_ending"] { background: #2563eb; color: #fff; }
     .badge.failed, .badge[data-phase="disconnected"] { background: var(--danger); }
     .badge.partner-gone, .badge[data-quality="partner-gone"] {
       background: #64748b;
     }
     .badge[data-phase="preconnecting"] { background: var(--accent); }
-    .badge[data-phase="round_ending"] { background: #7c3aed; }
     .badge[data-phase="event_ended"] { background: #64748b; }
+
+    .break-banner {
+      background: linear-gradient(135deg, #1e3a8a, #2563eb);
+      color: #ffffff;
+      padding: 1rem 1.25rem;
+      border-radius: 10px;
+      margin-bottom: 1rem;
+      text-align: center;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    }
+    .break-banner-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+    }
+    .break-banner-subtitle {
+      font-size: 0.95rem;
+      opacity: 0.95;
+    }
+    #breakCountdown {
+      font-weight: 700;
+      color: #fef08a;
+    }
+
+    .interest-report-box {
+      margin-top: 1rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      padding-top: 0.75rem;
+      text-align: left;
+    }
+    .interest-report-summary {
+      font-size: 0.85rem;
+      color: #f87171;
+      cursor: pointer;
+      user-select: none;
+      font-weight: 600;
+    }
+    .interest-report-body {
+      margin-top: 0.5rem;
+    }
+    .interest-report-note {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin: 0 0 0.5rem;
+      line-height: 1.4;
+    }
+    .interest-report-textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.5rem;
+      border-radius: 6px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: var(--text);
+      font-size: 0.85rem;
+      resize: vertical;
+    }
+    .interest-report-submit {
+      padding: 0.35rem 0.75rem;
+      background: #dc2626;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .interest-report-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .interest-report-feedback {
+      margin-left: 0.5rem;
+      font-size: 0.8rem;
+      color: #4ade80;
+    }
 
     .timer-block {
       margin-left: auto;
@@ -414,7 +490,6 @@
 
   <header class="room-header">
     <img class="room-logo" src="{% static 'events/images/meetakk-logo.jpg' %}" alt="Meetakk">
-    <h1>Call Room</h1>
   </header>
 
   <div id="eventEndedBanner" class="event-ended-banner">
@@ -424,22 +499,22 @@
   <div id="mediaErrorBanner" class="error-banner" hidden></div>
   <div id="serverWaitingBanner" class="partner-gone-banner" aria-live="polite" hidden></div>
   <div id="partnerGoneBanner" class="partner-gone-banner" hidden></div>
+  <div id="disconnectNotificationBanner" class="partner-gone-banner" style="background: #991b1b; color: white;" hidden></div>
 
-  <div class="top-bar">
-    <span id="phaseBadge" class="badge" data-phase="idle">CONNECTING</span>
-    <span>Quality: <span id="connectionBadge" class="badge">—</span></span>
-    <div id="timerContainer" class="timer-block" data-state="waiting">
-      <div class="timer-label">Time remaining</div>
-      <div id="timerDisplay" class="timer-value">--:--</div>
+  <div id="breakBanner" class="break-banner" hidden>
+    <div class="break-banner-content">
+      <div class="break-banner-title">You are in break time</div>
+      <div class="break-banner-subtitle">
+        Your next date will start in <span id="breakCountdown">02:00</span> minutes.
+      </div>
     </div>
   </div>
 
-  <div class="partner-card">
-    <h2 id="partnerName">—</h2>
-    <p id="partnerTags" class="partner-tags" hidden></p>
-    <div class="meta-row">
-      <span id="roundLabel">—</span>
-      <span>Room: <span id="roomLabel">—</span></span>
+  <div class="top-bar">
+    <span>Status: <span id="connectionBadge" class="badge">—</span></span>
+    <div id="timerContainer" class="timer-block" data-state="waiting">
+      <div class="timer-label">Time remaining</div>
+      <div id="timerDisplay" class="timer-value">--:--</div>
     </div>
   </div>
 
@@ -449,7 +524,7 @@
       <video id="localVideo" autoplay playsinline muted></video>
     </div>
     <div class="video-card" data-video="remote">
-      <h3>Partner</h3>
+      <h3 id="partnerName">Partner</h3>
       <div id="qualityBanner" class="quality-banner" hidden></div>
       <video id="remoteVideo" autoplay playsinline></video>
     </div>
@@ -475,6 +550,19 @@
       </div>
       <div class="interest-actions">
         <button id="interestCloseButton" class="interest-close" type="button" hidden>Close</button>
+      </div>
+      <div class="interest-report-box">
+        <details class="interest-report-details">
+          <summary class="interest-report-summary">Report harassment or misconduct</summary>
+          <div class="interest-report-body">
+            <p class="interest-report-note">If this person engaged in harassment or inappropriate behavior, please report it here so we can take action and ban them according to our rules.</p>
+            <textarea id="interestReportText" class="interest-report-textarea" rows="2" placeholder="Briefly describe what happened (optional)..."></textarea>
+            <div style="margin-top: 6px;">
+              <button id="interestReportButton" class="interest-report-submit" type="button">Submit Report</button>
+              <span id="interestReportFeedback" class="interest-report-feedback" hidden></span>
+            </div>
+          </div>
+        </details>
       </div>
     </section>
   </div>
@@ -528,6 +616,9 @@
         interestYesButton: document.getElementById('interestYesButton'),
         interestNoButton: document.getElementById('interestNoButton'),
         interestCloseButton: document.getElementById('interestCloseButton'),
+        breakBanner: document.getElementById('breakBanner'),
+        breakCountdown: document.getElementById('breakCountdown'),
+        disconnectNotificationBanner: document.getElementById('disconnectNotificationBanner'),
       },
       fetchIceServers: async () => {
         const res = await fetch('/api/ice-servers/');
@@ -553,22 +644,97 @@
       onPhaseChange: (phase) => {
         const footer = document.getElementById('statusFooter');
         const banner = document.getElementById('eventEndedBanner');
+        const connBadge = document.getElementById('connectionBadge');
+        const breakBanner = document.getElementById('breakBanner');
+
         if (phase === CallRoomPhase.EVENT_ENDED) {
           banner.classList.add('visible');
           footer.textContent = 'Event has ended.';
+          if (breakBanner) breakBanner.hidden = true;
+          if (connBadge) {
+            connBadge.textContent = 'EVENT ENDED';
+            connBadge.className = 'badge';
+          }
         } else if (phase === CallRoomPhase.DISCONNECTED) {
           footer.textContent = 'RECONNECTING — connection lost';
+          if (connBadge) {
+            connBadge.textContent = 'DISCONNECTED';
+            connBadge.className = 'badge failed';
+          }
         } else if (phase === CallRoomPhase.PRECONNECTING) {
           footer.textContent = 'Preparing next round…';
+          if (breakBanner) breakBanner.hidden = true;
+          if (connBadge) {
+            connBadge.textContent = 'CONNECTING';
+            connBadge.className = 'badge';
+          }
         } else if (phase === CallRoomPhase.IN_ROUND) {
           footer.textContent = 'Round in progress';
+          if (breakBanner) breakBanner.hidden = true;
+          if (connBadge) {
+            connBadge.textContent = 'CONNECTED';
+            connBadge.className = 'badge connected';
+          }
         } else if (phase === CallRoomPhase.ROUND_ENDING) {
           footer.textContent = 'Round ended — waiting for next pairing…';
+          if (breakBanner) breakBanner.hidden = false;
+          if (connBadge) {
+            connBadge.textContent = 'BREAK';
+            connBadge.className = 'badge break';
+          }
         } else {
           footer.textContent = 'Waiting for pairing…';
         }
       },
     });
+
+    const reportBtn = document.getElementById('interestReportButton');
+    const reportText = document.getElementById('interestReportText');
+    const reportFeedback = document.getElementById('interestReportFeedback');
+    if (reportBtn && reportText) {
+      reportBtn.addEventListener('click', async () => {
+        const text = reportText.value.trim();
+        if (!text) {
+          reportText.focus();
+          return;
+        }
+        reportBtn.disabled = true;
+        const csrfToken = document.querySelector(
+          '#interestCsrfForm [name="csrfmiddlewaretoken"]',
+        )?.value;
+        try {
+          const res = await fetch('{% url "report-incident" %}', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': csrfToken || '',
+            },
+            body: JSON.stringify({
+              report: text,
+              room_id: controller.partner?.roomId || '',
+              round_number: controller.roundNumber || 0,
+            }),
+          });
+          if (res.ok) {
+            reportFeedback.textContent = 'Report submitted. Thank you for letting us know.';
+            reportFeedback.style.color = '#4ade80';
+            reportFeedback.hidden = false;
+            reportText.value = '';
+          } else {
+            reportFeedback.textContent = 'Could not submit report. Please try again.';
+            reportFeedback.style.color = '#f87171';
+            reportFeedback.hidden = false;
+            reportBtn.disabled = false;
+          }
+        } catch (e) {
+          reportFeedback.textContent = 'Network error. Please try again.';
+          reportFeedback.style.color = '#f87171';
+          reportFeedback.hidden = false;
+          reportBtn.disabled = false;
+        }
+      });
+    }
 
     const waitingLobby = document.getElementById('eventWaitingLobby');
     const eventStartCountdown = document.getElementById('eventStartCountdown');

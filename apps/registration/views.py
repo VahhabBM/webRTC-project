@@ -125,7 +125,9 @@ def register_view(request, event_id=None):
                 )
 
             now = timezone.now()
-            has_capacity = not event or has_registration_capacity(event, now=now)
+            has_capacity = not event or has_registration_capacity(
+                event, gender=payload.get("gender"), now=now
+            )
             registration_status = (
                 RegistrationStatus.CONFIRMED
                 if has_capacity
@@ -136,6 +138,8 @@ def register_view(request, event_id=None):
                 display_name=payload["display_name"],
                 email=email,
                 age=payload.get("age"),
+                age_pref_min=payload.get("age_pref_min"),
+                age_pref_max=payload.get("age_pref_max"),
                 country=payload.get("country", ""),
                 city=payload.get("city", ""),
                 gender=payload.get("gender", "Other/Prefer Not to Say"),
@@ -292,6 +296,7 @@ def verify_email_view(request, token):
                     not has_active_reservation
                     and not has_registration_capacity(
                         event,
+                        gender=participant.gender,
                         now=now,
                         exclude_participant_id=participant.pk,
                     )
@@ -508,7 +513,10 @@ def accept_waitlist_invitation(request, token):
         if event.registration_paused:
             return invitation_response(invitation, participant, status=409)
         if not has_registration_capacity(
-            event, now=now, exclude_participant_id=participant.pk
+            event,
+            gender=participant.gender,
+            now=now,
+            exclude_participant_id=participant.pk,
         ):
             return invitation_response(invitation, participant, status=409)
 

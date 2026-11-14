@@ -83,7 +83,13 @@ def _normalized_gender(value: str | None) -> str:
 
 def _accepts(participant: MatchParticipant, partner: MatchParticipant) -> bool:
     preference = participant.want_to_date or "Any"
-    return preference == "Any" or preference == _normalized_gender(partner.gender)
+    if preference == "Any":
+        return True
+    prefs = [p.strip() for p in preference.split(",") if p.strip()]
+    if "Any" in prefs:
+        return True
+    normalized_partner = _normalized_gender(partner.gender)
+    return normalized_partner in prefs or any(p == normalized_partner for p in prefs)
 
 
 def _participant_limit(participant: MatchParticipant) -> int:

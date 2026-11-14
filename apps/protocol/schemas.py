@@ -187,13 +187,17 @@ def build_server_round_warning(
     )
 
 
-def build_server_round_end(*, round_number: int, server_ts: int) -> dict:
+def build_server_round_end(
+    *, round_number: int, server_ts: int, break_duration_seconds: int | None = None
+) -> dict:
     """Build a ``server.round_end`` message."""
-    return build_message(
-        MessageType.SERVER_ROUND_END,
+    payload: dict[str, Any] = dict(
         round_number=round_number,
         server_ts=server_ts,
     )
+    if break_duration_seconds is not None:
+        payload["break_duration_seconds"] = break_duration_seconds
+    return build_message(MessageType.SERVER_ROUND_END, **payload)
 
 
 def build_server_interest_prompt(

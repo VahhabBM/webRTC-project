@@ -117,17 +117,66 @@ def validate_registration_data(event, data=None):
     if gender not in {"Male", "Female", "Other/Prefer Not to Say"}:
         raise RegistrationError("Choose a valid gender option.", "invalid_gender")
 
-    want_to_date = data.get("want_to_date", "Any")
-    if want_to_date not in {"Male", "Female", "Any"}:
+    raw_want_to_date = data.get("want_to_date", "Any")
+    valid_options = {"Male", "Female", "Any", "Other/Prefer Not to Say"}
+    if isinstance(raw_want_to_date, list):
+        if not raw_want_to_date or any(opt not in valid_options for opt in raw_want_to_date):
+            raise RegistrationError(
+                "Choose a valid date preference.", "invalid_date_preference"
+            )
+        if "Any" in raw_want_to_date or (
+            "Male" in raw_want_to_date and "Female" in raw_want_to_date
+        ):
+            want_to_date = "Any"
+        else:
+            want_to_date = ",".join(sorted(raw_want_to_date))
+    elif isinstance(raw_want_to_date, str):
+        parts = [p.strip() for p in raw_want_to_date.split(",") if p.strip()]
+        if not parts or any(p not in valid_options for p in parts):
+            raise RegistrationError(
+                "Choose a valid date preference.", "invalid_date_preference"
+            )
+        if "Any" in parts or ("Male" in parts and "Female" in parts):
+            want_to_date = "Any"
+        else:
+            want_to_date = ",".join(sorted(parts))
+    else:
         raise RegistrationError(
             "Choose a valid date preference.", "invalid_date_preference"
         )
+
+    age_pref_min = data.get("age_pref_min")
+    age_pref_max = data.get("age_pref_max")
+    if age_pref_min is not None and str(age_pref_min).strip():
+        try:
+            age_pref_min = int(Decimal(str(age_pref_min).strip()))
+            if age_pref_min < 18 or age_pref_min > 120:
+                age_pref_min = None
+        except (InvalidOperation, TypeError, ValueError):
+            age_pref_min = None
+    else:
+        age_pref_min = None
+
+    if age_pref_max is not None and str(age_pref_max).strip():
+        try:
+            age_pref_max = int(Decimal(str(age_pref_max).strip()))
+            if age_pref_max < 18 or age_pref_max > 120:
+                age_pref_max = None
+        except (InvalidOperation, TypeError, ValueError):
+            age_pref_max = None
+    else:
+        age_pref_max = None
+
+    if age_pref_min and age_pref_max and age_pref_min > age_pref_max:
+        age_pref_min, age_pref_max = age_pref_max, age_pref_min
 
     whatsapp = data.get("whatsapp", "")
 
     return {
         "display_name": display_name,
         "age": age,
+        "age_pref_min": age_pref_min,
+        "age_pref_max": age_pref_max,
         "country": country,
         "city": city,
         "gender": gender,

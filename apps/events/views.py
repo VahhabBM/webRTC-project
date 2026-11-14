@@ -25,7 +25,12 @@ from apps.events.auth import (
     resolve_participant_from_session,
 )
 from apps.events.interest import PairInterestError, submit_pair_interest
-from apps.events.models import ConnectionType, Pair, Participant
+from apps.events.models import (
+    ConnectionType,
+    Pair,
+    Participant,
+    ParticipantIncidentNote,
+)
 from apps.events.orchestrator import (
     OrchestratorRealtime,
     invalidate_participant_sockets,
@@ -229,6 +234,56 @@ def submit_round_interest(request: HttpRequest) -> JsonResponse:
     return JsonResponse(result)
 
 
+@require_POST
+def report_incident(request: HttpRequest) -> JsonResponse:
+    """Record an incident or misconduct report from a participant."""
+    participant = get_authenticated_participant(request)
+    if participant is None:
+        return JsonResponse({"error": {"code": "authentication_required"}}, status=401)
+
+    try:
+        payload = json.loads(request.body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"error": {"code": "invalid_json"}}, status=400)
+
+    if not isinstance(payload, dict):
+        return JsonResponse({"error": {"code": "invalid_payload"}}, status=400)
+
+    report_text = payload.get("report") or payload.get("note")
+    room_id = payload.get("room_id")
+    round_number = payload.get("round_number")
+    if not isinstance(report_text, str) or not report_text.strip():
+        return JsonResponse({"error": {"code": "empty_report"}}, status=400)
+
+    partner = None
+    if room_id:
+        pair = (
+            Pair.objects.filter(
+                room_id=room_id, event_id=participant.event_id
+            )
+            .select_related("participant_a", "participant_b")
+            .first()
+        )
+        if pair:
+            partner = (
+                pair.participant_b
+                if pair.participant_a_id == participant.pk
+                else pair.participant_a
+            )
+
+    target_participant = partner or participant
+    note_text = (
+        f"Misconduct report by {participant.display_name} "
+        f"(Round {round_number or '?'}): {report_text.strip()}"
+    )
+    ParticipantIncidentNote.objects.create(
+        event=participant.event,
+        participant=target_participant,
+        note=note_text,
+    )
+    return JsonResponse({"ok": True, "reported": True})
+
+
 @require_GET
 def clock_sync_page(request: HttpRequest) -> HttpResponse:
     """Render the clock synchronization page."""
@@ -278,6 +333,11 @@ def video_room_page(request: HttpRequest) -> HttpResponse:
             "partner_id": partner_id,
             "warning_threshold_seconds": getattr(
                 settings, "ORCHESTRATOR_FINAL_SECONDS", 30
+            ),
+            "break_duration_seconds": (
+                int(participant.event.break_duration.total_seconds())
+                if participant.event.break_duration
+                else 120
             ),
             # Scope relay fallback to the authenticated participant's current
             # room by default. An explicit setting can still narrow this to

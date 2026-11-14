@@ -53,7 +53,7 @@ export const PARTNER_GONE_FOOTER =
 export function partnerLeftBanner(
   name = "Partner",
 ) {
-  return `${name} left. Waiting for them to return — the round continues.`;
+  return `${name} got disconnected. Please wait up to 1 minute — they may reconnect. If not, you will be connected to your next date.`;
 }
 
 export function partnerPresenceFromProtocol(
@@ -637,6 +637,10 @@ export class CallRoomController {
 
       this._clearReconnect();
 
+      if (this.elements.disconnectNotificationBanner) {
+        this.elements.disconnectNotificationBanner.hidden = true;
+      }
+
       this._reconnectAttempt =
         0;
 
@@ -770,6 +774,10 @@ export class CallRoomController {
 
     this.isPaused =
       false;
+
+    try {
+      sessionStorage.removeItem("meetakk_active_date");
+    } catch (e) {}
 
     this._clearPartnerGone();
 
@@ -981,6 +989,34 @@ export class CallRoomController {
       CallRoomPhase.IDLE,
     );
 
+    try {
+      const savedDate = sessionStorage.getItem('meetakk_active_date');
+      if (savedDate) {
+        const parsed = JSON.parse(savedDate);
+        sessionStorage.removeItem('meetakk_active_date');
+        const durationSec = (this._now() - (parsed.start_ts || 0)) / 1000;
+        if (durationSec >= 180 && parsed.partner_name && parsed.room_id) {
+          const promptId = `${parsed.round_number}:${parsed.room_id}`;
+          if (!this._interestPrompts.has(promptId)) {
+            const prompt = {
+              round_number: parsed.round_number,
+              room_id: parsed.room_id,
+              partner_display_name: parsed.partner_name,
+              server_ts: this._now(),
+              deadline_ts: this._now() + 60000,
+              own_response: null,
+              mutual: false,
+            };
+            this._interestPrompts.set(promptId, prompt);
+            this._renderInterestPrompt(promptId, prompt);
+            if (this.elements.interestTitle) {
+              this.elements.interestTitle.textContent = `You were disconnected from your previous date with ${parsed.partner_name}. Would you like to stay in touch with them?`;
+            }
+          }
+        }
+      }
+    } catch (e) {}
+
     void this.ensureLocalMedia().then(() => this._sendClientReady());
   }
 
@@ -1175,6 +1211,26 @@ export class CallRoomController {
     this.partnerPresence =
       "connected";
 
+    this.roundStartTs = this._now();
+    try {
+      sessionStorage.setItem(
+        "meetakk_active_date",
+        JSON.stringify({
+          room_id: this.partner.roomId,
+          round_number: this.partner.roundNumber,
+          partner_name: this.partner.displayName,
+          start_ts: this.roundStartTs,
+        }),
+      );
+    } catch (e) {}
+    if (this._breakTimer) {
+      clearInterval(this._breakTimer);
+      this._breakTimer = null;
+    }
+    if (this.elements.breakBanner) {
+      this.elements.breakBanner.hidden = true;
+    }
+
     this._clearConnectionError();
     this._clearPartnerGone();
 
@@ -1329,6 +1385,10 @@ export class CallRoomController {
     this.isPaused =
       false;
 
+    try {
+      sessionStorage.removeItem("meetakk_active_date");
+    } catch (e) {}
+
     this._clearPartnerGone();
     this._clearPermanentIceFailureTimer();
 
@@ -1348,6 +1408,36 @@ export class CallRoomController {
     this.partner = null;
 
     this._updatePartnerUI();
+
+    const breakDurationSec = Number(payload.break_duration_seconds ?? 120);
+    this._startBreakCountdown(breakDurationSec);
+  }
+
+  _startBreakCountdown(durationSec) {
+    if (this._breakTimer) {
+      clearInterval(this._breakTimer);
+      this._breakTimer = null;
+    }
+    if (this.elements.breakBanner) {
+      this.elements.breakBanner.hidden = false;
+    }
+    let remaining = durationSec;
+    const updateDisplay = () => {
+      if (this.elements.breakCountdown) {
+        const m = Math.floor(remaining / 60);
+        const s = remaining % 60;
+        this.elements.breakCountdown.textContent = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+      }
+    };
+    updateDisplay();
+    this._breakTimer = setInterval(() => {
+      remaining = Math.max(0, remaining - 1);
+      updateDisplay();
+      if (remaining <= 0) {
+        clearInterval(this._breakTimer);
+        this._breakTimer = null;
+      }
+    }, 1000);
   }
 
   _onInterestPrompt(payload) {
@@ -1618,6 +1708,10 @@ export class CallRoomController {
     this.isPaused =
       false;
 
+    try {
+      sessionStorage.removeItem("meetakk_active_date");
+    } catch (e) {}
+
     this._clearPartnerGone();
     this._clearPermanentIceFailureTimer();
 
@@ -1875,6 +1969,36 @@ export class CallRoomController {
     }
 
     this._updatePartnerUI();
+
+    if (this._partnerDisconnectWaitTimer) {
+      clearTimeout(this._partnerDisconnectWaitTimer);
+      this._partnerDisconnectWaitTimer = null;
+    }
+
+    const currentPartner = this.partner;
+    const conversationDurationSec = this.roundStartTs ? (this._now() - this.roundStartTs) / 1000 : 0;
+
+    this._partnerDisconnectWaitTimer = setTimeout(() => {
+      if (this.partnerPresence === "gone" && currentPartner) {
+        if (conversationDurationSec >= 180) {
+          const promptId = `${currentPartner.roundNumber || this.roundNumber}:${currentPartner.roomId}`;
+          const prompt = {
+            round_number: currentPartner.roundNumber || this.roundNumber,
+            room_id: currentPartner.roomId,
+            partner_display_name: name,
+            server_ts: this._now(),
+            deadline_ts: this._now() + 60000,
+            own_response: null,
+            mutual: false,
+          };
+          this._interestPrompts.set(promptId, prompt);
+          this._renderInterestPrompt(promptId, prompt);
+          if (this.elements.interestTitle) {
+            this.elements.interestTitle.textContent = `Your date with ${name} ended early. Did you like them?`;
+          }
+        }
+      }
+    }, 60000);
   }
 
   _onPartnerState(payload) {
@@ -1974,6 +2098,11 @@ export class CallRoomController {
   }
 
   _clearPartnerGone() {
+    if (this._partnerDisconnectWaitTimer) {
+      clearTimeout(this._partnerDisconnectWaitTimer);
+      this._partnerDisconnectWaitTimer = null;
+    }
+
     if (
       this._partnerGoneTimer
     ) {
@@ -2852,7 +2981,7 @@ export class CallRoomController {
     ) {
       this.elements.partnerName.textContent =
         this.partner?.displayName ??
-        "—";
+        "Partner";
     }
 
     if (
@@ -3051,6 +3180,12 @@ export class CallRoomController {
 
       this.elements.qualityBanner.textContent =
         "RECONNECTING — restoring the same round and partner…";
+    }
+
+    if (this.elements.disconnectNotificationBanner) {
+      this.elements.disconnectNotificationBanner.textContent =
+        "You got disconnected. Please refresh the page if your connection does not restore.";
+      this.elements.disconnectNotificationBanner.hidden = false;
     }
 
     if (

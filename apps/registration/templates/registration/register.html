@@ -158,6 +158,155 @@
         }
         .error-msg[role="alert"] { line-height: 1.45; }
         [hidden] { display: none !important; }
+
+        /* Dual Age Range Slider */
+        .range-slider-group {
+            margin-top: 14px;
+            margin-bottom: 20px;
+        }
+        .range-slider-label {
+            display: block;
+            font-weight: bold;
+            color: #444;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        .range-badges-wrap {
+            position: relative;
+            height: 24px;
+            margin-bottom: 2px;
+        }
+        .range-badge {
+            position: absolute;
+            transform: translateX(-50%);
+            background: #6c5436;
+            color: #fff;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+            white-space: nowrap;
+        }
+        .range-badge::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 4px solid transparent;
+            border-top-color: #6c5436;
+        }
+        .range-slider-container {
+            position: relative;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            width: 100%;
+        }
+        .range-slider-track {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 6px;
+            border-radius: 3px;
+            background: #d8cbb8;
+            z-index: 1;
+        }
+        .range-slider-progress {
+            position: absolute;
+            height: 6px;
+            border-radius: 3px;
+            background: linear-gradient(90deg, #c59b4c, #7d5923);
+            z-index: 2;
+        }
+        .range-slider-container input[type="range"] {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 36px;
+            margin: 0;
+            padding: 0;
+            -webkit-appearance: none;
+            appearance: none;
+            background: none;
+            pointer-events: none;
+            z-index: 3;
+            border: none;
+        }
+        .range-slider-container input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #fff;
+            border: 3px solid #7d5923;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+            cursor: pointer;
+            pointer-events: auto;
+            position: relative;
+            z-index: 4;
+        }
+        .range-slider-container input[type="range"]::-moz-range-thumb {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #fff;
+            border: 3px solid #7d5923;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+            cursor: pointer;
+            pointer-events: auto;
+            position: relative;
+            z-index: 4;
+        }
+
+        /* Searchable Country Select */
+        .country-select-wrapper {
+            position: relative;
+            width: 100%;
+        }
+        .country-search-input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 14px;
+            box-sizing: border-box;
+            background: #fff url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23666%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E") no-repeat right 12px center;
+            background-size: 10px 10px;
+            cursor: pointer;
+        }
+        .country-search-input:focus {
+            outline: 2px solid #6675d8;
+            outline-offset: -2px;
+            cursor: text;
+        }
+        .country-dropdown-list {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            max-height: 220px;
+            overflow-y: auto;
+            background: #fff;
+            border: 1px solid #bbb;
+            border-top: none;
+            border-radius: 0 0 6px 6px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+            z-index: 100;
+        }
+        .country-dropdown-item {
+            padding: 8px 12px;
+            font-size: 14px;
+            color: #333;
+            cursor: pointer;
+        }
+        .country-dropdown-item:hover, .country-dropdown-item.active {
+            background-color: #f2ede4;
+            color: #202432;
+        }
         @media (max-width: 600px) {
             body {
                 align-items: flex-start;
@@ -239,9 +388,31 @@
             <p class="age-note">Registration is open to people aged 18 and over.</p>
         </div>
 
+        <div class="form-group range-slider-group">
+            <label class="range-slider-label">I want to date someone in the range age of [<span id="ageRangeMinText">22</span> - <span id="ageRangeMaxText">35</span>]:</label>
+            <div class="range-badges-wrap">
+                <span class="range-badge" id="badgeMin">22</span>
+                <span class="range-badge" id="badgeMax">35</span>
+            </div>
+            <div class="range-slider-container">
+                <div class="range-slider-track"></div>
+                <div class="range-slider-progress" id="rangeProgress"></div>
+                <input type="range" id="agePrefMin" name="age_pref_min" min="18" max="80" value="22" step="1" aria-label="Minimum age preference">
+                <input type="range" id="agePrefMax" name="age_pref_max" min="18" max="80" value="35" step="1" aria-label="Maximum age preference">
+            </div>
+        </div>
+
         <div class="form-group">
-            <label for="country">I live in:</label>
-            <select id="country" name="country" required>
+            <label for="countrySearch">I live in:</label>
+            <div class="country-select-wrapper">
+                <input type="text" id="countrySearch" class="country-search-input" placeholder="Select your country" autocomplete="off">
+                <div id="countryDropdownList" class="country-dropdown-list" hidden>
+                    {% for code, name in country_choices %}
+                    <div class="country-dropdown-item" data-code="{{ code }}" data-name="{{ name }}">{{ name }}</div>
+                    {% endfor %}
+                </div>
+            </div>
+            <select id="country" name="country" required style="position: absolute; opacity: 0; pointer-events: none; height: 0; width: 0; margin: 0; padding: 0;">
                 <option value="" selected disabled>Select your country</option>
                 {% for code, name in country_choices %}
                 <option value="{{ code }}">{{ name }}</option>
@@ -264,10 +435,10 @@
 
         <div class="form-group">
             <label>I want to date:</label>
-            <div class="radio-group">
-                <label><input type="radio" name="want_to_date" value="Male"> Male</label>
-                <label><input type="radio" name="want_to_date" value="Female"> Female</label>
-                <label><input type="radio" name="want_to_date" value="Any" checked> Any/Other</label>
+            <div class="checkbox-group">
+                <label><input type="checkbox" name="want_to_date" value="Male"> Male</label>
+                <label><input type="checkbox" name="want_to_date" value="Female"> Female</label>
+                <label><input type="checkbox" name="want_to_date" value="Any" checked> Any/Other</label>
             </div>
         </div>
 
@@ -417,7 +588,216 @@
 </div>
 
 <script>
-    document.getElementById('registrationForm').addEventListener('submit', async function(e) {
+(function() {
+    // --- 1. Dual-Handle Age Range Slider ---
+    const minInput = document.getElementById('agePrefMin');
+    const maxInput = document.getElementById('agePrefMax');
+    const minText = document.getElementById('ageRangeMinText');
+    const maxText = document.getElementById('ageRangeMaxText');
+    const badgeMin = document.getElementById('badgeMin');
+    const badgeMax = document.getElementById('badgeMax');
+    const progress = document.getElementById('rangeProgress');
+
+    function updateAgeSlider(e) {
+        let minVal = parseInt(minInput.value, 10);
+        let maxVal = parseInt(maxInput.value, 10);
+
+        if (maxVal - minVal < 1) {
+            if (e && e.target === minInput) {
+                minInput.value = maxVal - 1;
+                minVal = maxVal - 1;
+            } else if (e && e.target === maxInput) {
+                maxInput.value = minVal + 1;
+                maxVal = minVal + 1;
+            }
+        }
+
+        const minPercent = ((minVal - minInput.min) / (minInput.max - minInput.min)) * 100;
+        const maxPercent = ((maxVal - maxInput.min) / (maxInput.max - maxInput.min)) * 100;
+
+        if (progress) {
+            progress.style.left = minPercent + '%';
+            progress.style.width = (maxPercent - minPercent) + '%';
+        }
+        if (minText) minText.textContent = minVal;
+        if (maxText) maxText.textContent = maxVal;
+        if (badgeMin) {
+            badgeMin.textContent = minVal;
+            badgeMin.style.left = minPercent + '%';
+        }
+        if (badgeMax) {
+            badgeMax.textContent = maxVal;
+            badgeMax.style.left = maxPercent + '%';
+        }
+    }
+
+    if (minInput && maxInput) {
+        minInput.addEventListener('input', updateAgeSlider);
+        maxInput.addEventListener('input', updateAgeSlider);
+        updateAgeSlider();
+    }
+
+    // --- 2. Searchable Country Dropdown ---
+    const countrySearch = document.getElementById('countrySearch');
+    const countryDropdown = document.getElementById('countryDropdownList');
+    const countrySelect = document.getElementById('country');
+
+    if (countrySearch && countryDropdown && countrySelect) {
+        const items = countryDropdown.querySelectorAll('.country-dropdown-item');
+
+        function filterCountries(query) {
+            const q = (query || '').toLowerCase().trim();
+            let visibleCount = 0;
+            items.forEach(item => {
+                const text = item.getAttribute('data-name').toLowerCase();
+                if (!q || text.includes(q)) {
+                    item.style.display = 'block';
+                    visibleCount++;
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+            countryDropdown.hidden = visibleCount === 0;
+        }
+
+        countrySearch.addEventListener('focus', () => {
+            filterCountries(countrySearch.value);
+            countryDropdown.hidden = false;
+        });
+
+        countrySearch.addEventListener('input', () => {
+            filterCountries(countrySearch.value);
+            countryDropdown.hidden = false;
+        });
+
+        items.forEach(item => {
+            item.addEventListener('click', () => {
+                const code = item.getAttribute('data-code');
+                const name = item.getAttribute('data-name');
+                countrySelect.value = code;
+                countrySearch.value = name;
+                countryDropdown.hidden = true;
+                countrySelect.dispatchEvent(new Event('change'));
+                saveFormState();
+            });
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!countrySearch.contains(e.target) && !countryDropdown.contains(e.target)) {
+                countryDropdown.hidden = true;
+            }
+        });
+    }
+
+    // --- 3. "I want to date" Checkbox behavior ---
+    const wantToDateCbs = document.querySelectorAll('input[name="want_to_date"]');
+    wantToDateCbs.forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (cb.value === 'Any' && cb.checked) {
+                wantToDateCbs.forEach(other => {
+                    if (other.value !== 'Any') other.checked = false;
+                });
+            } else if (cb.checked) {
+                wantToDateCbs.forEach(other => {
+                    if (other.value === 'Any') other.checked = false;
+                });
+            }
+            const anyChecked = Array.from(wantToDateCbs).some(c => c.checked);
+            if (!anyChecked) {
+                const anyCb = Array.from(wantToDateCbs).find(c => c.value === 'Any');
+                if (anyCb) anyCb.checked = true;
+            }
+            saveFormState();
+        });
+    });
+
+    // --- 4. Form State Persistence (SessionStorage) ---
+    const STORAGE_KEY = 'meetakk_registration_form_state';
+
+    function saveFormState() {
+        try {
+            const checkedWantToDate = Array.from(document.querySelectorAll('input[name="want_to_date"]:checked')).map(c => c.value);
+            const genderChecked = document.querySelector('input[name="gender"]:checked');
+            const state = {
+                displayName: document.getElementById('displayName')?.value || '',
+                age: document.getElementById('age')?.value || '',
+                agePrefMin: minInput?.value || '22',
+                agePrefMax: maxInput?.value || '35',
+                country: countrySelect?.value || '',
+                countryName: countrySearch?.value || '',
+                city: document.getElementById('city')?.value || '',
+                gender: genderChecked ? genderChecked.value : 'Male',
+                wantToDate: checkedWantToDate,
+                email: document.getElementById('email')?.value || '',
+                emailConfirmation: document.getElementById('emailConfirmation')?.value || '',
+                countryCode: document.getElementById('countryCode')?.value || '+44',
+                whatsappNumber: document.getElementById('whatsappNumber')?.value || '',
+                consentAge: document.getElementById('consentAge')?.checked || false,
+                consentSensitiveData: document.getElementById('consentSensitiveData')?.checked || false,
+                consentMutualSharing: document.getElementById('consentMutualSharing')?.checked || false,
+                consentTermsPrivacy: document.getElementById('consentTermsPrivacy')?.checked || false,
+            };
+            sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        } catch (err) {
+            // Quota or storage unavailable
+        }
+    }
+
+    function restoreFormState() {
+        try {
+            const raw = sessionStorage.getItem(STORAGE_KEY);
+            if (!raw) return;
+            const state = JSON.parse(raw);
+            if (state.displayName) document.getElementById('displayName').value = state.displayName;
+            if (state.age) document.getElementById('age').value = state.age;
+            if (state.agePrefMin && minInput) minInput.value = state.agePrefMin;
+            if (state.agePrefMax && maxInput) maxInput.value = state.agePrefMax;
+            if (minInput && maxInput) updateAgeSlider();
+
+            if (state.country && countrySelect) {
+                countrySelect.value = state.country;
+                if (countrySearch) {
+                    countrySearch.value = state.countryName || '';
+                    if (!countrySearch.value) {
+                        const opt = countrySelect.querySelector(`option[value="${state.country}"]`);
+                        if (opt) countrySearch.value = opt.textContent;
+                    }
+                }
+            }
+            if (state.city) document.getElementById('city').value = state.city;
+            if (state.gender) {
+                const gRadio = document.querySelector(`input[name="gender"][value="${state.gender}"]`);
+                if (gRadio) gRadio.checked = true;
+            }
+            if (Array.isArray(state.wantToDate) && state.wantToDate.length > 0) {
+                wantToDateCbs.forEach(cb => {
+                    cb.checked = state.wantToDate.includes(cb.value);
+                });
+            }
+            if (state.email) document.getElementById('email').value = state.email;
+            if (state.emailConfirmation) document.getElementById('emailConfirmation').value = state.emailConfirmation;
+            if (state.countryCode) document.getElementById('countryCode').value = state.countryCode;
+            if (state.whatsappNumber) document.getElementById('whatsappNumber').value = state.whatsappNumber;
+
+            if (state.consentAge) document.getElementById('consentAge').checked = true;
+            if (state.consentSensitiveData) document.getElementById('consentSensitiveData').checked = true;
+            if (state.consentMutualSharing) document.getElementById('consentMutualSharing').checked = true;
+            if (state.consentTermsPrivacy) document.getElementById('consentTermsPrivacy').checked = true;
+        } catch (err) {
+            // Ignore parse errors
+        }
+    }
+
+    // Restore on load
+    restoreFormState();
+
+    // Attach listeners for auto-save
+    const form = document.getElementById('registrationForm');
+    form.addEventListener('input', saveFormState);
+    form.addEventListener('change', saveFormState);
+
+    // Form submission
+    form.addEventListener('submit', async function(e) {
         e.preventDefault();
         const errorDiv = document.getElementById('errorContainer');
         errorDiv.style.display = 'none';
@@ -426,23 +806,36 @@
         const rawPhone = document.getElementById('whatsappNumber').value.trim();
         const fullWhatsapp = countryCode + ' ' + rawPhone;
 
-        const ageInput = document.getElementById('age').value.trim();
-        const age = Number(ageInput);
+        const ageInputVal = document.getElementById('age').value.trim();
+        const age = Number(ageInputVal);
         if (!Number.isInteger(age) || age < 18) {
             errorDiv.textContent = 'Registration is only available to people aged 18 or older.';
             errorDiv.style.display = 'block';
             document.getElementById('age').focus();
             return;
         }
+
+        const checkedDatePrefs = Array.from(document.querySelectorAll('input[name="want_to_date"]:checked')).map(cb => cb.value);
+        let wantToDateVal = "Any";
+        if (checkedDatePrefs.includes('Any') || checkedDatePrefs.length === 0) {
+            wantToDateVal = "Any";
+        } else if (checkedDatePrefs.includes('Male') && checkedDatePrefs.includes('Female')) {
+            wantToDateVal = "Any";
+        } else {
+            wantToDateVal = checkedDatePrefs.join(',');
+        }
+
         const csrfToken = document.querySelector('[name="csrfmiddlewaretoken"]').value;
 
         const payload = {
             display_name: document.getElementById('displayName').value.trim(),
             age: age,
+            age_pref_min: minInput ? Number(minInput.value) : null,
+            age_pref_max: maxInput ? Number(maxInput.value) : null,
             country: document.getElementById('country').value,
             city: document.getElementById('city').value.trim(),
             gender: document.querySelector('input[name="gender"]:checked').value,
-            want_to_date: document.querySelector('input[name="want_to_date"]:checked').value,
+            want_to_date: wantToDateVal,
             email: document.getElementById('email').value.trim(),
             email_confirmation: document.getElementById('emailConfirmation').value.trim(),
             whatsapp: fullWhatsapp,
@@ -470,6 +863,8 @@
                 ? await response.json()
                 : {};
             if (response.ok) {
+                // Clear saved form data upon successful submission
+                try { sessionStorage.removeItem(STORAGE_KEY); } catch (e) {}
                 window.location.href = `/registration/check-email/?email=${encodeURIComponent(payload.email)}&status=${encodeURIComponent(data.registration_status)}`;
             } else {
                 errorDiv.textContent = data.error || `Registration failed (HTTP ${response.status}). Please try again.`;
@@ -480,6 +875,7 @@
             errorDiv.style.display = 'block';
         }
     });
+})();
 </script>
 
 </body>

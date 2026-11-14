@@ -219,6 +219,8 @@ class EventAdmin(admin.ModelAdmin):
         "male_date_limit",
         "female_date_limit",
         "other_date_limit",
+        "male_registration_cap",
+        "female_registration_cap",
         "intro_video_url",
         "intro_video_duration_seconds",
         "unique_tags",
@@ -226,6 +228,19 @@ class EventAdmin(admin.ModelAdmin):
         "registration_paused",
     )
     readonly_fields = ("registration_paused",)
+    actions = ["send_selected_matches_summary_emails"]
+
+    @admin.action(description="Send consolidated match summary emails to participants")
+    def send_selected_matches_summary_emails(self, request, queryset):
+        from apps.events.email_notifications import send_event_matches_summary_emails
+
+        total_sent = 0
+        for event in queryset:
+            total_sent += send_event_matches_summary_emails(event.pk)
+        self.message_user(
+            request,
+            f"Delivered {total_sent} consolidated match summary email(s).",
+        )
 
     # Override the change-form template to inject custom tool buttons.
     change_form_template = "admin/events/event/change_form.html"
@@ -1022,6 +1037,7 @@ class ParticipantAdmin(admin.ModelAdmin):
         "join_token_expires_at",
         "registration_receipt_pending",
         "registration_receipt_sent_at",
+        "matches_email_sent_at",
         "created_at",
         "updated_at",
     )

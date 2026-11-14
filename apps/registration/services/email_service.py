@@ -147,3 +147,51 @@ class EmailService:
             )
         except Exception as e:
             raise RuntimeError(f"Error sending waitlist invitation: {str(e)}")
+
+    @staticmethod
+    def send_matches_summary_email(
+        recipient_email,
+        name,
+        event_title,
+        matches,
+    ):
+        """Deliver a consolidated list of all mutual matches with WhatsApp numbers after the event ends."""
+        subject = f"Your Matches from {event_title} — Meetakk"
+        if not matches:
+            body = (
+                f"Hello {name},\n\n"
+                f"Thank you for attending {event_title}.\n\n"
+                "You did not have any mutual matches this time, but we hope you had fun and enjoyed meeting new people!\n\n"
+                "We look forward to seeing you at our next event.\n\n"
+                "Best regards,\n"
+                "The Meetakk Team"
+            )
+        else:
+            match_lines = []
+            for m in matches:
+                p_name = m.get("name") or "Your Match"
+                p_phone = m.get("whatsapp") or "No WhatsApp provided"
+                match_lines.append(f"• {p_name} — WhatsApp: {p_phone}")
+            matches_text = "\n".join(match_lines)
+            body = (
+                f"Hello {name},\n\n"
+                f"Thank you for participating in {event_title}!\n\n"
+                "Here are your mutual matches from the event:\n\n"
+                f"{matches_text}\n\n"
+                "Please use these details respectfully. We hope you enjoy getting to know each other!\n\n"
+                "Best regards,\n"
+                "The Meetakk Team"
+            )
+
+        try:
+            sent = send_mail(
+                subject=subject,
+                message=body,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[recipient_email],
+                fail_silently=False,
+            )
+            if sent != 1:
+                raise RuntimeError("The email backend did not accept the message")
+        except Exception as e:
+            raise RuntimeError(f"Error sending matches summary email: {str(e)}")

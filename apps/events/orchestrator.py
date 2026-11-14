@@ -417,8 +417,15 @@ class OrchestratorRealtime:
         """Send ``server.round_end`` to every active connection for the event."""
         current = self._now(now)
         server_ts = self._server_ts_ms(current)
+        break_duration_seconds = (
+            int(self.event.break_duration.total_seconds())
+            if self.event.break_duration
+            else 120
+        )
         message = build_server_round_end(
-            round_number=round_obj.number, server_ts=server_ts
+            round_number=round_obj.number,
+            server_ts=server_ts,
+            break_duration_seconds=break_duration_seconds,
         )
         group = select_event_broadcast_group(self.event)
         delivered = 1 if self._publish(group, message) else 0
@@ -451,6 +458,18 @@ class OrchestratorRealtime:
         )
         group = select_event_broadcast_group(self.event)
         delivered = 1 if self._publish(group, envelope) else 0
+        if reason == EventEndReason.COMPLETED:
+            try:
+                from apps.events.email_notifications import (
+                    send_event_matches_summary_emails,
+                )
+
+                send_event_matches_summary_emails(self.event.pk)
+            except Exception:
+                logger.exception(
+                    "Failed sending event matches summary emails for event %s",
+                    self.event.pk,
+                )
         return {
             "type": MessageType.SERVER_EVENT_END,
             "group": group,
@@ -889,8 +908,15 @@ class OrchestratorRealtime:
     ) -> dict:
         current = self._now(now)
         server_ts = self._server_ts_ms(current)
+        break_duration_seconds = (
+            int(self.event.break_duration.total_seconds())
+            if self.event.break_duration
+            else 120
+        )
         message = build_server_round_end(
-            round_number=round_obj.number, server_ts=server_ts
+            round_number=round_obj.number,
+            server_ts=server_ts,
+            break_duration_seconds=break_duration_seconds,
         )
         group = select_event_broadcast_group(self.event)
         delivered = 1 if await self._apublish(group, message) else 0

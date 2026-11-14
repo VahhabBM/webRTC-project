@@ -30,7 +30,7 @@ class TestRegistrationUI:
         assert "Join us for an exciting evening" not in content
         assert tag.name in content
         assert "tag-search" in content
-        assert 'id="countrySearch"' not in content
+        assert 'id="countrySearch"' in content
         assert 'id="country" name="country"' in content
         assert 'value="+44" selected' in content
         assert "country-search.js" not in content
