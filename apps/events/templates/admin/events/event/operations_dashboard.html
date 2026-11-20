@@ -58,6 +58,52 @@
     </div>
   </div>
 
+  <h2>Attendance & Event Presence Analytics (Gender Breakdown)</h2>
+  <div class="operations-dashboard__table-wrap">
+    <table class="operations-dashboard__table" style="background:#fff; border:1px solid var(--hairline-color, #ddd); border-collapse:collapse;">
+      <thead>
+        <tr style="background:var(--darkened-bg, #f4f4f4);">
+          <th style="padding:10px;">Category</th>
+          <th style="padding:10px;">Total</th>
+          <th style="padding:10px;">Men (آقایان)</th>
+          <th style="padding:10px;">Women (خانم‌ها)</th>
+          <th style="padding:10px;">Attendance Rate</th>
+          <th style="padding:10px;">Active in Dates (Paired)</th>
+          <th style="padding:10px;">Currently Online</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid #eee;">
+          <th scope="row" style="padding:10px;">Confirmed Registrations</th>
+          <td style="padding:10px;"><strong>{{ attendance_metrics.total.confirmed }}</strong></td>
+          <td style="padding:10px;">{{ attendance_metrics.male.confirmed }}</td>
+          <td style="padding:10px;">{{ attendance_metrics.female.confirmed }}</td>
+          <td style="padding:10px;">—</td>
+          <td style="padding:10px;">—</td>
+          <td style="padding:10px;">—</td>
+        </tr>
+        <tr style="border-bottom:1px solid #eee; background:#f0fdf4;">
+          <th scope="row" style="padding:10px; color:#15803d;">Attended (Joined Room)</th>
+          <td style="padding:10px;"><strong style="color:#15803d;">{{ attendance_metrics.total.attended }}</strong></td>
+          <td style="padding:10px;">{{ attendance_metrics.male.attended }}</td>
+          <td style="padding:10px;">{{ attendance_metrics.female.attended }}</td>
+          <td style="padding:10px;"><strong>{{ attendance_metrics.total.attendance_rate }}</strong> (M: {{ attendance_metrics.male.attendance_rate }} / F: {{ attendance_metrics.female.attendance_rate }})</td>
+          <td style="padding:10px;">{{ attendance_metrics.total.paired }} (M: {{ attendance_metrics.male.paired }} / F: {{ attendance_metrics.female.paired }})</td>
+          <td style="padding:10px;"><strong style="color:#15803d;">{{ attendance_metrics.total.online }}</strong> (M: {{ attendance_metrics.male.online }} / F: {{ attendance_metrics.female.online }})</td>
+        </tr>
+        <tr>
+          <th scope="row" style="padding:10px; color:#b91c1c;">No-Shows (Confirmed but Never Joined)</th>
+          <td style="padding:10px;"><strong style="color:#b91c1c;">{{ attendance_metrics.total.noshow }}</strong></td>
+          <td style="padding:10px;">{{ attendance_metrics.male.noshow }}</td>
+          <td style="padding:10px;">{{ attendance_metrics.female.noshow }}</td>
+          <td style="padding:10px;">—</td>
+          <td style="padding:10px;">—</td>
+          <td style="padding:10px;">—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
   <h2>Live events</h2>
   <div class="operations-dashboard__table-wrap">
     <table class="operations-dashboard__table">

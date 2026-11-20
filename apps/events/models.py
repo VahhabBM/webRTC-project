@@ -126,6 +126,22 @@ class Event(models.Model):
         default=False,
         help_text="Temporarily prevent new public registrations for this event.",
     )
+    reminder_lead_time = models.DurationField(
+        default=timedelta(hours=6),
+        null=True,
+        blank=True,
+        help_text="Time before event start to send reminder email (e.g. 06:00:00).",
+    )
+    reminder_audience = models.CharField(
+        max_length=10,
+        choices=[("female", "Females Only"), ("male", "Males Only"), ("all", "All Participants")],
+        default="female",
+        help_text="Audience for reminder emails.",
+    )
+    early_exit_min_minutes = models.PositiveSmallIntegerField(
+        default=3,
+        help_text="Minutes into a date before Leave Date button appears.",
+    )
 
     def clean(self):
         super().clean()
@@ -213,6 +229,7 @@ class Participant(models.Model):
     event_access_email_sent_at = models.DateTimeField(null=True, blank=True)
     registration_receipt_pending = models.BooleanField(default=False, db_index=True)
     registration_receipt_sent_at = models.DateTimeField(null=True, blank=True)
+    reminder_email_sent_at = models.DateTimeField(null=True, blank=True)
     matches_email_sent_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

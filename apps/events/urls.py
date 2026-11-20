@@ -8,6 +8,7 @@ from .views import (
     ice_servers_view,
     join_participant,
     landing_page,
+    leave_date,
     report_incident,
     submit_connection_report,
     submit_round_interest,
@@ -39,6 +40,11 @@ urlpatterns = [
         "api/round-interest/",
         submit_round_interest,
         name="submit-round-interest",
+    ),
+    path(
+        "api/leave-date/",
+        leave_date,
+        name="leave-date",
     ),
     path(
         "api/report-incident/",

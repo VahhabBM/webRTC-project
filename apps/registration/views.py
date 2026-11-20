@@ -179,7 +179,7 @@ def register_view(request, event_id=None):
             "message": (
                 "You are on the event waitlist. We will email you if a place becomes available."
                 if participant.registration_status == RegistrationStatus.WAITLISTED
-                else "Your registration is confirmed. Your personal event access link will be emailed 9 hours before the event."
+                else "Your registration is confirmed. Your personal event access link has been sent to your email."
             ),
             "participant_id": str(participant.id),
             "registration_status": participant.registration_status,

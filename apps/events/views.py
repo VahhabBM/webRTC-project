@@ -27,6 +27,8 @@ from apps.events.auth import (
 from apps.events.interest import PairInterestError, submit_pair_interest
 from apps.events.models import (
     ConnectionType,
+    DisconnectionCause,
+    DisconnectionLog,
     Pair,
     Participant,
     ParticipantIncidentNote,
@@ -339,6 +341,7 @@ def video_room_page(request: HttpRequest) -> HttpResponse:
                 if participant.event.break_duration
                 else 120
             ),
+            "early_exit_min_minutes": getattr(participant.event, "early_exit_min_minutes", 3) or 3,
             # Scope relay fallback to the authenticated participant's current
             # room by default. An explicit setting can still narrow this to
             # a single diagnostic pair when needed.
@@ -486,3 +489,53 @@ def submit_connection_report(request: HttpRequest) -> JsonResponse:
             )
 
     return JsonResponse({"status": "recorded"})
+
+
+@require_POST
+def leave_date(request: HttpRequest) -> JsonResponse:
+    """Allow a participant to gracefully leave an active date early (Task 3)."""
+    participant = get_authenticated_participant(request)
+    if not participant:
+        return JsonResponse({"error": "Authentication required"}, status=401)
+
+    try:
+        data = json.loads(request.body)
+        room_id = data.get("room_id")
+    except Exception:
+        room_id = None
+
+    now = timezone.now()
+    pair = None
+    if room_id:
+        pair = (
+            Pair.objects.filter(event=participant.event, room_id=room_id)
+            .filter(Q(participant_a=participant) | Q(participant_b=participant))
+            .select_related("participant_a", "participant_b", "round")
+            .first()
+        )
+
+    if pair:
+        partner = (
+            pair.participant_b
+            if pair.participant_a_id == participant.pk
+            else pair.participant_a
+        )
+        DisconnectionLog.objects.create(
+            event=participant.event,
+            participant=participant,
+            round=pair.round,
+            cause=DisconnectionCause.TAB_CLOSED,
+            detail=f"Participant voluntarily left date early in room {room_id} with partner {partner.display_name if partner else 'unknown'}",
+            disconnected_at=now,
+        )
+    else:
+        DisconnectionLog.objects.create(
+            event=participant.event,
+            participant=participant,
+            cause=DisconnectionCause.TAB_CLOSED,
+            detail=f"Participant voluntarily left date early in room {room_id or 'unknown'}",
+            disconnected_at=now,
+        )
+
+    return JsonResponse({"ok": True, "message": "Left date successfully."})
+

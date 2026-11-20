@@ -345,6 +345,112 @@
       margin-bottom: 1rem;
     }
     [hidden] { display: none !important; }
+
+    /* Leave Date button (Task 3) */
+    .leave-date-wrapper {
+      margin-top: 1rem;
+      text-align: center;
+    }
+    .leave-date-btn {
+      background: #dc2626;
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      padding: 0.65rem 1.4rem;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      box-shadow: 0 2px 8px rgba(220, 38, 38, 0.35);
+      transition: background 0.15s ease;
+    }
+    .leave-date-btn:hover { background: #b91c1c; }
+    .leave-date-modal-card {
+      width: min(100%, 420px);
+      background: var(--surface);
+      border: 1px solid #475569;
+      border-radius: 12px;
+      padding: 1.5rem;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+    .leave-date-modal-card h3 { margin: 0; font-size: 1.2rem; color: var(--text); }
+    .btn-cancel {
+      background: #475569;
+      color: #fff;
+      border: none;
+      padding: 0.55rem 1rem;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-danger-confirm {
+      background: #dc2626;
+      color: #fff;
+      border: none;
+      padding: 0.55rem 1rem;
+      border-radius: 6px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    /* Standby Main Room Banner (Task 9) */
+    .standby-mainroom-banner {
+      background: linear-gradient(135deg, #1e293b, #0f172a);
+      border: 2px solid #3b82f6;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.25rem;
+      text-align: center;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+    .standby-badge {
+      display: inline-block;
+      background: #2563eb;
+      color: #ffffff;
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.75rem;
+    }
+    .standby-title {
+      margin: 0 0 0.5rem 0;
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+    .standby-message {
+      font-size: 1.05rem;
+      font-weight: 700;
+      line-height: 1.6;
+      color: #93c5fd;
+      margin: 0.5rem auto 1rem;
+      max-width: 650px;
+      direction: rtl;
+    }
+    .standby-timer-box {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid #334155;
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+    }
+    .standby-timer-label {
+      color: var(--muted);
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .standby-timer-val {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: #facc15;
+      font-variant-numeric: tabular-nums;
+    }
     .interest-backdrop {
       position: fixed;
       inset: 0;
@@ -501,6 +607,22 @@
   <div id="partnerGoneBanner" class="partner-gone-banner" hidden></div>
   <div id="disconnectNotificationBanner" class="partner-gone-banner" style="background: #991b1b; color: white;" hidden></div>
 
+  <div id="mainRoomStandbyBanner" class="standby-mainroom-banner" hidden>
+    <div class="standby-header">
+      <span class="standby-badge">MAIN ROOM &bull; STANDBY</span>
+      <h2 class="standby-title" id="standbyTitle">You are in the Main Room for this round</h2>
+    </div>
+    <div class="standby-body">
+      <p id="standbyMessage" class="standby-message">
+        خیلی ببخشید، ولی چون تعداد خانم‌های امشب در این لحظه کمتر از تعداد آقایان است، شما برای این راوند در Main Room هستید تا در راوند بعدی تا 7 دقیقه دیگر به دیت بعدی ورود پیدا کنید.
+      </p>
+      <div class="standby-timer-box">
+        <span class="standby-timer-label">Next round starts in:</span>
+        <span id="standbyTimerCountdown" class="standby-timer-val">07:00</span>
+      </div>
+    </div>
+  </div>
+
   <div id="breakBanner" class="break-banner" hidden>
     <div class="break-banner-content">
       <div class="break-banner-title">You are in break time</div>
@@ -530,13 +652,32 @@
     </div>
   </div>
 
+  <div id="leaveDateWrapper" class="leave-date-wrapper" hidden>
+    <button id="leaveDateBtn" class="leave-date-btn" type="button">
+      Leave Date / خروج از مکالمه
+    </button>
+  </div>
+
+  <div id="leaveDateConfirmModal" class="intro-backdrop" hidden>
+    <div class="leave-date-modal-card">
+      <h3>Leave this date early?</h3>
+      <p style="color: var(--muted); margin: 12px 0 20px;">
+        Are you sure you want to end this conversation? You will return to the Main Room until the next round starts.
+      </p>
+      <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button id="cancelLeaveDateBtn" type="button" class="btn-cancel">Continue Date</button>
+        <button id="confirmLeaveDateBtn" type="button" class="btn-danger-confirm">Yes, Leave Date</button>
+      </div>
+    </div>
+  </div>
+
   <p id="statusFooter" class="status-footer">Connecting…</p>
 
   <div id="interestDialog" class="interest-backdrop" hidden>
     <section class="interest-dialog" role="dialog" aria-modal="true" aria-labelledby="interestTitle">
       <h2 id="interestTitle">Would you like to stay in touch with <span id="interestPartnerName"></span>?</h2>
       <p>
-        You have <span id="interestCountdownWrap" class="interest-countdown"><span id="interestCountdown">30</span> seconds</span>
+        You have <span id="interestCountdownWrap" class="interest-countdown"><span id="interestCountdown">60</span> seconds</span>
         to choose. If you both say yes, you will see each other's WhatsApp number here.
       </p>
       <p id="interestStatus" class="interest-status" aria-live="polite"></p>
@@ -585,6 +726,7 @@
     const controller = new CallRoomController({
       myParticipantId: null,
       warningThresholdSeconds: WARNING_THRESHOLD_SECONDS,
+      earlyExitMinMinutes: Number("{{ early_exit_min_minutes|default:3 }}"),
       mediaFallbackRoomId,
       forceMediaFallback,
       escalationTimeoutMs: mediaFallbackEscalationTimeoutMs,
@@ -619,6 +761,15 @@
         breakBanner: document.getElementById('breakBanner'),
         breakCountdown: document.getElementById('breakCountdown'),
         disconnectNotificationBanner: document.getElementById('disconnectNotificationBanner'),
+        leaveDateWrapper: document.getElementById('leaveDateWrapper'),
+        leaveDateBtn: document.getElementById('leaveDateBtn'),
+        leaveDateConfirmModal: document.getElementById('leaveDateConfirmModal'),
+        cancelLeaveDateBtn: document.getElementById('cancelLeaveDateBtn'),
+        confirmLeaveDateBtn: document.getElementById('confirmLeaveDateBtn'),
+        mainRoomStandbyBanner: document.getElementById('mainRoomStandbyBanner'),
+        standbyTitle: document.getElementById('standbyTitle'),
+        standbyMessage: document.getElementById('standbyMessage'),
+        standbyTimerCountdown: document.getElementById('standbyTimerCountdown'),
       },
       fetchIceServers: async () => {
         const res = await fetch('/api/ice-servers/');

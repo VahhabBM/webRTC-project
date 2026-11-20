@@ -326,6 +326,8 @@ def reconcile_live_round(event, round_obj, now=None) -> dict:
         result["new_pairs"] = new_pairs
 
         unmatched = [p for p in participant_rows if str(p.pk) not in occupied]
+        total_males = sum(1 for p in participant_rows if _gender(p.gender) == "Male")
+        total_females = sum(1 for p in participant_rows if _gender(p.gender) == "Female")
         for participant in unmatched:
             pid = str(participant.pk)
             has_opposite = (
@@ -339,6 +341,10 @@ def reconcile_live_round(event, round_obj, now=None) -> dict:
                 reason = "partner_left"
             elif reservations.get(pid, 0) >= _cap(locked_event, participant):
                 reason = "limit_reached"
+            elif _gender(participant.gender) == "Male" and total_females < total_males:
+                reason = "standby_fewer_women"
+            elif _gender(participant.gender) == "Female" and total_males < total_females:
+                reason = "standby_fewer_men"
             elif not has_opposite:
                 reason = "waiting_for_partner"
             else:

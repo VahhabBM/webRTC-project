@@ -283,6 +283,8 @@ export class CallRoomController {
     reconnectWindowMs =
       RECONNECT_WINDOW_MS,
 
+    earlyExitMinMinutes = 3,
+
     createWebSocket = null,
     now = null,
   }) {
@@ -477,6 +479,34 @@ export class CallRoomController {
 
     this._intentionalClose =
       false;
+
+    this.earlyExitMinMinutes =
+      Number(earlyExitMinMinutes) || 3;
+    this._leaveDateTimer = null;
+    this._autoReloadTimer = null;
+    this._standbyTimer = null;
+
+    if (this.elements.leaveDateBtn) {
+      this.elements.leaveDateBtn.addEventListener('click', () => {
+        if (this.elements.leaveDateConfirmModal) {
+          this.elements.leaveDateConfirmModal.hidden = false;
+        } else {
+          this.leaveDateEarly();
+        }
+      });
+    }
+    if (this.elements.cancelLeaveDateBtn) {
+      this.elements.cancelLeaveDateBtn.addEventListener('click', () => {
+        if (this.elements.leaveDateConfirmModal) {
+          this.elements.leaveDateConfirmModal.hidden = true;
+        }
+      });
+    }
+    if (this.elements.confirmLeaveDateBtn) {
+      this.elements.confirmLeaveDateBtn.addEventListener('click', () => {
+        this.leaveDateEarly();
+      });
+    }
   }
 
   get transport() {
@@ -636,6 +666,9 @@ export class CallRoomController {
       }
 
       this._clearReconnect();
+      this._clearEarlyExitTimer();
+      this._clearStandbyCountdown();
+      this._clearAutoReload();
 
       if (this.elements.disconnectNotificationBanner) {
         this.elements.disconnectNotificationBanner.hidden = true;
@@ -788,6 +821,9 @@ export class CallRoomController {
     this._unbindBeforeUnloadListener();
 
     this._clearReconnect();
+    this._clearEarlyExitTimer();
+    this._clearStandbyCountdown();
+    this._clearAutoReload();
 
     this._reconnectGaveUp =
       false;
@@ -1048,6 +1084,31 @@ export class CallRoomController {
   _onServerWaiting(payload) {
     if (this._sessionInactive || this.phase === CallRoomPhase.EVENT_ENDED) return;
     const reason = String(payload.reason || "waiting_for_partner");
+
+    if (reason === "standby_fewer_women" || reason === "standby_fewer_men") {
+      if (this.elements.mainRoomStandbyBanner) {
+        if (this.elements.standbyTitle) {
+          this.elements.standbyTitle.textContent = "You are in the Main Room for this round";
+        }
+        if (this.elements.standbyMessage) {
+          if (reason === "standby_fewer_women") {
+            this.elements.standbyMessage.innerHTML = "خیلی ببخشید، ولی چون تعداد خانم‌های امشب در این لحظه کمتر از تعداد آقایان است، شما برای این راوند در Main Room هستید تا در راوند بعدی تا 7 دقیقه دیگر به دیت بعدی ورود پیدا کنید.";
+          } else {
+            this.elements.standbyMessage.innerHTML = "خیلی ببخشید، ولی چون تعداد آقایان امشب در این لحظه کمتر از تعداد خانم‌ها است، شما برای این راوند در Main Room هستید تا در راوند بعدی تا 7 دقیقه دیگر به دیت بعدی ورود پیدا کنید.";
+          }
+        }
+        this.elements.mainRoomStandbyBanner.hidden = false;
+        this._startStandbyCountdown(payload.remaining_seconds || 420);
+      }
+      this._stopTimer();
+      this.roundEndTs = null;
+      this._renderTimer("--:--", TimerVisualState.WAITING);
+      this._setPhase(CallRoomPhase.IDLE);
+      return;
+    } else {
+      this._clearStandbyCountdown();
+    }
+
     const message = reason === "limit_reached"
       ? "You’ve completed your available rounds. Thank you for taking part."
       : "Waiting for your next partner. You’ll be connected automatically when someone is available.";
@@ -1349,6 +1410,7 @@ export class CallRoomController {
       await this.negotiator.open();
     }
 
+    this._startEarlyExitTimer();
     this._tickTimer();
   }
 
@@ -1369,6 +1431,7 @@ export class CallRoomController {
   }
 
   async _onRoundEnd(payload) {
+    this._clearEarlyExitTimer();
     this.roundNumber =
       Number(
         payload.round_number ??
@@ -1719,6 +1782,9 @@ export class CallRoomController {
     this._unbindBeforeUnloadListener();
 
     this._clearReconnect();
+    this._clearEarlyExitTimer();
+    this._clearStandbyCountdown();
+    this._clearAutoReload();
 
     this._wsGeneration += 1;
 
@@ -1824,6 +1890,9 @@ export class CallRoomController {
     this._clearPartnerGone();
     this._clearPermanentIceFailureTimer();
     this._clearReconnect();
+    this._clearEarlyExitTimer();
+    this._clearStandbyCountdown();
+    this._clearAutoReload();
 
     this._unbindOnlineListener();
     this._unbindBeforeUnloadListener();
@@ -3053,6 +3122,9 @@ export class CallRoomController {
     }
 
     this._clearReconnect();
+    this._clearEarlyExitTimer();
+    this._clearStandbyCountdown();
+    this._clearAutoReload();
 
     const now =
       this._now();
@@ -3148,6 +3220,8 @@ export class CallRoomController {
       this.elements.connectionBadge.dataset.quality =
         "failed";
     }
+
+    this._startAutoReload(5);
   }
 
   _showReconnecting() {
@@ -3237,6 +3311,9 @@ export class CallRoomController {
           this._now();
 
         this._clearReconnect();
+      this._clearEarlyExitTimer();
+      this._clearStandbyCountdown();
+      this._clearAutoReload();
 
         this.connect();
       };
@@ -3345,6 +3422,170 @@ export class CallRoomController {
 
       this._reconnectTimer =
         null;
+    }
+  }
+
+  _startAutoReload(seconds = 5) {
+    if (this._autoReloadTimer) {
+      clearInterval(this._autoReloadTimer);
+      this._autoReloadTimer = null;
+    }
+    let remaining = Number(seconds) || 5;
+    const renderBanner = () => {
+      if (this.elements.disconnectNotificationBanner) {
+        this.elements.disconnectNotificationBanner.innerHTML = `
+          <span>Connection dropped. Reconnecting automatically in <strong>${remaining}s</strong>...</span>
+          <button type="button" id="meetakkRefreshNowBtn" style="margin-left: 14px; padding: 4px 12px; background: #fff; color: #b91c1c; font-weight: 700; border: 1px solid #b91c1c; border-radius: 4px; cursor: pointer;">Refresh Now</button>
+        `;
+        this.elements.disconnectNotificationBanner.hidden = false;
+        const btn = this.elements.disconnectNotificationBanner.querySelector('#meetakkRefreshNowBtn');
+        if (btn) {
+          btn.onclick = () => {
+            if (typeof window !== "undefined" && window.location) {
+              window.location.reload();
+            }
+          };
+        }
+      }
+    };
+    renderBanner();
+    this._autoReloadTimer = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(this._autoReloadTimer);
+        this._autoReloadTimer = null;
+        if (typeof window !== "undefined" && window.location) {
+          window.location.reload();
+        }
+      } else {
+        renderBanner();
+      }
+    }, 1000);
+  }
+
+  _clearAutoReload() {
+    if (this._autoReloadTimer) {
+      clearInterval(this._autoReloadTimer);
+      this._autoReloadTimer = null;
+    }
+  }
+
+  _startEarlyExitTimer() {
+    this._clearEarlyExitTimer();
+    const waitMs = Math.max(1, (this.earlyExitMinMinutes || 3)) * 60 * 1000;
+    this._leaveDateTimer = setTimeout(() => {
+      if (this.elements.leaveDateWrapper && this.phase === CallRoomPhase.IN_ROUND) {
+        this.elements.leaveDateWrapper.hidden = false;
+      }
+    }, waitMs);
+  }
+
+  _clearEarlyExitTimer() {
+    if (this._leaveDateTimer) {
+      clearTimeout(this._leaveDateTimer);
+      this._leaveDateTimer = null;
+    }
+    if (this.elements.leaveDateWrapper) {
+      this.elements.leaveDateWrapper.hidden = true;
+    }
+    if (this.elements.leaveDateConfirmModal) {
+      this.elements.leaveDateConfirmModal.hidden = true;
+    }
+  }
+
+  async leaveDateEarly() {
+    this._clearEarlyExitTimer();
+    const roomId = this.partner?.roomId || this.roomId;
+    const partnerName = this.partner?.displayName || "your partner";
+    const roundNum = Number(this.roundNumber) || 1;
+    const nowTs = this._now();
+    const durationSec = this.roundStartTs ? (nowTs - this.roundStartTs) / 1000 : 0;
+
+    if (roomId) {
+      try {
+        const csrfToken =
+          document.querySelector("[name=csrfmiddlewaretoken]")?.value ||
+          (document.cookie.match(/csrftoken=([^;]+)/)?.[1] || "");
+        fetch("/api/leave-date/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": csrfToken,
+          },
+          body: JSON.stringify({ room_id: roomId, reason: "early_exit" }),
+        }).catch(() => {});
+      } catch (e) {}
+    }
+
+    if (this.negotiator) {
+      try {
+        await this.negotiator.endRound?.();
+      } catch (e) {}
+    }
+    if (this.elements.remoteVideo) {
+      this.elements.remoteVideo.srcObject = null;
+    }
+    this._bindLocalPreview();
+    this.partner = null;
+    this._updatePartnerUI();
+
+    try {
+      sessionStorage.removeItem("meetakk_active_date");
+    } catch (e) {}
+
+    const minSec = (this.earlyExitMinMinutes || 3) * 60;
+    if (durationSec >= minSec && roomId) {
+      const promptId = `${roundNum}:${roomId}`;
+      if (!this._interestPrompts.has(promptId)) {
+        const prompt = {
+          round_number: roundNum,
+          room_id: roomId,
+          partner_display_name: partnerName,
+          server_ts: nowTs,
+          deadline_ts: nowTs + 60000,
+          own_response: null,
+          mutual: false,
+        };
+        this._interestPrompts.set(promptId, prompt);
+        this._renderInterestPrompt(promptId, prompt);
+        if (this.elements.interestTitle) {
+          this.elements.interestTitle.textContent = `You left your date with ${partnerName}. Would you like to stay in touch with them?`;
+        }
+      }
+    }
+
+    this._setPhase(CallRoomPhase.IDLE);
+    this._onServerWaiting({ reason: "waiting_for_partner" });
+  }
+
+  _startStandbyCountdown(totalSeconds = 420) {
+    this._clearStandbyCountdown();
+    let remaining = Number(totalSeconds) || 420;
+    const formatTime = (secs) => {
+      const m = Math.floor(secs / 60);
+      const s = Math.floor(secs % 60);
+      return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    };
+    if (this.elements.standbyTimerCountdown) {
+      this.elements.standbyTimerCountdown.textContent = formatTime(remaining);
+    }
+    this._standbyTimer = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        this._clearStandbyCountdown();
+      } else if (this.elements.standbyTimerCountdown) {
+        this.elements.standbyTimerCountdown.textContent = formatTime(remaining);
+      }
+    }, 1000);
+  }
+
+  _clearStandbyCountdown() {
+    if (this._standbyTimer) {
+      clearInterval(this._standbyTimer);
+      this._standbyTimer = null;
+    }
+    if (this.elements.mainRoomStandbyBanner) {
+      this.elements.mainRoomStandbyBanner.hidden = true;
     }
   }
 }

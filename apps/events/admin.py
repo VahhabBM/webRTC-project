@@ -226,6 +226,9 @@ class EventAdmin(admin.ModelAdmin):
         "unique_tags",
         "live_matching_enabled",
         "registration_paused",
+        "reminder_lead_time",
+        "reminder_audience",
+        "early_exit_min_minutes",
     )
     readonly_fields = ("registration_paused",)
     actions = ["send_selected_matches_summary_emails"]
@@ -458,6 +461,91 @@ class EventAdmin(admin.ModelAdmin):
         )
         overview_statuses = (*live_statuses, *upcoming_statuses)
 
+        confirmed_qs = Participant.objects.filter(
+            event__status__in=overview_statuses,
+            registration_status=RegistrationStatus.CONFIRMED,
+        )
+        total_confirmed = confirmed_qs.count()
+        male_confirmed = confirmed_qs.filter(gender__iexact="male").count()
+        female_confirmed = confirmed_qs.filter(gender__iexact="female").count()
+        other_confirmed = total_confirmed - (male_confirmed + female_confirmed)
+
+        attended_qs = confirmed_qs.filter(joined_at__isnull=False)
+        total_attended = attended_qs.count()
+        male_attended = attended_qs.filter(gender__iexact="male").count()
+        female_attended = attended_qs.filter(gender__iexact="female").count()
+        other_attended = total_attended - (male_attended + female_attended)
+
+        total_noshow = max(0, total_confirmed - total_attended)
+        male_noshow = max(0, male_confirmed - male_attended)
+        female_noshow = max(0, female_confirmed - female_attended)
+        other_noshow = max(0, other_confirmed - other_attended)
+
+        paired_pids = set(
+            Pair.objects.values_list("participant_a_id", flat=True)
+        ) | set(
+            Pair.objects.values_list("participant_b_id", flat=True)
+        )
+        total_paired = confirmed_qs.filter(id__in=paired_pids).count()
+        male_paired = confirmed_qs.filter(id__in=paired_pids, gender__iexact="male").count()
+        female_paired = confirmed_qs.filter(id__in=paired_pids, gender__iexact="female").count()
+
+        active_online_statuses = (
+            ParticipantStatus.READY,
+            ParticipantStatus.ACTIVE,
+            ParticipantStatus.WAITING,
+        )
+        online_qs = confirmed_qs.filter(status__in=active_online_statuses)
+        total_online = online_qs.count()
+        male_online = online_qs.filter(gender__iexact="male").count()
+        female_online = online_qs.filter(gender__iexact="female").count()
+
+        attendance_metrics = {
+            "total": {
+                "confirmed": total_confirmed,
+                "attended": total_attended,
+                "noshow": total_noshow,
+                "attendance_rate": f"{(total_attended * 100 / total_confirmed):.1f}%" if total_confirmed else "0.0%",
+                "paired": total_paired,
+                "online": total_online,
+            },
+            "male": {
+                "confirmed": male_confirmed,
+                "attended": male_attended,
+                "noshow": male_noshow,
+                "attendance_rate": f"{(male_attended * 100 / male_confirmed):.1f}%" if male_confirmed else "0.0%",
+                "paired": male_paired,
+                "online": male_online,
+            },
+            "female": {
+                "confirmed": female_confirmed,
+                "attended": female_attended,
+                "noshow": female_noshow,
+                "attendance_rate": f"{(female_attended * 100 / female_confirmed):.1f}%" if female_confirmed else "0.0%",
+                "paired": female_paired,
+                "online": female_online,
+            },
+            "other": {
+                "confirmed": other_confirmed,
+                "attended": other_attended,
+                "noshow": other_noshow,
+                "attendance_rate": f"{(other_attended * 100 / other_confirmed):.1f}%" if other_confirmed else "0.0%",
+                "paired": max(0, total_paired - (male_paired + female_paired)),
+                "online": max(0, total_online - (male_online + female_online)),
+            },
+        }
+
+        for ev in active_events:
+            ev_conf = ev.participants.filter(registration_status=RegistrationStatus.CONFIRMED)
+            ev.m_conf = ev_conf.filter(gender__iexact="male").count()
+            ev.f_conf = ev_conf.filter(gender__iexact="female").count()
+            ev.m_att = ev_conf.filter(joined_at__isnull=False, gender__iexact="male").count()
+            ev.f_att = ev_conf.filter(joined_at__isnull=False, gender__iexact="female").count()
+            ev.tot_att = ev.m_att + ev.f_att
+            ev.m_onl = ev_conf.filter(status__in=active_online_statuses, gender__iexact="male").count()
+            ev.f_onl = ev_conf.filter(status__in=active_online_statuses, gender__iexact="female").count()
+            ev.tot_onl = ev.m_onl + ev.f_onl
+
         context = {
             **self.admin_site.each_context(request),
             "title": "Operations Dashboard",
@@ -466,6 +554,7 @@ class EventAdmin(admin.ModelAdmin):
             "active_events": active_events,
             "upcoming_events": upcoming_events,
             "recent_events": recent_events,
+            "attendance_metrics": attendance_metrics,
             "active_count": Event.objects.filter(status__in=live_statuses).count(),
             "upcoming_count": Event.objects.filter(
                 status__in=upcoming_statuses, start_time__gte=now
@@ -575,6 +664,44 @@ class EventAdmin(admin.ModelAdmin):
                 "participant_a", "participant_b"
             ).all()
 
+        ev_conf = event.participants.filter(registration_status=RegistrationStatus.CONFIRMED)
+        tot_c = ev_conf.count()
+        m_c = ev_conf.filter(gender__iexact="male").count()
+        f_c = ev_conf.filter(gender__iexact="female").count()
+
+        ev_att = ev_conf.filter(joined_at__isnull=False)
+        tot_a = ev_att.count()
+        m_a = ev_att.filter(gender__iexact="male").count()
+        f_a = ev_att.filter(gender__iexact="female").count()
+
+        active_online_statuses = (
+            ParticipantStatus.READY,
+            ParticipantStatus.ACTIVE,
+            ParticipantStatus.WAITING,
+        )
+        ev_onl = ev_conf.filter(status__in=active_online_statuses)
+        tot_o = ev_onl.count()
+        m_o = ev_onl.filter(gender__iexact="male").count()
+        f_o = ev_onl.filter(gender__iexact="female").count()
+
+        paired_ids = set(
+            Pair.objects.filter(round__event=event).values_list("participant_a_id", flat=True)
+        ) | set(
+            Pair.objects.filter(round__event=event).values_list("participant_b_id", flat=True)
+        )
+        tot_p = ev_conf.filter(id__in=paired_ids).count()
+        m_p = ev_conf.filter(id__in=paired_ids, gender__iexact="male").count()
+        f_p = ev_conf.filter(id__in=paired_ids, gender__iexact="female").count()
+
+        event_attendance = {
+            "total_confirmed": tot_c, "male_confirmed": m_c, "female_confirmed": f_c,
+            "total_attended": tot_a, "male_attended": m_a, "female_attended": f_a,
+            "attendance_rate": f"{(tot_a * 100 / tot_c):.1f}%" if tot_c else "0.0%",
+            "total_noshow": max(0, tot_c - tot_a), "male_noshow": max(0, m_c - m_a), "female_noshow": max(0, f_c - f_a),
+            "total_online": tot_o, "male_online": m_o, "female_online": f_o,
+            "total_paired": tot_p, "male_paired": m_p, "female_paired": f_p,
+        }
+
         context = {
             **self.admin_site.each_context(request),
             "title": f"Live Monitoring \u2013 {event.name}",
@@ -584,6 +711,7 @@ class EventAdmin(admin.ModelAdmin):
             "active_round": active_round,
             "action_logs": action_logs,
             "pairs": pairs,
+            "event_attendance": event_attendance,
             "disconnected_participants": disconnected_participants,
             "search_query": search_query,
             "search_results": search_results,
@@ -1037,6 +1165,7 @@ class ParticipantAdmin(admin.ModelAdmin):
         "join_token_expires_at",
         "registration_receipt_pending",
         "registration_receipt_sent_at",
+        "reminder_email_sent_at",
         "matches_email_sent_at",
         "created_at",
         "updated_at",

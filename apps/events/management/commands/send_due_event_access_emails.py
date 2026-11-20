@@ -10,6 +10,7 @@ from django.utils import timezone
 from apps.events.auth import scheduled_event_end
 from apps.events.email_notifications import (
     EVENT_ACCESS_LEAD_HOURS,
+    send_due_event_reminders_for_event,
     send_event_access_email_once,
     send_registration_receipt_once,
 )
@@ -76,6 +77,7 @@ class Command(BaseCommand):
         ).order_by("start_time")
 
         sent = 0
+        reminders_sent = 0
         failed = 0
         receipt_sent = 0
         pending_receipts = (
@@ -101,6 +103,14 @@ class Command(BaseCommand):
         for event in due_events:
             if scheduled_event_end(event) <= now:
                 continue
+
+            try:
+                reminders_sent += send_due_event_reminders_for_event(event, now=now)
+            except Exception as exc:
+                self.stderr.write(
+                    f"Failed sending event reminders for event {event.pk}: {exc}"
+                )
+
             participant_ids = list(
                 Participant.objects.filter(
                     event=event,
@@ -122,10 +132,10 @@ class Command(BaseCommand):
                         f"{participant_id}: {exc}"
                     )
 
-        if sent or receipt_sent or failed or not self.loop_mode:
+        if sent or receipt_sent or reminders_sent or failed or not self.loop_mode:
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"Sent {sent} event access email(s), {receipt_sent} registration receipt(s); failed {failed}."
+                    f"Sent {sent} event access email(s), {receipt_sent} registration receipt(s), {reminders_sent} reminder(s); failed {failed}."
                 )
             )
         if failed:

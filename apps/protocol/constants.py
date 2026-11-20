@@ -33,7 +33,14 @@ DEFAULT_RATE_LIMIT_MESSAGES_PER_MINUTE: int = 60
 # Event model permits up to eight rounds; protocol bounds must match it.
 MAX_EVENT_ROUNDS: int = 8
 WAITING_REASONS: frozenset[str] = frozenset(
-    {"waiting_for_partner", "limit_reached", "no_compatible_partner", "partner_left"}
+    {
+        "waiting_for_partner",
+        "limit_reached",
+        "no_compatible_partner",
+        "partner_left",
+        "standby_fewer_women",
+        "standby_fewer_men",
+    }
 )
 
 # RFC 6455 standard close codes plus private-use application codes.

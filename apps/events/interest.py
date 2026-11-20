@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from apps.events.models import Pair, PairInterest
 
-INTEREST_RESPONSE_WINDOW = timedelta(seconds=30)
+INTEREST_RESPONSE_WINDOW = timedelta(seconds=60)
 
 
 class PairInterestError(Exception):
