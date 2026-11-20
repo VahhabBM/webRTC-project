@@ -205,3 +205,35 @@ class TestSprint2Features:
         assert metrics["total"]["confirmed"] == 3
         assert metrics["total"]["attended"] == 2
         assert metrics["total"]["noshow"] == 1
+
+    def test_confirmation_screen_instant_link_message(self):
+        """Confirmation screen states the personal link is sent now, with no 9h reminder mention."""
+        client = Client()
+        response = client.get("/registration/check-email/?email=user@example.com")
+        assert response.status_code == 200
+        content = response.content.decode("utf-8")
+        assert "Your personal event access link has been sent to your email." in content
+        assert "9 hours" not in content
+        assert "will be emailed" not in content
+
+    def test_registration_stats_sorted_by_percentage_descending(self, test_event):
+        """Registration stats by country/gender are sorted descending by count/percentage."""
+        Participant.objects.create(event=test_event, display_name="C1", country="CA", gender="Female")
+        Participant.objects.create(event=test_event, display_name="F1", country="FR", gender="Male")
+        Participant.objects.create(event=test_event, display_name="F2", country="FR", gender="Male")
+        for i in range(5):
+            Participant.objects.create(event=test_event, display_name=f"U{i}", country="GB", gender="Female")
+
+        user = User.objects.create_superuser("statadmin", "statadmin@example.com", "pass")
+        client = Client()
+        client.force_login(user)
+
+        response = client.get(f"/admin/events/event/{test_event.pk}/registration-stats/")
+        assert response.status_code == 200
+        country_rows = response.context["country_rows"]
+        assert country_rows[0]["count"] == 5
+        assert country_rows[0]["label"] == "United Kingdom"
+        assert country_rows[1]["count"] == 2
+        assert country_rows[1]["label"] == "France"
+        assert country_rows[2]["count"] == 1
+        assert country_rows[2]["label"] == "Canada"

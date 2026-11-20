@@ -740,8 +740,13 @@ class EventAdmin(admin.ModelAdmin):
 
         def rows_from_counts(counts, label_for):
             result = []
-            for value, count in sorted(counts.items(), key=lambda item: item[0] or ""):
+            items = []
+            for value, count in counts.items():
                 label = label_for(value)
+                items.append((label, count))
+            # Sort by count descending (highest percentage first); tie-break by label alphabetically
+            items.sort(key=lambda item: (-item[1], item[0]))
+            for label, count in items:
                 result.append(
                     {
                         "label": label,

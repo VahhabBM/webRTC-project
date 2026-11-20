@@ -342,21 +342,10 @@ def verify_email_view(request, token):
             "Your place is not confirmed unless you accept an invitation."
         )
     else:
-        if access_link_email_sent:
-            verification_message = (
-                "Your email is verified and your registration is complete. "
-                "Your personal event access link has been sent in a separate email."
-            )
-        elif access_link_email_scheduled:
-            verification_message = (
-                "Your email is verified and your registration is complete. "
-                "Your personal event access link will be emailed 9 hours before the event starts."
-            )
-        else:
-            verification_message = (
-                "Your email is verified and your registration is complete. "
-                "Please contact the event organizer for your event access details."
-            )
+        verification_message = (
+            "Your email is verified and your registration is complete. "
+            "Your personal event access link has been sent to your email."
+        )
 
     if is_json_request:
         return JsonResponse(
@@ -417,7 +406,7 @@ def check_email_view(request):
             "completion_message": (
                 "We will email you if a place becomes available."
                 if request.GET.get("status") == RegistrationStatus.WAITLISTED
-                else "Your personal event access link will be emailed 9 hours before the event."
+                else "Your personal event access link has been sent to your email."
             ),
         },
         status=200,
