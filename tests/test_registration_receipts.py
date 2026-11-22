@@ -25,7 +25,7 @@ def _register(client, event):
                 "email": "person@example.com",
                 "email_confirmation": "person@example.com",
                 "age": 29,
-                "country": "NZ",
+                "country": "GB",
                 "tag_ids": [],
                 "consents": {
                     key: True

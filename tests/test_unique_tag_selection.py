@@ -74,7 +74,7 @@ def _registration_payload(**overrides) -> dict:
         "email": "testuser@example.com",
         "email_confirmation": "testuser@example.com",
         "age": 25,
-        "country": "NZ",
+        "country": "GB",
         "tag_ids": [],
         "consents": {
             "age_confirmation": True,
@@ -198,7 +198,7 @@ def test_http_endpoint_rejects_multiple_tags_when_unique_tags_enabled(client: Cl
             "email": "carol@example.com",
             "email_confirmation": "carol@example.com",
             "age": 25,
-            "country": "NZ",
+            "country": "GB",
             "tag_ids": [str(tag1.id), str(tag2.id)],
             "consents": {
                 "age_confirmation": True,
@@ -231,7 +231,7 @@ def test_http_endpoint_accepts_single_tag_when_unique_tags_enabled(client: Clien
             "email": "dave@example.com",
             "email_confirmation": "dave@example.com",
             "age": 25,
-            "country": "NZ",
+            "country": "GB",
             "tag_ids": [str(tag.id)],
             "consents": {
                 "age_confirmation": True,
@@ -265,7 +265,7 @@ def test_http_endpoint_still_allows_multiple_tags_when_unique_tags_disabled(
             "email": "eve@example.com",
             "email_confirmation": "eve@example.com",
             "age": 25,
-            "country": "NZ",
+            "country": "GB",
             "tag_ids": [str(tag1.id), str(tag2.id)],
             "consents": {
                 "age_confirmation": True,

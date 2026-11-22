@@ -59,7 +59,9 @@ def build_match_input(event: Event) -> MatchInput:
                     gender=p.gender,
                     want_to_date=p.want_to_date,
                     max_dates=(
-                        event.female_date_limit
+                        event.max_dates_per_participant
+                        if getattr(event, "max_dates_per_participant", None) is not None
+                        else event.female_date_limit
                         if p.gender == "Female"
                         else event.male_date_limit
                         if p.gender == "Male"

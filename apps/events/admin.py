@@ -97,6 +97,15 @@ class EventAdminForm(forms.ModelForm):
         model = Event
         fields = "__all__"
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if "reminder_audience" in self.fields:
+            self.fields["reminder_audience"].required = False
+        if "early_exit_min_minutes" in self.fields:
+            self.fields["early_exit_min_minutes"].required = False
+        if "max_dates_per_participant" in self.fields:
+            self.fields["max_dates_per_participant"].required = False
+
     def clean(self):
         cleaned = super().clean()
         # Only validate when the instance already exists in the DB
@@ -219,6 +228,7 @@ class EventAdmin(admin.ModelAdmin):
         "male_date_limit",
         "female_date_limit",
         "other_date_limit",
+        "max_dates_per_participant",
         "male_registration_cap",
         "female_registration_cap",
         "intro_video_url",
@@ -611,7 +621,7 @@ class EventAdmin(admin.ModelAdmin):
                         )
                         messages.success(
                             request,
-                            f"یادداشت رخداد برای {participant.display_name} ذخیره شد.",
+                            f"Incident note for {participant.display_name} saved.",
                         )
                 elif action == "pause":
                     service.pause()

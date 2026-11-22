@@ -87,6 +87,12 @@ class Event(models.Model):
     male_date_limit = models.PositiveSmallIntegerField(default=4)
     female_date_limit = models.PositiveSmallIntegerField(default=8)
     other_date_limit = models.PositiveSmallIntegerField(default=5)
+    max_dates_per_participant = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="Maximum dates any participant can attend in this event (across all genders). If set, this caps everyone regardless of gender.",
+    )
     male_registration_cap = models.PositiveIntegerField(
         null=True,
         blank=True,
@@ -136,10 +142,12 @@ class Event(models.Model):
         max_length=10,
         choices=[("female", "Females Only"), ("male", "Males Only"), ("all", "All Participants")],
         default="female",
+        blank=True,
         help_text="Audience for reminder emails.",
     )
     early_exit_min_minutes = models.PositiveSmallIntegerField(
         default=3,
+        blank=True,
         help_text="Minutes into a date before Leave Date button appears.",
     )
 

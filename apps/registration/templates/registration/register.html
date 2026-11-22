@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Speed Dating Registration</title>
+    <title>{% if event and event.name %}{{ event.name }} - Registration{% elif event_title %}{{ event_title }} - Registration{% else %}Speed Dating Registration{% endif %}</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -368,7 +368,7 @@
 <body>
 
 <div class="card">
-    <h1>SPEED DATING REGISTRATION</h1>
+    <h1>{% if event and event.name %}{{ event.name }}{% elif event_title %}{{ event_title }}{% else %}SPEED DATING REGISTRATION{% endif %}</h1>
     <div class="event-title-header">Meetakk Matching Form</div>
     <p class="subtitle">Fill out the form below to register.</p>
     {% if registration_paused %}

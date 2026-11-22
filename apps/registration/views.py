@@ -13,7 +13,7 @@ from django.views import View
 from django.views.decorators.http import require_http_methods
 
 from apps.events.auth import event_end
-from apps.events.countries import COUNTRY_CHOICES
+from apps.events.countries import ALLOWED_COUNTRY_CHOICES, COUNTRY_CHOICES
 from apps.events.email_notifications import (
     send_event_access_email_once,
     send_registration_receipt_once,
@@ -612,7 +612,7 @@ class RegisterView(View):
                 "event_title": _registration_event_title(event),
                 "event_id": event_id,
                 "tags": tags,
-                "country_choices": COUNTRY_CHOICES,
+                "country_choices": ALLOWED_COUNTRY_CHOICES,
                 "registration_paused": bool(event and event.registration_paused),
                 "legal_url": (
                     reverse("registration:legal-event", kwargs={"event_id": event_id})

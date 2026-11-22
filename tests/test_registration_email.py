@@ -28,7 +28,7 @@ class RegistrationEmailTestCase(TestCase):
             "email": "test@example.com",
             "email_confirmation": "test@example.com",
             "age": 29,
-            "country": "NZ",
+            "country": "GB",
             "tag_ids": [str(self.tag.id)],
             "consents": {
                 "age_confirmation": True,

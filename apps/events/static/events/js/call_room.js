@@ -1092,9 +1092,9 @@ export class CallRoomController {
         }
         if (this.elements.standbyMessage) {
           if (reason === "standby_fewer_women") {
-            this.elements.standbyMessage.innerHTML = "خیلی ببخشید، ولی چون تعداد خانم‌های امشب در این لحظه کمتر از تعداد آقایان است، شما برای این راوند در Main Room هستید تا در راوند بعدی تا 7 دقیقه دیگر به دیت بعدی ورود پیدا کنید.";
+            this.elements.standbyMessage.innerHTML = "We apologize, but because there are fewer women than men active in this round, you are in the Main Room for this round until your next date starts in 7 minutes.";
           } else {
-            this.elements.standbyMessage.innerHTML = "خیلی ببخشید، ولی چون تعداد آقایان امشب در این لحظه کمتر از تعداد خانم‌ها است، شما برای این راوند در Main Room هستید تا در راوند بعدی تا 7 دقیقه دیگر به دیت بعدی ورود پیدا کنید.";
+            this.elements.standbyMessage.innerHTML = "We apologize, but because there are fewer men than women active in this round, you are in the Main Room for this round until your next date starts in 7 minutes.";
           }
         }
         this.elements.mainRoomStandbyBanner.hidden = false;
@@ -1110,9 +1110,9 @@ export class CallRoomController {
     }
 
     const message = reason === "limit_reached"
-      ? "You’ve completed your available rounds. Thank you for taking part."
-      : "Waiting for your next partner. You’ll be connected automatically when someone is available.";
-    if (reason === "partner_left" && this.negotiator && this.partner) {
+      ? (payload?.message || "You have completed your dates for tonight. You will not receive any more dates. We hope you have a wonderful night!")
+      : (payload?.message || "Waiting for your next partner. You’ll be connected automatically when someone is available.");
+    if ((reason === "partner_left" || reason === "limit_reached") && this.negotiator && this.partner) {
       void this.negotiator.endRound?.();
       this.partner = null;
       this._updatePartnerUI();

@@ -967,7 +967,7 @@ export class PerfectNegotiator {
 }
 
 /**
- * استخراج قطعی نوع کاندید برنده (Direct vs Relay) و زمان سپری‌شده (T-37).
+ * Authoritatively extract winning candidate pair type (Direct vs Relay) and elapsed time (T-37).
  */
 export async function extractConnectionTelemetry(pc, connectionStartTimeMs, statsOverride = null) {
   if (!pc || (!statsOverride && typeof pc.getStats !== "function")) return null;
@@ -1014,7 +1014,7 @@ export async function extractConnectionTelemetry(pc, connectionStartTimeMs, stat
 }
 
 /**
- * ارسال گزارش آمار اتصال به سرور بدون نشت اطلاعات یا توکن (T-37).
+ * Send connection telemetry report to server without leaking tokens or private data (T-37).
  */
 export async function reportConnectionTelemetry(pc, roomId, connectionStartTimeMs) {
   if (!pc || !roomId) return;

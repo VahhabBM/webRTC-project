@@ -15,7 +15,7 @@ from apps.protocol.schemas import build_server_waiting
 
 WAIT_MESSAGES = {
     "partner_left": "Your partner is no longer available. We are looking for another compatible person who is online.",
-    "limit_reached": "You have reached your event date limit. You can remain here until the event ends.",
+    "limit_reached": "You have completed your dates for tonight. You will not receive any more dates. We hope you have a wonderful night!",
     "no_compatible_partner": "No new compatible partner is available right now. We will check again automatically.",
     "waiting_for_partner": "You are ready. We are waiting for another compatible person to be online. We will check again automatically.",
     "standby_fewer_women": "You are in the Main Room for this round because there are fewer women than men active in this round. You will automatically enter your next date in approximately 7 minutes.",

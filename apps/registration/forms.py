@@ -4,7 +4,7 @@ from uuid import UUID
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 
-from apps.events.countries import COUNTRY_CODES
+from apps.events.countries import ALLOWED_COUNTRY_CODES, COUNTRY_CODES
 from apps.registration.legal_documents import REQUIRED_CONSENTS
 
 
@@ -104,8 +104,13 @@ def validate_registration_data(event, data=None):
     if not isinstance(country, str):
         raise RegistrationError("Choose a valid country.", "invalid_country")
     country = country.strip().upper()
-    if not country or country not in COUNTRY_CODES:
+    if not country:
         raise RegistrationError("Choose a valid country.", "invalid_country")
+    if country not in ALLOWED_COUNTRY_CODES:
+        raise RegistrationError(
+            "This country is not currently on our service list. Please check back within the next 3 months.",
+            "country_not_serviced",
+        )
     city = data.get("city", "")
     if not isinstance(city, str):
         raise RegistrationError("Enter a valid city.", "invalid_city")

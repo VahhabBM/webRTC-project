@@ -85,8 +85,8 @@ class TestWantToDateAndAgePreferences:
         data = {
             "display_name": "Sam",
             "age": 30,
-            "country": "NZ",
-            "city": "Auckland",
+            "country": "GB",
+            "city": "London",
             "gender": "Female",
             "want_to_date": ["Male"],
             "age_pref_min": "25",

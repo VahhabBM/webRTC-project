@@ -254,3 +254,13 @@ COUNTRY_CHOICES = (
 
 COUNTRY_NAMES = dict(COUNTRY_CHOICES)
 COUNTRY_CODES = frozenset(COUNTRY_NAMES)
+
+ALLOWED_REGISTRATION_COUNTRIES = ("GB", "IE", "ES", "DE", "NL")
+ALLOWED_COUNTRY_CHOICES = (
+    ("GB", "United Kingdom"),
+    ("IE", "Ireland"),
+    ("ES", "Spain"),
+    ("DE", "Germany"),
+    ("NL", "Netherlands"),
+)
+ALLOWED_COUNTRY_CODES = frozenset(ALLOWED_REGISTRATION_COUNTRIES)

@@ -42,6 +42,8 @@ def _gender(value: str | None) -> str:
 
 
 def _cap(event, participant: Participant) -> int:
+    if getattr(event, "max_dates_per_participant", None) is not None:
+        return max(0, int(event.max_dates_per_participant))
     gender = _gender(participant.gender)
     if gender == "Male":
         return max(0, int(event.male_date_limit))
@@ -53,7 +55,10 @@ def _cap(event, participant: Participant) -> int:
 
 def _accepts(participant: Participant, partner: Participant) -> bool:
     preference = (participant.want_to_date or "Any").strip()
-    return preference == "Any" or preference == _gender(partner.gender)
+    prefs = [p.strip() for p in preference.split(",") if p.strip()]
+    if "Any" in prefs or "Any/Other" in prefs:
+        return True
+    return _gender(partner.gender) in prefs
 
 
 def _both_connected(pair: Pair) -> bool:
@@ -303,7 +308,9 @@ def reconcile_live_round(event, round_obj, now=None) -> dict:
                 graph.add_edge(left_id, right_id, weight=weight)
                 valid_edges.add((left_id, right_id))
 
-        has_time = round_obj.ends_at - current >= _CONNECT_TIMEOUT
+        round_duration = round_obj.ends_at - round_obj.starts_at
+        min_required_time = min(_CONNECT_TIMEOUT, max(timedelta(seconds=15), round_duration / 4))
+        has_time = round_obj.ends_at - current >= min_required_time
         new_pairs = []
         if has_time and valid_edges:
             matching = nx.max_weight_matching(graph, maxcardinality=True, weight="weight")
