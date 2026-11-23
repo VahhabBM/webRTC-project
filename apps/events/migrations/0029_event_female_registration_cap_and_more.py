@@ -4,40 +4,47 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('events', '0028_event_registration_paused'),
+        ("events", "0028_event_registration_paused"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='event',
-            name='female_registration_cap',
-            field=models.PositiveIntegerField(blank=True, help_text='Maximum female participants allowed to register (leave blank for unlimited).', null=True),
+            model_name="event",
+            name="female_registration_cap",
+            field=models.PositiveIntegerField(
+                blank=True,
+                help_text="Maximum female participants allowed to register (leave blank for unlimited).",
+                null=True,
+            ),
         ),
         migrations.AddField(
-            model_name='event',
-            name='male_registration_cap',
-            field=models.PositiveIntegerField(blank=True, help_text='Maximum male participants allowed to register (leave blank for unlimited).', null=True),
+            model_name="event",
+            name="male_registration_cap",
+            field=models.PositiveIntegerField(
+                blank=True,
+                help_text="Maximum male participants allowed to register (leave blank for unlimited).",
+                null=True,
+            ),
         ),
         migrations.AddField(
-            model_name='participant',
-            name='age_pref_max',
+            model_name="participant",
+            name="age_pref_max",
             field=models.PositiveSmallIntegerField(blank=True, null=True),
         ),
         migrations.AddField(
-            model_name='participant',
-            name='age_pref_min',
+            model_name="participant",
+            name="age_pref_min",
             field=models.PositiveSmallIntegerField(blank=True, null=True),
         ),
         migrations.AddField(
-            model_name='participant',
-            name='matches_email_sent_at',
+            model_name="participant",
+            name="matches_email_sent_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.AlterField(
-            model_name='participant',
-            name='want_to_date',
-            field=models.CharField(default='Any', max_length=120),
+            model_name="participant",
+            name="want_to_date",
+            field=models.CharField(default="Any", max_length=120),
         ),
     ]

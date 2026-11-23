@@ -140,7 +140,11 @@ class Event(models.Model):
     )
     reminder_audience = models.CharField(
         max_length=10,
-        choices=[("female", "Females Only"), ("male", "Males Only"), ("all", "All Participants")],
+        choices=[
+            ("female", "Females Only"),
+            ("male", "Males Only"),
+            ("all", "All Participants"),
+        ],
         default="female",
         blank=True,
         help_text="Audience for reminder emails.",
@@ -480,7 +484,9 @@ class PairInterest(models.Model):
 class WaitlistInvitation(models.Model):
     """Single-use, auditable invite from the verified female waitlist."""
 
-    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="waitlist_invitations")
+    event = models.ForeignKey(
+        Event, on_delete=models.CASCADE, related_name="waitlist_invitations"
+    )
     participant = models.ForeignKey(
         Participant, on_delete=models.CASCADE, related_name="waitlist_invitations"
     )

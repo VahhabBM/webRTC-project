@@ -47,11 +47,15 @@ class RegistrationEmailTestCase(TestCase):
         )
         self.assertEqual(response.status_code, 201)
 
-        participant = Participant.objects.get(email="test@example.com", event=self.event)
+        participant = Participant.objects.get(
+            email="test@example.com", event=self.event
+        )
         self.assertEqual(participant.registration_status, RegistrationStatus.CONFIRMED)
         self.assertIsNone(participant.email_verified_at)
         self.assertIsNone(participant.joined_at)
-        self.assertFalse(EmailVerificationToken.objects.filter(participant=participant).exists())
+        self.assertFalse(
+            EmailVerificationToken.objects.filter(participant=participant).exists()
+        )
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("Registration complete", mail.outbox[0].subject)
         self.assertIn("9 hours", mail.outbox[0].body)

@@ -4,7 +4,7 @@ from uuid import UUID
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 
-from apps.events.countries import ALLOWED_COUNTRY_CODES, COUNTRY_CODES
+from apps.events.countries import ALLOWED_COUNTRY_CODES
 from apps.registration.legal_documents import REQUIRED_CONSENTS
 
 
@@ -25,12 +25,16 @@ def validate_registration_data(event, data=None):
 
     raw_display_name = data.get("display_name", "")
     if not isinstance(raw_display_name, str):
-        raise RegistrationError("Enter a valid first name or nickname.", "invalid_display_name")
+        raise RegistrationError(
+            "Enter a valid first name or nickname.", "invalid_display_name"
+        )
     display_name = raw_display_name.strip()
     if not display_name:
         raise RegistrationError("First or nickname is required.", "missing_full_name")
     if len(display_name) > 200:
-        raise RegistrationError("Name must be 200 characters or fewer.", "invalid_display_name")
+        raise RegistrationError(
+            "Name must be 200 characters or fewer.", "invalid_display_name"
+        )
 
     raw_email = data.get("email", "")
     email = raw_email.strip().casefold() if isinstance(raw_email, str) else ""
@@ -38,9 +42,7 @@ def validate_registration_data(event, data=None):
         "email_confirmation", data.get("email_confirm", data.get("confirm_email", ""))
     )
     repeated_email = (
-        repeated_email.strip().casefold()
-        if isinstance(repeated_email, str)
-        else ""
+        repeated_email.strip().casefold() if isinstance(repeated_email, str) else ""
     )
     if not repeated_email:
         raise RegistrationError(
@@ -125,7 +127,9 @@ def validate_registration_data(event, data=None):
     raw_want_to_date = data.get("want_to_date", "Any")
     valid_options = {"Male", "Female", "Any", "Other/Prefer Not to Say"}
     if isinstance(raw_want_to_date, list):
-        if not raw_want_to_date or any(opt not in valid_options for opt in raw_want_to_date):
+        if not raw_want_to_date or any(
+            opt not in valid_options for opt in raw_want_to_date
+        ):
             raise RegistrationError(
                 "Choose a valid date preference.", "invalid_date_preference"
             )

@@ -121,9 +121,11 @@ class EventAdminForm(forms.ModelForm):
                 "num_rounds",
                 "live_matching_enabled",
             )
-            original = Event.objects.filter(pk=self.instance.pk).values(
-                *schedule_fields
-            ).first()
+            original = (
+                Event.objects.filter(pk=self.instance.pk)
+                .values(*schedule_fields)
+                .first()
+            )
             if original:
                 for field in schedule_fields:
                     old_value = original[field]
@@ -279,14 +281,25 @@ class EventAdmin(admin.ModelAdmin):
         from apps.events.scheduler import RoundScheduler, has_live_schedule_evidence
 
         fields = (
-            "start_time", "num_rounds", "round_duration", "break_duration",
-            "intro_video_url", "intro_video_duration_seconds", "live_matching_enabled",
+            "start_time",
+            "num_rounds",
+            "round_duration",
+            "break_duration",
+            "intro_video_url",
+            "intro_video_duration_seconds",
+            "live_matching_enabled",
         )
         with transaction.atomic():
-            previous = Event.objects.select_for_update().get(pk=obj.pk) if change else None
-            changed = previous is None or any(getattr(previous, field) != getattr(obj, field) for field in fields)
+            previous = (
+                Event.objects.select_for_update().get(pk=obj.pk) if change else None
+            )
+            changed = previous is None or any(
+                getattr(previous, field) != getattr(obj, field) for field in fields
+            )
             if previous and changed and has_live_schedule_evidence(previous):
-                raise ValidationError("Live allocation has started. Use the live pause, resume or extend controls instead of rebuilding the schedule.")
+                raise ValidationError(
+                    "Live allocation has started. Use the live pause, resume or extend controls instead of rebuilding the schedule."
+                )
             old_end = scheduled_event_end(previous) if previous else None
             super().save_model(request, obj, form, change)
             if changed and (obj.live_matching_enabled or obj.rounds.exists()):
@@ -294,10 +307,16 @@ class EventAdmin(admin.ModelAdmin):
                 from django.core.cache import cache
 
                 keys = [f"orchestrator:{obj.pk}:event_end"]
-                keys.extend(f"orchestrator:{obj.pk}:r{number}:{action}" for number in range(1, 9) for action in ("pairing", "round_start", "round_end", "warning"))
+                keys.extend(
+                    f"orchestrator:{obj.pk}:r{number}:{action}"
+                    for number in range(1, 9)
+                    for action in ("pairing", "round_start", "round_end", "warning")
+                )
                 cache.delete_many(keys)
                 if old_end is not None:
-                    extend_event_access_deadlines(obj, old_end, scheduled_event_end(obj))
+                    extend_event_access_deadlines(
+                        obj, old_end, scheduled_event_end(obj)
+                    )
 
     # ------------------------------------------------------------------ #
     # Custom URLs: matching report & live monitoring                     #
@@ -362,11 +381,13 @@ class EventAdmin(admin.ModelAdmin):
             extra_context["registration_pause_url"] = reverse(
                 "admin:events_event_toggle_registration_pause", args=[object_id]
             )
-            extra_context["registration_paused"] = Event.objects.filter(
-                pk=object_id
-            ).values_list("registration_paused", flat=True).first()
-            extra_context["can_toggle_registration_pause"] = (
-                request.user.has_perm("events.change_event")
+            extra_context["registration_paused"] = (
+                Event.objects.filter(pk=object_id)
+                .values_list("registration_paused", flat=True)
+                .first()
+            )
+            extra_context["can_toggle_registration_pause"] = request.user.has_perm(
+                "events.change_event"
             )
             extra_context["matching_report_url"] = reverse(
                 "admin:events_event_matching_report", args=[object_id]
@@ -405,7 +426,9 @@ class EventAdmin(admin.ModelAdmin):
 
         desired_state = request.POST.get("registration_paused")
         if desired_state not in ("0", "1"):
-            return HttpResponse("Choose whether to pause or reopen registration.", status=400)
+            return HttpResponse(
+                "Choose whether to pause or reopen registration.", status=400
+            )
 
         with transaction.atomic():
             event = Event.objects.select_for_update().get(pk=object_id)
@@ -413,7 +436,13 @@ class EventAdmin(admin.ModelAdmin):
             if event.registration_paused != paused:
                 event.registration_paused = paused
                 event.save(update_fields=["registration_paused", "updated_at"])
-                self.log_change(request, event, "Public registration paused." if paused else "Public registration reopened.")
+                self.log_change(
+                    request,
+                    event,
+                    "Public registration paused."
+                    if paused
+                    else "Public registration reopened.",
+                )
 
         state = "paused" if event.registration_paused else "reopened"
         self.message_user(request, f"Public registration {state} for this event.")
@@ -493,12 +522,14 @@ class EventAdmin(admin.ModelAdmin):
 
         paired_pids = set(
             Pair.objects.values_list("participant_a_id", flat=True)
-        ) | set(
-            Pair.objects.values_list("participant_b_id", flat=True)
-        )
+        ) | set(Pair.objects.values_list("participant_b_id", flat=True))
         total_paired = confirmed_qs.filter(id__in=paired_pids).count()
-        male_paired = confirmed_qs.filter(id__in=paired_pids, gender__iexact="male").count()
-        female_paired = confirmed_qs.filter(id__in=paired_pids, gender__iexact="female").count()
+        male_paired = confirmed_qs.filter(
+            id__in=paired_pids, gender__iexact="male"
+        ).count()
+        female_paired = confirmed_qs.filter(
+            id__in=paired_pids, gender__iexact="female"
+        ).count()
 
         active_online_statuses = (
             ParticipantStatus.READY,
@@ -515,7 +546,9 @@ class EventAdmin(admin.ModelAdmin):
                 "confirmed": total_confirmed,
                 "attended": total_attended,
                 "noshow": total_noshow,
-                "attendance_rate": f"{(total_attended * 100 / total_confirmed):.1f}%" if total_confirmed else "0.0%",
+                "attendance_rate": f"{(total_attended * 100 / total_confirmed):.1f}%"
+                if total_confirmed
+                else "0.0%",
                 "paired": total_paired,
                 "online": total_online,
             },
@@ -523,7 +556,9 @@ class EventAdmin(admin.ModelAdmin):
                 "confirmed": male_confirmed,
                 "attended": male_attended,
                 "noshow": male_noshow,
-                "attendance_rate": f"{(male_attended * 100 / male_confirmed):.1f}%" if male_confirmed else "0.0%",
+                "attendance_rate": f"{(male_attended * 100 / male_confirmed):.1f}%"
+                if male_confirmed
+                else "0.0%",
                 "paired": male_paired,
                 "online": male_online,
             },
@@ -531,7 +566,9 @@ class EventAdmin(admin.ModelAdmin):
                 "confirmed": female_confirmed,
                 "attended": female_attended,
                 "noshow": female_noshow,
-                "attendance_rate": f"{(female_attended * 100 / female_confirmed):.1f}%" if female_confirmed else "0.0%",
+                "attendance_rate": f"{(female_attended * 100 / female_confirmed):.1f}%"
+                if female_confirmed
+                else "0.0%",
                 "paired": female_paired,
                 "online": female_online,
             },
@@ -539,21 +576,33 @@ class EventAdmin(admin.ModelAdmin):
                 "confirmed": other_confirmed,
                 "attended": other_attended,
                 "noshow": other_noshow,
-                "attendance_rate": f"{(other_attended * 100 / other_confirmed):.1f}%" if other_confirmed else "0.0%",
+                "attendance_rate": f"{(other_attended * 100 / other_confirmed):.1f}%"
+                if other_confirmed
+                else "0.0%",
                 "paired": max(0, total_paired - (male_paired + female_paired)),
                 "online": max(0, total_online - (male_online + female_online)),
             },
         }
 
         for ev in active_events:
-            ev_conf = ev.participants.filter(registration_status=RegistrationStatus.CONFIRMED)
+            ev_conf = ev.participants.filter(
+                registration_status=RegistrationStatus.CONFIRMED
+            )
             ev.m_conf = ev_conf.filter(gender__iexact="male").count()
             ev.f_conf = ev_conf.filter(gender__iexact="female").count()
-            ev.m_att = ev_conf.filter(joined_at__isnull=False, gender__iexact="male").count()
-            ev.f_att = ev_conf.filter(joined_at__isnull=False, gender__iexact="female").count()
+            ev.m_att = ev_conf.filter(
+                joined_at__isnull=False, gender__iexact="male"
+            ).count()
+            ev.f_att = ev_conf.filter(
+                joined_at__isnull=False, gender__iexact="female"
+            ).count()
             ev.tot_att = ev.m_att + ev.f_att
-            ev.m_onl = ev_conf.filter(status__in=active_online_statuses, gender__iexact="male").count()
-            ev.f_onl = ev_conf.filter(status__in=active_online_statuses, gender__iexact="female").count()
+            ev.m_onl = ev_conf.filter(
+                status__in=active_online_statuses, gender__iexact="male"
+            ).count()
+            ev.f_onl = ev_conf.filter(
+                status__in=active_online_statuses, gender__iexact="female"
+            ).count()
             ev.tot_onl = ev.m_onl + ev.f_onl
 
         context = {
@@ -570,9 +619,7 @@ class EventAdmin(admin.ModelAdmin):
                 status__in=upcoming_statuses, start_time__gte=now
             ).count(),
             "can_change_events": self.has_change_permission(request),
-            "can_view_participants": request.user.has_perm(
-                "events.view_participant"
-            ),
+            "can_view_participants": request.user.has_perm("events.view_participant"),
             "participant_changelist_url": reverse(
                 "admin:events_participant_changelist"
             ),
@@ -674,7 +721,9 @@ class EventAdmin(admin.ModelAdmin):
                 "participant_a", "participant_b"
             ).all()
 
-        ev_conf = event.participants.filter(registration_status=RegistrationStatus.CONFIRMED)
+        ev_conf = event.participants.filter(
+            registration_status=RegistrationStatus.CONFIRMED
+        )
         tot_c = ev_conf.count()
         m_c = ev_conf.filter(gender__iexact="male").count()
         f_c = ev_conf.filter(gender__iexact="female").count()
@@ -695,21 +744,35 @@ class EventAdmin(admin.ModelAdmin):
         f_o = ev_onl.filter(gender__iexact="female").count()
 
         paired_ids = set(
-            Pair.objects.filter(round__event=event).values_list("participant_a_id", flat=True)
+            Pair.objects.filter(round__event=event).values_list(
+                "participant_a_id", flat=True
+            )
         ) | set(
-            Pair.objects.filter(round__event=event).values_list("participant_b_id", flat=True)
+            Pair.objects.filter(round__event=event).values_list(
+                "participant_b_id", flat=True
+            )
         )
         tot_p = ev_conf.filter(id__in=paired_ids).count()
         m_p = ev_conf.filter(id__in=paired_ids, gender__iexact="male").count()
         f_p = ev_conf.filter(id__in=paired_ids, gender__iexact="female").count()
 
         event_attendance = {
-            "total_confirmed": tot_c, "male_confirmed": m_c, "female_confirmed": f_c,
-            "total_attended": tot_a, "male_attended": m_a, "female_attended": f_a,
+            "total_confirmed": tot_c,
+            "male_confirmed": m_c,
+            "female_confirmed": f_c,
+            "total_attended": tot_a,
+            "male_attended": m_a,
+            "female_attended": f_a,
             "attendance_rate": f"{(tot_a * 100 / tot_c):.1f}%" if tot_c else "0.0%",
-            "total_noshow": max(0, tot_c - tot_a), "male_noshow": max(0, m_c - m_a), "female_noshow": max(0, f_c - f_a),
-            "total_online": tot_o, "male_online": m_o, "female_online": f_o,
-            "total_paired": tot_p, "male_paired": m_p, "female_paired": f_p,
+            "total_noshow": max(0, tot_c - tot_a),
+            "male_noshow": max(0, m_c - m_a),
+            "female_noshow": max(0, f_c - f_a),
+            "total_online": tot_o,
+            "male_online": m_o,
+            "female_online": f_o,
+            "total_paired": tot_p,
+            "male_paired": m_p,
+            "female_paired": f_p,
         }
 
         context = {
@@ -1227,9 +1290,7 @@ class ParticipantAdmin(admin.ModelAdmin):
                 participant = Participant.objects.select_related("event").get(
                     pk=participant_id
                 )
-                if (
-                    participant.registration_status == RegistrationStatus.CONFIRMED
-                ):
+                if participant.registration_status == RegistrationStatus.CONFIRMED:
                     if send_event_access_email_manually(participant_id):
                         access_sent += 1
                     else:

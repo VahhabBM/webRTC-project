@@ -426,9 +426,12 @@ def test_server_round_messages_accept_event_rounds_seven_and_eight(round_number)
         round_end_ts=2,
     )
     assert pairing["payload"]["round_number"] == round_number
-    assert build_server_round_start(
-        round_number=round_number, room_id="room", server_ts=1
-    )["payload"]["round_number"] == round_number
+    assert (
+        build_server_round_start(
+            round_number=round_number, room_id="room", server_ts=1
+        )["payload"]["round_number"]
+        == round_number
+    )
 
 
 def test_server_pairing_rejects_round_nine():

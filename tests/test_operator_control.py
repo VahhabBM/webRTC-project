@@ -123,7 +123,9 @@ class TestOperatorControl:
         "prior_status",
         [EventStatus.SCHEDULED, EventStatus.ACTIVE, EventStatus.RUNNING],
     )
-    def test_pause_resume_restores_pre_pause_event_status(self, setup_event, prior_status):
+    def test_pause_resume_restores_pre_pause_event_status(
+        self, setup_event, prior_status
+    ):
         setup_event.status = prior_status
         setup_event.save(update_fields=["status"])
         service = OperatorService(setup_event, is_leader=True)

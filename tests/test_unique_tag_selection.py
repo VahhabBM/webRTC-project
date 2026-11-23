@@ -424,7 +424,12 @@ def test_admin_form_allows_enabling_unique_tags_on_new_event_with_no_participant
 @pytest.mark.parametrize(
     ("field", "new_value"),
     [
-        ("start_time", lambda event: (event.start_time + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")),
+        (
+            "start_time",
+            lambda event: (event.start_time + timedelta(hours=1)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
+        ),
         ("round_duration", lambda _event: "0:06:00"),
         ("break_duration", lambda _event: "0:02:00"),
         ("num_rounds", lambda event: event.num_rounds + 1),

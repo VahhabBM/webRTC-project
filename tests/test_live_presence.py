@@ -36,7 +36,9 @@ def presence_participants(db):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_presence_requires_owned_fresh_ready_confirmed_socket(presence_participants, settings):
+def test_presence_requires_owned_fresh_ready_confirmed_socket(
+    presence_participants, settings
+):
     event, participant, pending = presence_participants
     settings.LIVE_PRESENCE_TTL_SECONDS = 45
     cache.clear()
@@ -99,7 +101,9 @@ def test_valid_ping_restores_expired_lease_without_losing_ready(presence_partici
                 "payload": {"client_ts": 1_700_000_000_000},
             }
         )
-        assert (await communicator.receive_json_from())["type"] == MessageType.SERVER_HELLO
+        assert (await communicator.receive_json_from())[
+            "type"
+        ] == MessageType.SERVER_HELLO
         await communicator.send_json_to(
             {
                 "type": MessageType.CLIENT_READY,
@@ -114,7 +118,9 @@ def test_valid_ping_restores_expired_lease_without_losing_ready(presence_partici
                 "payload": {"client_ts": 1_700_000_000_001},
             }
         )
-        assert (await communicator.receive_json_from())["type"] == MessageType.SERVER_PONG
+        assert (await communicator.receive_json_from())[
+            "type"
+        ] == MessageType.SERVER_PONG
         record = cache.get(_presence_key(participant.pk))
         assert record and record["ready"] is True
         assert await database_sync_to_async(get_online_participant_ids)(event) == {
@@ -128,7 +134,9 @@ def test_valid_ping_restores_expired_lease_without_losing_ready(presence_partici
                 "payload": {"client_ts": 1_700_000_000_002},
             }
         )
-        assert (await communicator.receive_json_from())["type"] == MessageType.SERVER_PONG
+        assert (await communicator.receive_json_from())[
+            "type"
+        ] == MessageType.SERVER_PONG
         assert await database_sync_to_async(get_online_participant_ids)(event) == {
             str(participant.pk)
         }

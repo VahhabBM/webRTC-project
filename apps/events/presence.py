@@ -108,16 +108,25 @@ def get_online_participant_ids(event, now=None) -> set[str]:
             return set()
         records = cache.get_many([_presence_key(pid) for pid in ids])
     except Exception:
-        logger.exception("Presence lookup failed for event %s", getattr(event, "pk", None))
+        logger.exception(
+            "Presence lookup failed for event %s", getattr(event, "pk", None)
+        )
         return set()
-    current = now.timestamp() if hasattr(now, "timestamp") else (float(now) if now is not None else time.time())
+    current = (
+        now.timestamp()
+        if hasattr(now, "timestamp")
+        else (float(now) if now is not None else time.time())
+    )
     ttl = _ttl()
     # Check current socket ownership in a batched read. A lease from a replaced
     # connection must never qualify, even if its own TTL has not elapsed.
     try:
         owners = cache.get_many([connection_channel_key(pid) for pid in ids])
     except Exception:
-        logger.exception("Connection ownership lookup failed for event %s", getattr(event, "pk", None))
+        logger.exception(
+            "Connection ownership lookup failed for event %s",
+            getattr(event, "pk", None),
+        )
         return set()
     online = set()
     for pid in ids:

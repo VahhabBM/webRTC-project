@@ -53,9 +53,7 @@ class Migration(migrations.Migration):
             field=models.DurationField(
                 default=datetime.timedelta(minutes=2),
                 validators=[
-                    django.core.validators.MinValueValidator(
-                        datetime.timedelta(0)
-                    )
+                    django.core.validators.MinValueValidator(datetime.timedelta(0))
                 ],
             ),
         ),

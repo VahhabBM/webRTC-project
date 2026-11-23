@@ -122,9 +122,11 @@ class OperatorService:
         active_round.save(update_fields=["ends_at"])
 
         # شیفت دادن راندهای بعدی متناسب با وقفه ایجادشده
-        subsequent_rounds = Round.objects.select_for_update().filter(
-            event=locked_event, number__gt=active_round.number
-        ).order_by("number")
+        subsequent_rounds = (
+            Round.objects.select_for_update()
+            .filter(event=locked_event, number__gt=active_round.number)
+            .order_by("number")
+        )
 
         for r in subsequent_rounds:
             r.starts_at += time_shift
@@ -135,7 +137,10 @@ class OperatorService:
             "status_before_pause", EventStatus.RUNNING
         )
         valid_statuses = {choice for choice, _label in EventStatus.choices}
-        if restored_status not in valid_statuses or restored_status == EventStatus.PAUSED:
+        if (
+            restored_status not in valid_statuses
+            or restored_status == EventStatus.PAUSED
+        ):
             restored_status = EventStatus.RUNNING
         locked_event.status = restored_status
         locked_event.save(update_fields=["status", "updated_at"])
@@ -191,9 +196,11 @@ class OperatorService:
         active_round.save(update_fields=["ends_at"])
 
         # شیفت راندهای بعدی
-        subsequent_rounds = Round.objects.select_for_update().filter(
-            event=locked_event, number__gt=active_round.number
-        ).order_by("number")
+        subsequent_rounds = (
+            Round.objects.select_for_update()
+            .filter(event=locked_event, number__gt=active_round.number)
+            .order_by("number")
+        )
 
         for r in subsequent_rounds:
             r.starts_at += extension

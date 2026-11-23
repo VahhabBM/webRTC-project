@@ -137,10 +137,13 @@ def test_parallel_registrations_cannot_oversell_the_last_seat():
     assert sorted(statuses) == sorted(
         [RegistrationStatus.CONFIRMED, RegistrationStatus.WAITLISTED]
     )
-    assert Participant.objects.filter(
-        event=event,
-        registration_status__in=[
-            RegistrationStatus.PENDING,
-            RegistrationStatus.CONFIRMED,
-        ],
-    ).count() == 2
+    assert (
+        Participant.objects.filter(
+            event=event,
+            registration_status__in=[
+                RegistrationStatus.PENDING,
+                RegistrationStatus.CONFIRMED,
+            ],
+        ).count()
+        == 2
+    )

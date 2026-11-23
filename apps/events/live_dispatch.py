@@ -28,8 +28,10 @@ def dispatch_live_event(event, *, now=None):
     orch = OrchestratorRealtime(event)
     phase, round_obj, _remaining = RoundScheduler(event).get_current_phase(now)
     allocations = None
-    if event.live_matching_enabled and round_obj and phase in (
-        EventPhase.PRECONNECT, EventPhase.IN_ROUND
+    if (
+        event.live_matching_enabled
+        and round_obj
+        and phase in (EventPhase.PRECONNECT, EventPhase.IN_ROUND)
     ):
         allocations = reconcile_live_round(event, round_obj, now=now)
 
@@ -54,8 +56,10 @@ def dispatch_live_event(event, *, now=None):
             delivered = orch._publish(
                 participant_channel_group(pid),
                 build_server_waiting(
-                    reason=reason, round_number=round_obj.number,
-                    server_ts=stamp, next_check_ts=stamp + 10000,
+                    reason=reason,
+                    round_number=round_obj.number,
+                    server_ts=stamp,
+                    next_check_ts=stamp + 10000,
                     message=WAIT_MESSAGES[reason],
                 ),
             )

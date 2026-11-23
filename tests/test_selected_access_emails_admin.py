@@ -216,7 +216,4 @@ def test_view_only_staff_cannot_send_selected_access_links():
     response = client.get(reverse("admin:events_participant_changelist"))
 
     assert response.status_code == 200
-    assert (
-        b"Send or resend selected room access links"
-        not in response.content
-    )
+    assert b"Send or resend selected room access links" not in response.content

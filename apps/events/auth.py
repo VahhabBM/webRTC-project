@@ -46,12 +46,18 @@ def scheduled_event_end(event):
         if event.intro_video_url
         else timedelta(0)
     )
-    calculated = event.start_time + intro_offset + (
-        event.num_rounds * event.round_duration
-        + max(event.num_rounds - 1, 0) * event.break_duration
+    calculated = (
+        event.start_time
+        + intro_offset
+        + (
+            event.num_rounds * event.round_duration
+            + max(event.num_rounds - 1, 0) * event.break_duration
+        )
     )
     if not getattr(getattr(event, "_state", None), "adding", True):
-        last_end = event.rounds.order_by("-ends_at").values_list("ends_at", flat=True).first()
+        last_end = (
+            event.rounds.order_by("-ends_at").values_list("ends_at", flat=True).first()
+        )
         if last_end:
             calculated = max(calculated, last_end)
     return calculated
@@ -66,11 +72,14 @@ def extend_event_access_deadlines(event, previous_end, new_end):
     if new_end <= previous_end:
         return
     Participant.objects.filter(
-        event=event, join_token_expires_at__gte=previous_end,
+        event=event,
+        join_token_expires_at__gte=previous_end,
         join_token_expires_at__lt=new_end,
     ).update(join_token_expires_at=new_end)
     ParticipantAccessToken.objects.filter(
-        participant__event=event, expires_at__gte=previous_end, expires_at__lt=new_end,
+        participant__event=event,
+        expires_at__gte=previous_end,
+        expires_at__lt=new_end,
     ).update(expires_at=new_end)
 
 

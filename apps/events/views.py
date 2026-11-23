@@ -155,8 +155,10 @@ def complete_event_intro(request: HttpRequest) -> JsonResponse:
             status=401,
         )
     with transaction.atomic():
-        participant = Participant.objects.select_for_update().select_related("event").get(
-            pk=participant.pk
+        participant = (
+            Participant.objects.select_for_update()
+            .select_related("event")
+            .get(pk=participant.pk)
         )
         now = timezone.now()
         if not participant.event.intro_video_url:
@@ -225,9 +227,7 @@ def submit_round_interest(request: HttpRequest) -> JsonResponse:
                 round__number=round_number,
                 room_id=room_id,
             )
-            .select_related(
-                "participant_a", "participant_b", "round", "interest"
-            )
+            .select_related("participant_a", "participant_b", "round", "interest")
             .first()
         )
         if pair is not None:
@@ -260,9 +260,7 @@ def report_incident(request: HttpRequest) -> JsonResponse:
     partner = None
     if room_id:
         pair = (
-            Pair.objects.filter(
-                room_id=room_id, event_id=participant.event_id
-            )
+            Pair.objects.filter(room_id=room_id, event_id=participant.event_id)
             .select_related("participant_a", "participant_b")
             .first()
         )
@@ -341,7 +339,10 @@ def video_room_page(request: HttpRequest) -> HttpResponse:
                 if participant.event.break_duration
                 else 120
             ),
-            "early_exit_min_minutes": getattr(participant.event, "early_exit_min_minutes", 3) or 3,
+            "early_exit_min_minutes": getattr(
+                participant.event, "early_exit_min_minutes", 3
+            )
+            or 3,
             # Scope relay fallback to the authenticated participant's current
             # room by default. An explicit setting can still narrow this to
             # a single diagnostic pair when needed.
@@ -451,8 +452,18 @@ def submit_connection_report(request: HttpRequest) -> JsonResponse:
 
     audio_bytes = data.get("audio_bytes_received", 0)
     video_frames = data.get("video_frames_decoded", 0)
-    if any(type(value) is not int or value < 0 for value in (audio_bytes, video_frames)):
-        return JsonResponse({"error": {"code": "invalid_payload", "message": "Media counters must be non-negative integers."}}, status=400)
+    if any(
+        type(value) is not int or value < 0 for value in (audio_bytes, video_frames)
+    ):
+        return JsonResponse(
+            {
+                "error": {
+                    "code": "invalid_payload",
+                    "message": "Media counters must be non-negative integers.",
+                }
+            },
+            status=400,
+        )
     media_received = audio_bytes > 0 and video_frames > 0
     now = timezone.now()
     from apps.events.orchestrator import current_pair_for_participant
@@ -538,4 +549,3 @@ def leave_date(request: HttpRequest) -> JsonResponse:
         )
 
     return JsonResponse({"ok": True, "message": "Left date successfully."})
-

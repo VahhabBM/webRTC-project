@@ -86,7 +86,9 @@ def test_python_lifecycle_round_change_does_not_end_event():
     assert state.partner.display_name == "Alex"
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js tests run in the JavaScript test job")
+@pytest.mark.skipif(
+    shutil.which("node") is None, reason="Node.js tests run in the JavaScript test job"
+)
 def test_node_partner_switch_lifecycle():
     completed = subprocess.run(
         ["node", "--test", str(NODE_TEST)],

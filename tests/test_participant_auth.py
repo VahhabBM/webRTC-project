@@ -115,7 +115,9 @@ def test_rotating_a_join_link_keeps_the_previous_link_valid(participant):
 
 
 @pytest.mark.django_db
-def test_rotating_a_link_does_not_revive_an_intentionally_shortened_old_link(participant):
+def test_rotating_a_link_does_not_revive_an_intentionally_shortened_old_link(
+    participant,
+):
     previous_token = issue_join_token(participant)
     shortened_expiry = timezone.now() - timedelta(seconds=1)
     participant.join_token_expires_at = shortened_expiry

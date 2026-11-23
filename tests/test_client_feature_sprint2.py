@@ -1,10 +1,11 @@
-from datetime import timedelta
 import json
+from datetime import timedelta
+
 import pytest
-from django.core import mail
-from django.test import Client, RequestFactory
 from django.contrib import admin
 from django.contrib.auth.models import User
+from django.core import mail
+from django.test import Client, RequestFactory
 from django.utils import timezone
 
 from apps.events.admin import EventAdmin
@@ -20,11 +21,9 @@ from apps.events.models import (
     DisconnectionLog,
     Event,
     EventStatus,
-    Pair,
     Participant,
     RegistrationStatus,
 )
-from apps.events.views import leave_date
 from apps.protocol.constants import WAITING_REASONS
 
 
@@ -71,7 +70,7 @@ class TestSprint2Features:
             gender="Female",
             registration_status=RegistrationStatus.CONFIRMED,
         )
-        male_p = Participant.objects.create(
+        Participant.objects.create(
             event=test_event,
             display_name="Ali",
             email="ali@example.com",
@@ -99,7 +98,7 @@ class TestSprint2Features:
 
     def test_task_5_no_match_emails_for_non_attendees(self, test_event):
         """Task 5: Participants who did not attend receive NO match summary email."""
-        p_attended = Participant.objects.create(
+        Participant.objects.create(
             event=test_event,
             display_name="Attendee",
             email="attended@example.com",
@@ -107,7 +106,7 @@ class TestSprint2Features:
             registration_status=RegistrationStatus.CONFIRMED,
             joined_at=timezone.now(),
         )
-        p_noshow = Participant.objects.create(
+        Participant.objects.create(
             event=test_event,
             display_name="NoShow",
             email="noshow@example.com",
@@ -218,17 +217,29 @@ class TestSprint2Features:
 
     def test_registration_stats_sorted_by_percentage_descending(self, test_event):
         """Registration stats by country/gender are sorted descending by count/percentage."""
-        Participant.objects.create(event=test_event, display_name="C1", country="CA", gender="Female")
-        Participant.objects.create(event=test_event, display_name="F1", country="FR", gender="Male")
-        Participant.objects.create(event=test_event, display_name="F2", country="FR", gender="Male")
+        Participant.objects.create(
+            event=test_event, display_name="C1", country="CA", gender="Female"
+        )
+        Participant.objects.create(
+            event=test_event, display_name="F1", country="FR", gender="Male"
+        )
+        Participant.objects.create(
+            event=test_event, display_name="F2", country="FR", gender="Male"
+        )
         for i in range(5):
-            Participant.objects.create(event=test_event, display_name=f"U{i}", country="GB", gender="Female")
+            Participant.objects.create(
+                event=test_event, display_name=f"U{i}", country="GB", gender="Female"
+            )
 
-        user = User.objects.create_superuser("statadmin", "statadmin@example.com", "pass")
+        user = User.objects.create_superuser(
+            "statadmin", "statadmin@example.com", "pass"
+        )
         client = Client()
         client.force_login(user)
 
-        response = client.get(f"/admin/events/event/{test_event.pk}/registration-stats/")
+        response = client.get(
+            f"/admin/events/event/{test_event.pk}/registration-stats/"
+        )
         assert response.status_code == 200
         country_rows = response.context["country_rows"]
         assert country_rows[0]["count"] == 5

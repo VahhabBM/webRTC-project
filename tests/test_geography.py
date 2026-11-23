@@ -13,8 +13,12 @@ def person(country, city=""):
 
 
 def test_same_normalized_city_scores_highest_only_in_same_country():
-    same_city = geographic_score(person("NZ", "  Wellington "), person("nz", "wellington"))
-    different_country = geographic_score(person("NZ", "Wellington"), person("AU", "Wellington"))
+    same_city = geographic_score(
+        person("NZ", "  Wellington "), person("nz", "wellington")
+    )
+    different_country = geographic_score(
+        person("NZ", "Wellington"), person("AU", "Wellington")
+    )
 
     assert same_city == MAX_SCORE
     assert different_country < MAX_SCORE

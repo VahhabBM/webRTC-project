@@ -86,12 +86,15 @@ def test_matching_respects_mutual_preferences_and_participant_caps():
         match_input.participants[0].pid,
         match_input.participants[1].pid,
     }
-    assert validate_schedule(
-        schedule,
-        frozenset(p.pid for p in match_input.participants),
-        num_rounds=2,
-        match_input=match_input,
-    ) == []
+    assert (
+        validate_schedule(
+            schedule,
+            frozenset(p.pid for p in match_input.participants),
+            num_rounds=2,
+            match_input=match_input,
+        )
+        == []
+    )
 
 
 def test_matching_supports_mutual_preferences_across_all_gender_categories():
@@ -108,12 +111,15 @@ def test_matching_supports_mutual_preferences_across_all_gender_categories():
     schedule = generate_schedule(match_input)
 
     assert all(len(rnd.pairs) == 3 for rnd in schedule.rounds)
-    assert validate_schedule(
-        schedule,
-        frozenset(p.pid for p in participants),
-        num_rounds=3,
-        match_input=match_input,
-    ) == []
+    assert (
+        validate_schedule(
+            schedule,
+            frozenset(p.pid for p in participants),
+            num_rounds=3,
+            match_input=match_input,
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize("women_count", [250, 300])
@@ -122,8 +128,7 @@ def test_imbalanced_event_simulation_respects_caps_and_rotates_men(women_count):
     participants = [
         _participant(i + 1, "Female", "Male", 7) for i in range(women_count)
     ] + [
-        _participant(women_count + i + 1, "Male", "Female", 5)
-        for i in range(men_count)
+        _participant(women_count + i + 1, "Male", "Female", 5) for i in range(men_count)
     ]
     match_input = _input(participants, rounds=7)
 
@@ -146,12 +151,15 @@ def test_imbalanced_event_simulation_respects_caps_and_rotates_men(women_count):
     assert set(women_counts) == {7}
     assert max(men_counts) <= 5
     assert max(men_counts) - min(men_counts) <= 1
-    assert validate_schedule(
-        schedule,
-        frozenset(p.pid for p in participants),
-        num_rounds=7,
-        match_input=match_input,
-    ) == []
+    assert (
+        validate_schedule(
+            schedule,
+            frozenset(p.pid for p in participants),
+            num_rounds=7,
+            match_input=match_input,
+        )
+        == []
+    )
 
 
 def test_unmatched_participant_ids_are_reported_for_partial_rounds():

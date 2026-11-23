@@ -114,7 +114,9 @@ class EmailService:
             footer_note = "This link is personal and will remain active until the event ends. Please do not share it."
 
         plain, html = EmailService._render_styled_email(
-            title=f"Registration Confirmed: {event_title}" if not waitlisted else f"Waitlist Entry: {event_title}",
+            title=f"Registration Confirmed: {event_title}"
+            if not waitlisted
+            else f"Waitlist Entry: {event_title}",
             greeting=f"Hello {name},",
             paragraphs=paragraphs,
             cta_text=cta_text,
@@ -311,7 +313,9 @@ class EmailService:
             for m in matches:
                 p_name = m.get("name") or "Your Match"
                 p_phone = m.get("whatsapp") or "No WhatsApp provided"
-                match_items.append(f"&bull; <strong>{p_name}</strong> &mdash; WhatsApp: <code>{p_phone}</code>")
+                match_items.append(
+                    f"&bull; <strong>{p_name}</strong> &mdash; WhatsApp: <code>{p_phone}</code>"
+                )
             matches_html = "<br>".join(match_items)
             paragraphs = [
                 f"Thank you for participating in {event_title}!",

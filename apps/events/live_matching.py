@@ -87,7 +87,9 @@ def _mark_expired_pairs(event, now) -> None:
         status__in=(PairStatus.PENDING, PairStatus.ACTIVE),
     )
     for pair in expired:
-        pair.status = PairStatus.COMPLETED if _both_connected(pair) else PairStatus.CANCELLED
+        pair.status = (
+            PairStatus.COMPLETED if _both_connected(pair) else PairStatus.CANCELLED
+        )
         pair.save(update_fields=["status"])
         try:
             cache.delete(_absence_key(pair.pk))
@@ -137,12 +139,16 @@ def _tag_sets(participants: list[Participant]) -> dict[str, set[str]]:
 
 def _successful_counts(event) -> dict[str, int]:
     counts: dict[str, int] = {}
-    rows = Pair.objects.filter(event=event).filter(
-        connection_type_a__isnull=False,
-        connection_type_b__isnull=False,
-        media_received_a=True,
-        media_received_b=True,
-    ).values_list("participant_a_id", "participant_b_id")
+    rows = (
+        Pair.objects.filter(event=event)
+        .filter(
+            connection_type_a__isnull=False,
+            connection_type_b__isnull=False,
+            media_received_a=True,
+            media_received_b=True,
+        )
+        .values_list("participant_a_id", "participant_b_id")
+    )
     for a_id, b_id in rows:
         counts[str(a_id)] = counts.get(str(a_id), 0) + 1
         counts[str(b_id)] = counts.get(str(b_id), 0) + 1
@@ -218,7 +224,9 @@ def reconcile_live_round(event, round_obj, now=None) -> dict:
                 if abandoned:
                     _cancel(pair)
                     result["cancelled_participant_ids"].update((a_id, b_id))
-                    partner_left.update(pid for pid in (a_id, b_id) if pid in online_ids)
+                    partner_left.update(
+                        pid for pid in (a_id, b_id) if pid in online_ids
+                    )
                     continue
                 # Successful telemetry keeps its date debt even if a participant
                 # leaves; only the live assignment is released after grace.
@@ -233,7 +241,9 @@ def reconcile_live_round(event, round_obj, now=None) -> dict:
                 if timed_out or abandoned:
                     _cancel(pair)
                     result["cancelled_participant_ids"].update((a_id, b_id))
-                    partner_left.update(pid for pid in (a_id, b_id) if pid in online_ids)
+                    partner_left.update(
+                        pid for pid in (a_id, b_id) if pid in online_ids
+                    )
                     continue
                 # Pending live pairs reserve both participants while both devices
                 # are fresh, and for the explicit short reconnect grace otherwise.
@@ -255,15 +265,19 @@ def reconcile_live_round(event, round_obj, now=None) -> dict:
 
         # Successful dates and active pending reservations both occupy a cap slot.
         reservations = {pid: count for pid, count in successful.items()}
-        live_pending = Pair.objects.filter(
-            event=locked_event,
-            status__in=(PairStatus.PENDING, PairStatus.ACTIVE),
-        ).exclude(
-            connection_type_a__isnull=False,
-            connection_type_b__isnull=False,
-            media_received_a=True,
-            media_received_b=True,
-        ).values_list("participant_a_id", "participant_b_id")
+        live_pending = (
+            Pair.objects.filter(
+                event=locked_event,
+                status__in=(PairStatus.PENDING, PairStatus.ACTIVE),
+            )
+            .exclude(
+                connection_type_a__isnull=False,
+                connection_type_b__isnull=False,
+                media_received_a=True,
+                media_received_b=True,
+            )
+            .values_list("participant_a_id", "participant_b_id")
+        )
         for a_id, b_id in live_pending:
             for pid in (str(a_id), str(b_id)):
                 reservations[pid] = reservations.get(pid, 0) + 1
@@ -293,12 +307,19 @@ def reconcile_live_round(event, round_obj, now=None) -> dict:
                     continue
 
                 geo = geographic_score(left, right)
-                overlap = min(100, len(tags.get(left_id, set()) & tags.get(right_id, set())))
+                overlap = min(
+                    100, len(tags.get(left_id, set()) & tags.get(right_id, set()))
+                )
                 debt = successful.get(left_id, 0) + successful.get(right_id, 0)
-                deterministic = int.from_bytes(
-                    uuid.uuid5(uuid.NAMESPACE_URL, f"{left_id}:{right_id}").bytes[:2],
-                    "big",
-                ) % 100
+                deterministic = (
+                    int.from_bytes(
+                        uuid.uuid5(uuid.NAMESPACE_URL, f"{left_id}:{right_id}").bytes[
+                            :2
+                        ],
+                        "big",
+                    )
+                    % 100
+                )
                 weight = (
                     -debt * fairness_weight
                     + geo * _GEOGRAPHY_SCALE
@@ -309,11 +330,15 @@ def reconcile_live_round(event, round_obj, now=None) -> dict:
                 valid_edges.add((left_id, right_id))
 
         round_duration = round_obj.ends_at - round_obj.starts_at
-        min_required_time = min(_CONNECT_TIMEOUT, max(timedelta(seconds=15), round_duration / 4))
+        min_required_time = min(
+            _CONNECT_TIMEOUT, max(timedelta(seconds=15), round_duration / 4)
+        )
         has_time = round_obj.ends_at - current >= min_required_time
         new_pairs = []
         if has_time and valid_edges:
-            matching = nx.max_weight_matching(graph, maxcardinality=True, weight="weight")
+            matching = nx.max_weight_matching(
+                graph, maxcardinality=True, weight="weight"
+            )
             for pid_a, pid_b in sorted(tuple(sorted(edge)) for edge in matching):
                 # UUID order is the canonical direction expected by the Pair model.
                 a, b = by_id[pid_a], by_id[pid_b]
@@ -334,15 +359,23 @@ def reconcile_live_round(event, round_obj, now=None) -> dict:
 
         unmatched = [p for p in participant_rows if str(p.pk) not in occupied]
         total_males = sum(1 for p in participant_rows if _gender(p.gender) == "Male")
-        total_females = sum(1 for p in participant_rows if _gender(p.gender) == "Female")
+        total_females = sum(
+            1 for p in participant_rows if _gender(p.gender) == "Female"
+        )
         for participant in unmatched:
             pid = str(participant.pk)
             has_opposite = (
                 _gender(participant.gender) == "Male"
-                and any(_gender(other.gender) == "Female" and str(other.pk) != pid for other in participant_rows)
+                and any(
+                    _gender(other.gender) == "Female" and str(other.pk) != pid
+                    for other in participant_rows
+                )
             ) or (
                 _gender(participant.gender) == "Female"
-                and any(_gender(other.gender) == "Male" and str(other.pk) != pid for other in participant_rows)
+                and any(
+                    _gender(other.gender) == "Male" and str(other.pk) != pid
+                    for other in participant_rows
+                )
             )
             if pid in partner_left:
                 reason = "partner_left"
@@ -350,7 +383,9 @@ def reconcile_live_round(event, round_obj, now=None) -> dict:
                 reason = "limit_reached"
             elif _gender(participant.gender) == "Male" and total_females < total_males:
                 reason = "standby_fewer_women"
-            elif _gender(participant.gender) == "Female" and total_males < total_females:
+            elif (
+                _gender(participant.gender) == "Female" and total_males < total_females
+            ):
                 reason = "standby_fewer_men"
             elif not has_opposite:
                 reason = "waiting_for_partner"

@@ -13,15 +13,19 @@ def has_live_schedule_evidence(event: Event) -> bool:
     """Whether pair allocation or media/connection evidence exists for an event."""
     from django.db.models import Q
 
-    return Pair.objects.filter(event_id=event.pk).filter(
-        Q(live_allocated=True)
-        | Q(media_received_a=True)
-        | Q(media_received_b=True)
-        | Q(connection_type_a__isnull=False)
-        | Q(connection_type_b__isnull=False)
-        | Q(connection_time_ms_a__isnull=False)
-        | Q(connection_time_ms_b__isnull=False)
-    ).exists()
+    return (
+        Pair.objects.filter(event_id=event.pk)
+        .filter(
+            Q(live_allocated=True)
+            | Q(media_received_a=True)
+            | Q(media_received_b=True)
+            | Q(connection_type_a__isnull=False)
+            | Q(connection_type_b__isnull=False)
+            | Q(connection_time_ms_a__isnull=False)
+            | Q(connection_time_ms_b__isnull=False)
+        )
+        .exists()
+    )
 
 
 class EventPhase(StrEnum):
@@ -52,7 +56,10 @@ def calculate_full_schedule(
     schedule: list[ScheduledRound] = []
 
     intro_offset = (
-        timedelta(seconds=event.intro_video_duration_seconds + preconnect_duration.total_seconds())
+        timedelta(
+            seconds=event.intro_video_duration_seconds
+            + preconnect_duration.total_seconds()
+        )
         if event.intro_video_url
         else timedelta(0)
     )
@@ -119,15 +126,12 @@ class RoundScheduler:
         )
 
         existing_rounds = {
-            r.number: r
-            for r in Round.objects.select_for_update().filter(event=event)
+            r.number: r for r in Round.objects.select_for_update().filter(event=event)
         }
         expected_numbers = {item.number for item in calculated}
         obsolete_numbers = set(existing_rounds) - expected_numbers
         if obsolete_numbers:
-            Round.objects.filter(
-                event=event, number__in=obsolete_numbers
-            ).delete()
+            Round.objects.filter(event=event, number__in=obsolete_numbers).delete()
             for number in obsolete_numbers:
                 existing_rounds.pop(number, None)
         persisted_rounds: list[Round] = []

@@ -121,4 +121,9 @@ def geographic_score(participant_a: Any, participant_b: Any) -> int:
     distance = _haversine_km(point_a, point_b)
     # Scale proximity monotonically beneath same-country preference.
     max_distance = math.pi * EARTH_RADIUS_KM
-    return max(0, min(FOREIGN_MAX_SCORE, round(FOREIGN_MAX_SCORE * (1 - distance / max_distance))))
+    return max(
+        0,
+        min(
+            FOREIGN_MAX_SCORE, round(FOREIGN_MAX_SCORE * (1 - distance / max_distance))
+        ),
+    )

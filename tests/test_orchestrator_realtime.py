@@ -360,8 +360,13 @@ async def _connect_hello(cookie, participant):
         snapshot = await comm.receive_json_from()
         assert snapshot["type"] == expected_message["type"]
         if snapshot["type"] == MessageType.SERVER_PAIRING:
-            assert snapshot["payload"]["room_id"] == expected_message["payload"]["room_id"]
-            assert snapshot["payload"]["partner_id"] == expected_message["payload"]["partner_id"]
+            assert (
+                snapshot["payload"]["room_id"] == expected_message["payload"]["room_id"]
+            )
+            assert (
+                snapshot["payload"]["partner_id"]
+                == expected_message["payload"]["partner_id"]
+            )
     return comm
 
 
@@ -598,17 +603,43 @@ def test_dispatch_retries_failed_recipient_without_replaying_healthy_pairing(
 
     for participant in (setup_round["p2"], setup_round["p3"], setup_round["p4"]):
         group_messages = [
-            message for group, message in layer.messages
+            message
+            for group, message in layer.messages
             if group == participant_channel_group(participant.pk)
         ]
-        assert sum(message["message"]["type"] == MessageType.SERVER_PAIRING for message in group_messages) == 1
-        assert sum(message["message"]["type"] == MessageType.SERVER_ROUND_START for message in group_messages) == 1
+        assert (
+            sum(
+                message["message"]["type"] == MessageType.SERVER_PAIRING
+                for message in group_messages
+            )
+            == 1
+        )
+        assert (
+            sum(
+                message["message"]["type"] == MessageType.SERVER_ROUND_START
+                for message in group_messages
+            )
+            == 1
+        )
     p1_messages = [
-        message for group, message in layer.messages
+        message
+        for group, message in layer.messages
         if group == participant_channel_group(p1.pk)
     ]
-    assert sum(message["message"]["type"] == MessageType.SERVER_PAIRING for message in p1_messages) == 1
-    assert sum(message["message"]["type"] == MessageType.SERVER_ROUND_START for message in p1_messages) == 1
+    assert (
+        sum(
+            message["message"]["type"] == MessageType.SERVER_PAIRING
+            for message in p1_messages
+        )
+        == 1
+    )
+    assert (
+        sum(
+            message["message"]["type"] == MessageType.SERVER_ROUND_START
+            for message in p1_messages
+        )
+        == 1
+    )
 
 
 @pytest.mark.django_db
@@ -651,10 +682,13 @@ def test_dispatch_completes_event_and_retries_final_lifecycle(setup_round):
     assert MessageType.SERVER_EVENT_END in second["sent"]
     third = orch.dispatch(now=final_time + timedelta(seconds=2))
     assert third["sent"] == []
-    assert sum(
-        message["type"] == MessageType.SERVER_EVENT_END
-        for message in _envelopes(layer)
-    ) == 1
+    assert (
+        sum(
+            message["type"] == MessageType.SERVER_EVENT_END
+            for message in _envelopes(layer)
+        )
+        == 1
+    )
 
 
 @pytest.mark.django_db

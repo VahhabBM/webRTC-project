@@ -95,12 +95,8 @@ class TestParticipantAdmin:
         Participant.objects.filter(pk=participants[0].pk).update(
             created_at=now - timedelta(days=2)
         )
-        Participant.objects.filter(pk=participants[1].pk).update(
-            created_at=now
-        )
-        Participant.objects.filter(pk=participants[2].pk).update(
-            created_at=now
-        )
+        Participant.objects.filter(pk=participants[1].pk).update(created_at=now)
+        Participant.objects.filter(pk=participants[2].pk).update(created_at=now)
 
         response = client.get("/admin/events/participant/")
         assert response.status_code == 200

@@ -99,7 +99,9 @@ def _participant_limit(participant: MatchParticipant) -> int:
 
 
 def _generate_constrained_schedule(match_input: MatchInput) -> GeneratedSchedule:
-    participants = tuple(sorted(match_input.participants, key=lambda p: _uuid_value(p.pid)))
+    participants = tuple(
+        sorted(match_input.participants, key=lambda p: _uuid_value(p.pid))
+    )
     by_pid = {p.pid: p for p in participants}
     adjacency: dict[str, list[str]] = {p.pid: [] for p in participants}
     scores: dict[tuple[str, str], float] = {}
@@ -129,9 +131,7 @@ def _generate_constrained_schedule(match_input: MatchInput) -> GeneratedSchedule
 
     for round_number in range(1, match_input.num_rounds + 1):
         available = {
-            p.pid
-            for p in participants
-            if pair_counts[p.pid] < _participant_limit(p)
+            p.pid for p in participants if pair_counts[p.pid] < _participant_limit(p)
         }
         eligible_edges = {
             pid: [
@@ -212,10 +212,9 @@ def _generate_constrained_schedule(match_input: MatchInput) -> GeneratedSchedule
                     if previous_woman is None:
                         if distance[woman_id] + 1 != shortest_path:
                             continue
-                    elif (
-                        distance[previous_woman] != distance[woman_id] + 1
-                        or not depth_first_augment(previous_woman, shortest_path)
-                    ):
+                    elif distance[previous_woman] != distance[
+                        woman_id
+                    ] + 1 or not depth_first_augment(previous_woman, shortest_path):
                         continue
                     assigned_men[man_id] = woman_id
                     return True
@@ -231,14 +230,11 @@ def _generate_constrained_schedule(match_input: MatchInput) -> GeneratedSchedule
                     if woman_id not in assigned_women:
                         depth_first_augment(woman_id, shortest_path)
             round_pairs = [
-                _canon(woman_id, man_id)
-                for man_id, woman_id in assigned_men.items()
+                _canon(woman_id, man_id) for man_id, woman_id in assigned_men.items()
             ]
         else:
             unmatched = set(available)
-            remaining_degree = {
-                pid: len(eligible_edges[pid]) for pid in available
-            }
+            remaining_degree = {pid: len(eligible_edges[pid]) for pid in available}
             ranked_partners = {
                 pid: sorted(
                     eligible_edges[pid],
@@ -276,7 +272,9 @@ def _generate_constrained_schedule(match_input: MatchInput) -> GeneratedSchedule
 
         paired_ids: set[str] = set()
         pairs_out: list[SchedulePair] = []
-        for pid_a, pid_b in sorted(round_pairs, key=lambda pair: (_uuid_value(pair[0]), _uuid_value(pair[1]))):
+        for pid_a, pid_b in sorted(
+            round_pairs, key=lambda pair: (_uuid_value(pair[0]), _uuid_value(pair[1]))
+        ):
             paired_ids.update((pid_a, pid_b))
             pair_key = (pid_a, pid_b)
             used_pairs.add(pair_key)
@@ -822,7 +820,9 @@ def _validate_constrained_schedule(
     match_input: MatchInput,
 ) -> list[ScheduleViolation]:
     violations: list[ScheduleViolation] = []
-    participants = {participant.pid: participant for participant in match_input.participants}
+    participants = {
+        participant.pid: participant for participant in match_input.participants
+    }
     pair_counts = {pid: 0 for pid in all_participant_pids}
     pair_rounds: dict[tuple[str, str], int] = {}
 
@@ -835,35 +835,54 @@ def _validate_constrained_schedule(
         )
     if {rnd.number for rnd in schedule.rounds} != set(range(1, num_rounds + 1)):
         violations.append(
-            ScheduleViolation("WRONG_ROUND_NUMBERS", "Round numbers are incomplete or duplicated.")
+            ScheduleViolation(
+                "WRONG_ROUND_NUMBERS", "Round numbers are incomplete or duplicated."
+            )
         )
 
     for rnd in schedule.rounds:
         used: set[str] = set()
         for pair in rnd.pairs:
-            if pair.pid_a not in all_participant_pids or pair.pid_b not in all_participant_pids:
+            if (
+                pair.pid_a not in all_participant_pids
+                or pair.pid_b not in all_participant_pids
+            ):
                 violations.append(
-                    ScheduleViolation("UNKNOWN_PARTICIPANT", f"Round {rnd.number} contains an unknown participant.")
+                    ScheduleViolation(
+                        "UNKNOWN_PARTICIPANT",
+                        f"Round {rnd.number} contains an unknown participant.",
+                    )
                 )
                 continue
             if pair.pid_a == pair.pid_b:
                 violations.append(
-                    ScheduleViolation("SELF_PAIR", f"Round {rnd.number} contains a self-pair.")
+                    ScheduleViolation(
+                        "SELF_PAIR", f"Round {rnd.number} contains a self-pair."
+                    )
                 )
                 continue
             if _uuid_value(pair.pid_a) >= _uuid_value(pair.pid_b):
                 violations.append(
-                    ScheduleViolation("WRONG_CANONICAL_ORDER", f"Round {rnd.number} contains an unordered pair.")
+                    ScheduleViolation(
+                        "WRONG_CANONICAL_ORDER",
+                        f"Round {rnd.number} contains an unordered pair.",
+                    )
                 )
             if pair.pid_a in used or pair.pid_b in used:
                 violations.append(
-                    ScheduleViolation("DUPLICATE_IN_ROUND", f"Round {rnd.number} uses a participant more than once.")
+                    ScheduleViolation(
+                        "DUPLICATE_IN_ROUND",
+                        f"Round {rnd.number} uses a participant more than once.",
+                    )
                 )
             used.update((pair.pid_a, pair.pid_b))
             key = (pair.pid_a, pair.pid_b)
             if key in pair_rounds:
                 violations.append(
-                    ScheduleViolation("REPEATED_PARTNER", f"A pair repeats in rounds {pair_rounds[key]} and {rnd.number}.")
+                    ScheduleViolation(
+                        "REPEATED_PARTNER",
+                        f"A pair repeats in rounds {pair_rounds[key]} and {rnd.number}.",
+                    )
                 )
             else:
                 pair_rounds[key] = rnd.number
@@ -872,33 +891,54 @@ def _validate_constrained_schedule(
 
             first = participants.get(pair.pid_a)
             second = participants.get(pair.pid_b)
-            if first and second and not (
-                _accepts(first, second) and _accepts(second, first)
+            if (
+                first
+                and second
+                and not (_accepts(first, second) and _accepts(second, first))
             ):
                 violations.append(
-                    ScheduleViolation("PREFERENCE_VIOLATION", f"Round {rnd.number} violates mutual date preferences.")
+                    ScheduleViolation(
+                        "PREFERENCE_VIOLATION",
+                        f"Round {rnd.number} violates mutual date preferences.",
+                    )
                 )
-            if not isinstance(pair.score, (int, float)) or not math.isfinite(pair.score) or not 0 <= pair.score <= 1:
+            if (
+                not isinstance(pair.score, (int, float))
+                or not math.isfinite(pair.score)
+                or not 0 <= pair.score <= 1
+            ):
                 violations.append(
-                    ScheduleViolation("SCORE_OUT_OF_RANGE", f"Round {rnd.number} contains an invalid score.")
+                    ScheduleViolation(
+                        "SCORE_OUT_OF_RANGE",
+                        f"Round {rnd.number} contains an invalid score.",
+                    )
                 )
 
         expected_unmatched = set(all_participant_pids) - used
         actual_unmatched = set(rnd.all_unmatched_pids)
         if expected_unmatched != actual_unmatched:
             violations.append(
-                ScheduleViolation("WRONG_UNMATCHED_SET", f"Round {rnd.number} does not report all unmatched participants.")
+                ScheduleViolation(
+                    "WRONG_UNMATCHED_SET",
+                    f"Round {rnd.number} does not report all unmatched participants.",
+                )
             )
         if used & actual_unmatched:
             violations.append(
-                ScheduleViolation("UNMATCHED_PAIRED", f"Round {rnd.number} marks a paired participant unmatched.")
+                ScheduleViolation(
+                    "UNMATCHED_PAIRED",
+                    f"Round {rnd.number} marks a paired participant unmatched.",
+                )
             )
 
     for pid, count in pair_counts.items():
         participant = participants.get(pid)
         if participant and count > _participant_limit(participant):
             violations.append(
-                ScheduleViolation("DATE_LIMIT_EXCEEDED", f"Participant {pid} exceeds their configured date limit.")
+                ScheduleViolation(
+                    "DATE_LIMIT_EXCEEDED",
+                    f"Participant {pid} exceeds their configured date limit.",
+                )
             )
 
     return violations

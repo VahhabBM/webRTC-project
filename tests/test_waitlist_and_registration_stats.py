@@ -22,6 +22,7 @@ class RegistrationStatus:
     CONFIRMED = "confirmed"
     WAITLISTED = "waitlisted"
 
+
 User = get_user_model()
 
 
@@ -63,9 +64,7 @@ def test_registration_statistics_include_unknown_in_denominator_and_hide_people(
     _participant(event, 4, gender="", country="")
     client, _ = _admin_client()
 
-    response = client.get(
-        f"/admin/events/event/{event.pk}/registration-stats/"
-    )
+    response = client.get(f"/admin/events/event/{event.pk}/registration-stats/")
     html = response.content.decode()
 
     assert response.status_code == 200
@@ -89,9 +88,7 @@ def test_registration_statistics_require_event_permissions():
     client = Client()
     client.force_login(staff)
 
-    response = client.get(
-        f"/admin/events/event/{event.pk}/registration-stats/"
-    )
+    response = client.get(f"/admin/events/event/{event.pk}/registration-stats/")
 
     assert response.status_code == 403
 
@@ -110,9 +107,7 @@ def test_unverified_waitlisted_woman_can_accept_one_use_admin_invitation():
     invited.save(update_fields=["email_verified_at", "joined_at"])
     _participant(event, 2, gender="Male")
     client, admin = _admin_client()
-    invite_url = (
-        f"/admin/events/event/{event.pk}/waitlist/{invited.pk}/invite/"
-    )
+    invite_url = f"/admin/events/event/{event.pk}/waitlist/{invited.pk}/invite/"
 
     with patch("apps.events.admin.EmailService.send_waitlist_invitation_email") as send:
         response = client.post(invite_url)
@@ -186,7 +181,9 @@ def test_invitation_stays_waitlisted_if_capacity_is_full_at_acceptance():
     with patch("apps.events.admin.EmailService.send_waitlist_invitation_email") as send:
         client.post(f"/admin/events/event/{event.pk}/waitlist/{invited.pk}/invite/")
     invitation = _invitations().get(participant=invited)
-    token = re.search(r"/registration/waitlist/([^/]+)/", send.call_args.kwargs["message"]).group(1)
+    token = re.search(
+        r"/registration/waitlist/([^/]+)/", send.call_args.kwargs["message"]
+    ).group(1)
 
     _participant(event, 2, gender="Male")
     response = Client().post(

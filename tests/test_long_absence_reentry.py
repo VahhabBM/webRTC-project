@@ -94,8 +94,13 @@ async def _hello_and_drain_snapshot(communicator, participant):
         snapshots.append(snapshot)
         assert snapshot["type"] == expected_message["type"]
         if snapshot["type"] == MessageType.SERVER_PAIRING:
-            assert snapshot["payload"]["room_id"] == expected_message["payload"]["room_id"]
-            assert snapshot["payload"]["partner_id"] == expected_message["payload"]["partner_id"]
+            assert (
+                snapshot["payload"]["room_id"] == expected_message["payload"]["room_id"]
+            )
+            assert (
+                snapshot["payload"]["partner_id"]
+                == expected_message["payload"]["partner_id"]
+            )
     return snapshots
 
 
@@ -340,8 +345,12 @@ def test_long_absence_marks_partner_gone_without_reassignment(
         returning = _connect(new_cookie)
         assert (await returning.connect())[0]
         snapshot = await _hello_and_drain_snapshot(returning, p1)
-        pairing = next(msg for msg in snapshot if msg["type"] == MessageType.SERVER_PAIRING)
-        start = next(msg for msg in snapshot if msg["type"] == MessageType.SERVER_ROUND_START)
+        pairing = next(
+            msg for msg in snapshot if msg["type"] == MessageType.SERVER_PAIRING
+        )
+        start = next(
+            msg for msg in snapshot if msg["type"] == MessageType.SERVER_ROUND_START
+        )
         assert pairing["type"] == MessageType.SERVER_PAIRING
         assert pairing["payload"]["room_id"] == "room-r1-a"
         assert pairing["payload"]["partner_id"] == str(p2.pk)
@@ -434,7 +443,9 @@ def test_brief_drop_within_grace_does_not_mark_partner_gone(
         returning = _connect(cookie_a)
         assert (await returning.connect())[0]
         snapshot = await _hello_and_drain_snapshot(returning, p1)
-        pairing = next(msg for msg in snapshot if msg["type"] == MessageType.SERVER_PAIRING)
+        pairing = next(
+            msg for msg in snapshot if msg["type"] == MessageType.SERVER_PAIRING
+        )
         assert pairing["payload"]["room_id"] == "room-r1-a"
         assert pairing["payload"]["partner_id"] == str(p2.pk)
 

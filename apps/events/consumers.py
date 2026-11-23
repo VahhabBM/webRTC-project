@@ -499,7 +499,9 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
             return
         if current != self.channel_name:
             return
-        await database_sync_to_async(remove_presence)(self.participant, self.channel_name)
+        await database_sync_to_async(remove_presence)(
+            self.participant, self.channel_name
+        )
         try:
             await database_sync_to_async(cache.delete)(key)
         except Exception:
@@ -514,9 +516,15 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
         if not self.participant:
             return False
         try:
-            return cache.get(connection_channel_key(self.participant.pk)) == self.channel_name
+            return (
+                cache.get(connection_channel_key(self.participant.pk))
+                == self.channel_name
+            )
         except Exception:
-            logger.exception("Connection ownership check failed for participant %s", self.participant.pk)
+            logger.exception(
+                "Connection ownership check failed for participant %s",
+                self.participant.pk,
+            )
             return False
 
     async def _begin_absence_watch(self) -> None:

@@ -1,12 +1,21 @@
-from datetime import timedelta
 import json
+from datetime import timedelta
+
 import pytest
 from django.core import mail
 from django.utils import timezone
 
 from apps.events.email_notifications import send_event_matches_summary_emails
 from apps.events.matching import MatchParticipant, _accepts
-from apps.events.models import Event, EventStatus, Pair, PairInterest, Participant, ParticipantIncidentNote, RegistrationStatus
+from apps.events.models import (
+    Event,
+    EventStatus,
+    Pair,
+    PairInterest,
+    Participant,
+    ParticipantIncidentNote,
+    RegistrationStatus,
+)
 from apps.registration.capacity import count_reserved_seats, has_registration_capacity
 from apps.registration.forms import validate_registration_data
 from apps.registration.legal_documents import REQUIRED_CONSENTS
@@ -32,7 +41,7 @@ class TestGenderRegistrationCaps:
         assert has_registration_capacity(sample_event, gender="Female") is True
 
         # Register 1st male
-        p1 = Participant.objects.create(
+        Participant.objects.create(
             event=sample_event,
             display_name="Male 1",
             gender="Male",
@@ -41,7 +50,7 @@ class TestGenderRegistrationCaps:
         assert has_registration_capacity(sample_event, gender="Male") is True
 
         # Register 2nd male (hits cap of 2)
-        p2 = Participant.objects.create(
+        Participant.objects.create(
             event=sample_event,
             display_name="Male 2",
             gender="Male",
@@ -52,7 +61,7 @@ class TestGenderRegistrationCaps:
 
         # Female cap is 1
         assert has_registration_capacity(sample_event, gender="Female") is True
-        p3 = Participant.objects.create(
+        Participant.objects.create(
             event=sample_event,
             display_name="Female 1",
             gender="Female",
@@ -101,9 +110,15 @@ class TestWantToDateAndAgePreferences:
         assert res["age_pref_max"] == 40
 
     def test_matching_accepts_multi_value_and_single(self):
-        seeker_any = MatchParticipant(pid="p1", profile=None, gender="Male", want_to_date="Any")
-        seeker_mf = MatchParticipant(pid="p2", profile=None, gender="Male", want_to_date="Female,Male")
-        seeker_f = MatchParticipant(pid="p3", profile=None, gender="Male", want_to_date="Female")
+        seeker_any = MatchParticipant(
+            pid="p1", profile=None, gender="Male", want_to_date="Any"
+        )
+        seeker_mf = MatchParticipant(
+            pid="p2", profile=None, gender="Male", want_to_date="Female,Male"
+        )
+        seeker_f = MatchParticipant(
+            pid="p3", profile=None, gender="Male", want_to_date="Female"
+        )
 
         target_f = MatchParticipant(pid="p4", profile=None, gender="Female")
         target_m = MatchParticipant(pid="p5", profile=None, gender="Male")
@@ -147,6 +162,7 @@ class TestMatchesSummaryEmail:
         )
 
         from apps.events.models import Round
+
         round1 = Round.objects.create(
             event=sample_event,
             number=1,
@@ -236,7 +252,7 @@ class TestIncidentReporting:
             starts_at=timezone.now() - timedelta(minutes=15),
             ends_at=timezone.now() - timedelta(minutes=5),
         )
-        pair = Pair.objects.create(
+        Pair.objects.create(
             event=sample_event,
             round=round_obj,
             participant_a=p1,
@@ -250,11 +266,13 @@ class TestIncidentReporting:
 
         response = client.post(
             "/api/report-incident/",
-            data=json.dumps({
-                "report": "Inappropriate comment during date",
-                "room_id": "room-incident-test",
-                "round_number": 1,
-            }),
+            data=json.dumps(
+                {
+                    "report": "Inappropriate comment during date",
+                    "room_id": "room-incident-test",
+                    "round_number": 1,
+                }
+            ),
             content_type="application/json",
         )
         assert response.status_code == 200

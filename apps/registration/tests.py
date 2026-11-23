@@ -61,7 +61,9 @@ class RegistrationTests(TestCase):
         self.assertIsNone(participant.joined_at)
         self.assertEqual(participant.registration_status, "confirmed")
         self.assertIsNone(participant.email_verified_at)
-        self.assertFalse(EmailVerificationToken.objects.filter(participant=participant).exists())
+        self.assertFalse(
+            EmailVerificationToken.objects.filter(participant=participant).exists()
+        )
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("Registration complete", mail.outbox[0].subject)
         self.assertNotIn("/verify/", mail.outbox[0].body)
@@ -95,15 +97,24 @@ class RegistrationTests(TestCase):
 
     def test_duplicate_email_is_case_insensitive(self):
         self._register()
-        response = self._register(email=" ALI@EXAMPLE.COM ", email_confirmation="ali@example.com")
+        response = self._register(
+            email=" ALI@EXAMPLE.COM ", email_confirmation="ali@example.com"
+        )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["code"], "duplicate_email")
 
     def test_same_nickname_can_register_with_different_email(self):
         self._register()
-        response = self._register(email="other@example.com", email_confirmation="other@example.com")
+        response = self._register(
+            email="other@example.com", email_confirmation="other@example.com"
+        )
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(Participant.objects.filter(event=self.event, display_name="علی رضایی").count(), 2)
+        self.assertEqual(
+            Participant.objects.filter(
+                event=self.event, display_name="علی رضایی"
+            ).count(),
+            2,
+        )
 
     def test_capacity_exhaustion_waitlists_immediately(self):
         from django.test import override_settings

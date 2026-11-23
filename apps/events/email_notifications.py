@@ -19,7 +19,7 @@ EVENT_ACCESS_LEAD_HOURS = 9
 @transaction.atomic
 def send_registration_receipt_once(participant_id) -> bool:
     """Deliver an explicitly queued receipt; leave failed sends retryable.
-    
+
     For confirmed participants, immediately attaches their personal event access link
     so only one comprehensive confirmation email is sent upon registration.
     """
@@ -191,14 +191,12 @@ def send_due_event_reminders_for_event(event, *, now=None) -> int:
 @transaction.atomic
 def send_event_matches_summary_emails(event_id, *, force_resend: bool = False) -> int:
     """Send one consolidated email with all mutual matches to each attendee of the event.
-    
+
     Excludes participants who did not attend / never connected to the room.
     """
     event = Event.objects.get(pk=event_id)
     participants_qs = (
-        Participant.objects.select_for_update()
-        .filter(event=event)
-        .exclude(email="")
+        Participant.objects.select_for_update().filter(event=event).exclude(email="")
     )
     if not force_resend:
         participants_qs = participants_qs.filter(matches_email_sent_at__isnull=True)

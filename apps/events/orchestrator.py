@@ -85,7 +85,11 @@ def current_pair_for_participant(
     if timezone.is_naive(current):
         current = timezone.make_aware(current, UTC)
     phase, active_round, _remaining = RoundScheduler(event).get_current_phase(current)
-    if not active_round or phase not in (EventPhase.PRECONNECT, EventPhase.IN_ROUND, EventPhase.PAUSED):
+    if not active_round or phase not in (
+        EventPhase.PRECONNECT,
+        EventPhase.IN_ROUND,
+        EventPhase.PAUSED,
+    ):
         return None
     return (
         Pair.objects.filter(event_id=event.pk, round_id=active_round.pk)
@@ -316,11 +320,15 @@ class OrchestratorRealtime:
         )
 
     @staticmethod
-    def pairing_delivery_key(round_number: int, room_id: str, participant_id: str) -> str:
+    def pairing_delivery_key(
+        round_number: int, room_id: str, participant_id: str
+    ) -> str:
         return f"r{round_number}:pairing:{room_id}:{participant_id}"
 
     @staticmethod
-    def round_start_delivery_key(round_number: int, room_id: str, participant_id: str) -> str:
+    def round_start_delivery_key(
+        round_number: int, room_id: str, participant_id: str
+    ) -> str:
         return f"r{round_number}:round_start:{room_id}:{participant_id}"
 
     def _pairing_message(self, recipient: PairingRecipient, round_obj: Round) -> dict:
@@ -634,8 +642,10 @@ class OrchestratorRealtime:
         current = self._now(now)
         scheduler = RoundScheduler(self.event)
         phase, active_round, _remaining = scheduler.get_current_phase(current)
-        messages = [] if phase == EventPhase.PAUSED else self.interest_prompt_messages_for_participant(
-            participant, now=current
+        messages = (
+            []
+            if phase == EventPhase.PAUSED
+            else self.interest_prompt_messages_for_participant(participant, now=current)
         )
         if phase == EventPhase.COMPLETED:
             return messages + [
@@ -663,7 +673,9 @@ class OrchestratorRealtime:
         recipient = recipients[0]
         pairing = self._pairing_message(recipient, active_round)
         if phase == EventPhase.PAUSED and _remaining is not None:
-            pairing["payload"]["round_end_ts"] = self._server_ts_ms(current) + int(_remaining.total_seconds() * 1000)
+            pairing["payload"]["round_end_ts"] = self._server_ts_ms(current) + int(
+                _remaining.total_seconds() * 1000
+            )
         messages.append(pairing)
         if phase in (EventPhase.IN_ROUND, EventPhase.PAUSED):
             messages.append(
@@ -675,11 +687,20 @@ class OrchestratorRealtime:
             )
         if phase == EventPhase.PAUSED:
             log = self.event.operator_logs.filter(action="pause").first()
-            messages.append({"type": "operator.pause", "payload": {
-                "round_number": active_round.number,
-                "remaining_seconds": int(_remaining.total_seconds()) if _remaining else 0,
-                "paused_at": log.details.get("paused_at") if log else current.isoformat(),
-            }})
+            messages.append(
+                {
+                    "type": "operator.pause",
+                    "payload": {
+                        "round_number": active_round.number,
+                        "remaining_seconds": int(_remaining.total_seconds())
+                        if _remaining
+                        else 0,
+                        "paused_at": log.details.get("paused_at")
+                        if log
+                        else current.isoformat(),
+                    },
+                }
+            )
         return messages
 
     def interest_prompt_jobs(
@@ -691,12 +712,14 @@ class OrchestratorRealtime:
         if current < round_obj.ends_at or current > deadline:
             return []
 
-        pairs = Pair.objects.filter(
-            round_id=round_obj.pk, event_id=self.event.pk
-        ).exclude(status="cancelled").select_related(
-            "participant_a",
-            "participant_b",
-            "interest",
+        pairs = (
+            Pair.objects.filter(round_id=round_obj.pk, event_id=self.event.pk)
+            .exclude(status="cancelled")
+            .select_related(
+                "participant_a",
+                "participant_b",
+                "interest",
+            )
         )
         jobs = []
         for pair in pairs:
@@ -778,8 +801,7 @@ class OrchestratorRealtime:
                 interest__participant_a_interested=True,
                 interest__participant_b_interested=True,
                 round__ends_at__lte=current,
-            )
-            .filter(Q(participant_a=participant) | Q(participant_b=participant))
+            ).filter(Q(participant_a=participant) | Q(participant_b=participant))
         ).select_related("participant_a", "participant_b", "round", "interest")
         for pair in mutual_pairs:
             participant_is_a = pair.participant_a_id == participant.pk
@@ -804,9 +826,7 @@ class OrchestratorRealtime:
             ends_at__gte=current - INTEREST_RESPONSE_WINDOW,
         ).order_by("number")
         for round_obj in recent_rounds:
-            for job_group, message in self.interest_prompt_jobs(
-                round_obj, now=current
-            ):
+            for job_group, message in self.interest_prompt_jobs(round_obj, now=current):
                 if job_group == group:
                     payload = message["payload"]
                     messages_by_key.setdefault(

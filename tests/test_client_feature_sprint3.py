@@ -1,30 +1,25 @@
 import re
-import uuid
 from datetime import timedelta
-import pytest
+
+from django.core.cache import cache
 from django.test import Client, TestCase
 from django.utils import timezone
 
 from apps.events.countries import (
-    ALLOWED_COUNTRY_CHOICES,
     ALLOWED_REGISTRATION_COUNTRIES,
-    COUNTRY_CHOICES,
 )
 from apps.events.live_dispatch import WAIT_MESSAGES
 from apps.events.live_matching import _cap, reconcile_live_round
 from apps.events.models import (
     Event,
     EventStatus,
-    Pair,
     Participant,
     RegistrationStatus,
     Round,
     RoundStatus,
 )
 from apps.events.orchestrator import connection_channel_key
-from apps.events.presence import publish_presence
 from apps.registration.forms import RegistrationError, validate_registration_data
-from django.core.cache import cache
 
 
 class ClientFeatureSprint3Tests(TestCase):
@@ -54,7 +49,9 @@ class ClientFeatureSprint3Tests(TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.content.decode("utf-8")
         self.assertIn("<h1>Exclusive European Speed Dating Night</h1>", html)
-        self.assertIn("<title>Exclusive European Speed Dating Night - Registration</title>", html)
+        self.assertIn(
+            "<title>Exclusive European Speed Dating Night - Registration</title>", html
+        )
         self.assertNotIn("<h1>SPEED DATING REGISTRATION</h1>", html)
 
     # -------------------------------------------------------------
@@ -139,7 +136,10 @@ class ClientFeatureSprint3Tests(TestCase):
         alloc = reconcile_live_round(self.event, round_1, now=self.now)
         self.assertEqual(len(alloc["new_pairs"]), 1)
         created_pair = alloc["new_pairs"][0]
-        pair_pids = {str(created_pair.participant_a_id), str(created_pair.participant_b_id)}
+        pair_pids = {
+            str(created_pair.participant_a_id),
+            str(created_pair.participant_b_id),
+        }
         self.assertEqual(pair_pids, {str(p_ireland.pk), str(p_germany.pk)})
 
     # -------------------------------------------------------------
@@ -148,20 +148,22 @@ class ClientFeatureSprint3Tests(TestCase):
     def test_zero_persian_text_in_templates_and_js(self):
         """Verify video_room.html and call_room.js contain no Persian Unicode characters."""
         persian_pattern = re.compile(r"[\u0600-\u06FF]")
-        with open("apps/events/templates/events/video_room.html", "r", encoding="utf-8") as f:
+        with open(
+            "apps/events/templates/events/video_room.html", encoding="utf-8"
+        ) as f:
             content = f.read()
             self.assertFalse(
                 persian_pattern.search(content),
-                "Persian characters found in video_room.html!"
+                "Persian characters found in video_room.html!",
             )
             self.assertIn("Leave Date", content)
             self.assertNotIn("خروج", content)
 
-        with open("apps/events/static/events/js/call_room.js", "r", encoding="utf-8") as f:
+        with open("apps/events/static/events/js/call_room.js", encoding="utf-8") as f:
             content_js = f.read()
             self.assertFalse(
                 persian_pattern.search(content_js),
-                "Persian characters found in call_room.js!"
+                "Persian characters found in call_room.js!",
             )
 
     # -------------------------------------------------------------

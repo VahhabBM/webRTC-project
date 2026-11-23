@@ -5,20 +5,24 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('events', '0018_event_registration_capabilities'),
+        ("events", "0018_event_registration_capabilities"),
     ]
 
     operations = [
         migrations.RenameIndex(
-            model_name='waitlistinvitation',
-            new_name='events_wait_event_i_678a27_idx',
-            old_name='events_wait_e8a2f3_idx',
+            model_name="waitlistinvitation",
+            new_name="events_wait_event_i_678a27_idx",
+            old_name="events_wait_e8a2f3_idx",
         ),
         migrations.AlterField(
-            model_name='event',
-            name='intro_video_url',
-            field=models.URLField(blank=True, default='', help_text='Optional direct HTTPS MP4/WebM video URL played before the first round.', validators=[django.core.validators.URLValidator(schemes=['https'])]),
+            model_name="event",
+            name="intro_video_url",
+            field=models.URLField(
+                blank=True,
+                default="",
+                help_text="Optional direct HTTPS MP4/WebM video URL played before the first round.",
+                validators=[django.core.validators.URLValidator(schemes=["https"])],
+            ),
         ),
     ]

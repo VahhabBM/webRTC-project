@@ -193,9 +193,7 @@ def test_caps_fairness_and_failed_attempt_does_not_consume_success_quota(live_ev
     result = reconcile_live_round(event, round_obj, now=now)
     failed.refresh_from_db()
     assert failed.status == PairStatus.CANCELLED
-    assert result["cancelled_participant_ids"] == {
-        str(used_male.pk), str(female.pk)
-    }
+    assert result["cancelled_participant_ids"] == {str(used_male.pk), str(female.pk)}
     assert len(result["new_pairs"]) == 1
     assert {
         result["new_pairs"][0].participant_a_id,
@@ -320,7 +318,8 @@ def test_established_call_absence_grace_releases_online_counterpart(live_event):
     pair.refresh_from_db()
     assert pair.status == PairStatus.CANCELLED
     assert expired["cancelled_participant_ids"] == {
-        str(absent_male.pk), str(present_female.pk)
+        str(absent_male.pk),
+        str(present_female.pk),
     }
     assert len(expired["new_pairs"]) == 1
     assert {

@@ -4,20 +4,19 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('events', '0020_eventregistrationstatssnapshot'),
+        ("events", "0020_eventregistrationstatssnapshot"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='event',
-            name='female_date_limit',
+            model_name="event",
+            name="female_date_limit",
             field=models.PositiveSmallIntegerField(default=8),
         ),
         migrations.AlterField(
-            model_name='event',
-            name='male_date_limit',
+            model_name="event",
+            name="male_date_limit",
             field=models.PositiveSmallIntegerField(default=4),
         ),
     ]

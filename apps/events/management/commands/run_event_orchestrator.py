@@ -34,9 +34,9 @@ class Command(BaseCommand):
         while True:
             close_old_connections()
             now = timezone.now()
-            events = Event.objects.filter(start_time__lte=now + timedelta(seconds=20)).exclude(
-                status__in=("draft", "cancelled", "paused")
-            )
+            events = Event.objects.filter(
+                start_time__lte=now + timedelta(seconds=20)
+            ).exclude(status__in=("draft", "cancelled", "paused"))
             for event in events.iterator():
                 if scheduled_event_end(event) < now - timedelta(minutes=10):
                     continue

@@ -13,7 +13,7 @@ from django.views import View
 from django.views.decorators.http import require_http_methods
 
 from apps.events.auth import event_end
-from apps.events.countries import ALLOWED_COUNTRY_CHOICES, COUNTRY_CHOICES
+from apps.events.countries import ALLOWED_COUNTRY_CHOICES
 from apps.events.email_notifications import (
     send_event_access_email_once,
     send_registration_receipt_once,
@@ -118,7 +118,9 @@ def register_view(request, event_id=None):
                     status=400,
                 )
             tag_ids = payload.get("tag_ids") or []
-            if tag_ids and Tag.objects.filter(id__in=tag_ids).count() != len(set(tag_ids)):
+            if tag_ids and Tag.objects.filter(id__in=tag_ids).count() != len(
+                set(tag_ids)
+            ):
                 return JsonResponse(
                     {"error": "Choose valid tags.", "code": "invalid_tags"},
                     status=400,
@@ -172,7 +174,9 @@ def register_view(request, event_id=None):
         send_registration_receipt_once(participant.pk)
     except Exception:
         # Registration is committed. The scheduler retries its durable receipt queue.
-        logger.exception("Registration receipt delivery failed for participant %s", participant.pk)
+        logger.exception(
+            "Registration receipt delivery failed for participant %s", participant.pk
+        )
 
     return JsonResponse(
         {
@@ -269,20 +273,27 @@ def verify_email_view(request, token):
             participant = Participant.objects.select_for_update().get(pk=participant.pk)
             now = timezone.now()
             if locked_token.used_at or locked_token.expires_at <= now:
-                return JsonResponse(
-                    {"error": "This link has expired or has already been used."},
-                    status=410,
-                ) if is_json_request else _safe_render(
-                    request,
-                    ["registration/token_expired.html", "registration/verify_result.html"],
-                    {
-                        "title": "Expired or Used Link",
-                        "message": "This verification link has already been used.",
-                        "success": False,
-                        "valid": False,
-                        "expired": True,
-                    },
-                    status=410,
+                return (
+                    JsonResponse(
+                        {"error": "This link has expired or has already been used."},
+                        status=410,
+                    )
+                    if is_json_request
+                    else _safe_render(
+                        request,
+                        [
+                            "registration/token_expired.html",
+                            "registration/verify_result.html",
+                        ],
+                        {
+                            "title": "Expired or Used Link",
+                            "message": "This verification link has already been used.",
+                            "success": False,
+                            "valid": False,
+                            "expired": True,
+                        },
+                        status=410,
+                    )
                 )
             locked_token.used_at = now
             locked_token.save(update_fields=["used_at"])
@@ -292,14 +303,11 @@ def verify_email_view(request, token):
                     participant.reservation_expires_at
                     and participant.reservation_expires_at > now
                 )
-                if (
-                    not has_active_reservation
-                    and not has_registration_capacity(
-                        event,
-                        gender=participant.gender,
-                        now=now,
-                        exclude_participant_id=participant.pk,
-                    )
+                if not has_active_reservation and not has_registration_capacity(
+                    event,
+                    gender=participant.gender,
+                    now=now,
+                    exclude_participant_id=participant.pk,
                 ):
                     participant.registration_status = RegistrationStatus.WAITLISTED
                     participant.reservation_expires_at = None
@@ -487,7 +495,9 @@ def accept_waitlist_invitation(request, token):
             .first()
         )
         if invitation is None:
-            return JsonResponse({"error": "Invitation is no longer available."}, status=410)
+            return JsonResponse(
+                {"error": "Invitation is no longer available."}, status=410
+            )
         participant = Participant.objects.select_for_update().get(
             pk=invitation.participant_id
         )
@@ -512,7 +522,11 @@ def accept_waitlist_invitation(request, token):
         participant.registration_status = RegistrationStatus.CONFIRMED
         participant.reservation_expires_at = None
         participant.save(
-            update_fields=["registration_status", "reservation_expires_at", "updated_at"]
+            update_fields=[
+                "registration_status",
+                "reservation_expires_at",
+                "updated_at",
+            ]
         )
         invitation.accepted_at = now
         invitation.save(update_fields=["accepted_at"])
