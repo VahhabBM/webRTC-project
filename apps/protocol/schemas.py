@@ -144,6 +144,20 @@ def build_server_pairing(
     return build_message(MessageType.SERVER_PAIRING, **payload)
 
 
+def build_server_waiting(
+    *, reason: str, round_number: int, server_ts: int, next_check_ts: int, message: str
+) -> dict:
+    """Build a bounded, server-authored waiting status for a participant."""
+    return build_message(
+        MessageType.SERVER_WAITING,
+        reason=reason,
+        round_number=round_number,
+        server_ts=server_ts,
+        next_check_ts=next_check_ts,
+        message=message,
+    )
+
+
 def build_server_round_start(
     *, round_number: int, room_id: str, server_ts: int
 ) -> dict:
@@ -173,12 +187,41 @@ def build_server_round_warning(
     )
 
 
-def build_server_round_end(*, round_number: int, server_ts: int) -> dict:
+def build_server_round_end(
+    *, round_number: int, server_ts: int, break_duration_seconds: int | None = None
+) -> dict:
     """Build a ``server.round_end`` message."""
-    return build_message(
-        MessageType.SERVER_ROUND_END,
+    payload: dict[str, Any] = dict(
         round_number=round_number,
         server_ts=server_ts,
+    )
+    if break_duration_seconds is not None:
+        payload["break_duration_seconds"] = break_duration_seconds
+    return build_message(MessageType.SERVER_ROUND_END, **payload)
+
+
+def build_server_interest_prompt(
+    *,
+    round_number: int,
+    room_id: str,
+    partner_display_name: str,
+    server_ts: int,
+    deadline_ts: int,
+    own_response: bool | None = None,
+    mutual: bool = False,
+    partner_whatsapp: str | None = None,
+) -> dict:
+    """Build a private, server-timed WhatsApp-sharing prompt or result."""
+    return build_message(
+        MessageType.SERVER_INTEREST_PROMPT,
+        round_number=round_number,
+        room_id=room_id,
+        partner_display_name=partner_display_name,
+        server_ts=server_ts,
+        deadline_ts=deadline_ts,
+        own_response=own_response,
+        mutual=mutual,
+        partner_whatsapp=partner_whatsapp if mutual else None,
     )
 
 

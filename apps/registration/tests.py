@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
+from django.core import mail
 from django.core.cache import cache
 from django.test import Client, TestCase
 from django.utils import timezone
 
+from apps.events.auth import authenticate_join_token, issue_join_token
 from apps.events.models import Event, EventStatus, Participant, Tag
 
 from .models import EmailVerificationToken
@@ -31,8 +33,17 @@ class RegistrationTests(TestCase):
         payload = {
             "display_name": "علی رضایی",
             "email": "ali@example.com",
+            "email_confirmation": "ali@example.com",
+            "age": 30,
+            "country": "NZ",
+            "city": "Wellington",
             "tag_ids": [str(self.tag1.id)],
-            "accepted_terms": True,
+            "consents": {
+                "age_confirmation": True,
+                "sensitive_data_processing": True,
+                "mutual_contact_sharing": True,
+                "terms_and_privacy": True,
+            },
         }
         payload.update(overrides)
         return self.client.post(
@@ -48,6 +59,12 @@ class RegistrationTests(TestCase):
         participant = Participant.objects.first()
         self.assertEqual(participant.email, "ali@example.com")
         self.assertIsNone(participant.joined_at)
+        self.assertEqual(participant.registration_status, "confirmed")
+        self.assertIsNone(participant.email_verified_at)
+        self.assertFalse(EmailVerificationToken.objects.filter(participant=participant).exists())
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("Registration complete", mail.outbox[0].subject)
+        self.assertNotIn("/verify/", mail.outbox[0].body)
 
     def test_duplicate_email_in_same_event_is_rejected(self):
         self._register()
@@ -55,10 +72,10 @@ class RegistrationTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["code"], "duplicate_email")
 
-    def test_registration_without_accepted_terms_is_rejected(self):
-        response = self._register(accepted_terms=False)
+    def test_registration_without_all_required_consents_is_rejected(self):
+        response = self._register(consents={"age_confirmation": True})
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["code"], "terms_not_accepted")
+        self.assertEqual(response.json()["code"], "consents_required")
 
     def test_registration_with_too_many_tags_is_rejected(self):
         extra_tags = [Tag.objects.create(name=f"تگ{i}").id for i in range(6)]
@@ -66,12 +83,36 @@ class RegistrationTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["code"], "invalid_tag_count")
 
-    def test_registration_creates_verification_token(self):
+    def test_missing_repeated_email_is_rejected(self):
+        response = self._register(email_confirmation="")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["code"], "email_confirmation_required")
+
+    def test_mismatched_repeated_email_is_rejected(self):
+        response = self._register(email_confirmation="other@example.com")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["code"], "email_mismatch")
+
+    def test_duplicate_email_is_case_insensitive(self):
         self._register()
-        participant = Participant.objects.first()
-        self.assertTrue(
-            EmailVerificationToken.objects.filter(participant=participant).exists()
-        )
+        response = self._register(email=" ALI@EXAMPLE.COM ", email_confirmation="ali@example.com")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["code"], "duplicate_email")
+
+    def test_same_nickname_can_register_with_different_email(self):
+        self._register()
+        response = self._register(email="other@example.com", email_confirmation="other@example.com")
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(Participant.objects.filter(event=self.event, display_name="علی رضایی").count(), 2)
+
+    def test_capacity_exhaustion_waitlists_immediately(self):
+        from django.test import override_settings
+
+        with override_settings(EVENT_REGISTRATION_CAPACITY=0):
+            response = self._register()
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["registration_status"], "waitlisted")
+        self.assertIn("waitlist", response.json()["message"])
 
 
 class VerifyEmailTests(TestCase):
@@ -93,6 +134,12 @@ class VerifyEmailTests(TestCase):
     def test_valid_token_confirms_participant(self):
         response = self.client.get(f"/registration/verify/{self.token.token}/")
         self.assertEqual(response.status_code, 200)
+        self.participant.refresh_from_db()
+        self.assertIsNotNone(self.participant.email_verified_at)
+        self.assertIsNone(self.participant.joined_at)
+
+        raw_join_token = issue_join_token(self.participant)
+        authenticate_join_token(raw_join_token)
         self.participant.refresh_from_db()
         self.assertIsNotNone(self.participant.joined_at)
 

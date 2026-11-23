@@ -6,7 +6,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.events.models import Event, ParticipantStatus, Tag
+from apps.events.models import Event, RegistrationStatus, Tag
 from apps.registration.models import EmailVerificationToken, Participant
 
 
@@ -22,12 +22,20 @@ class RegistrationEmailTestCase(TestCase):
         self.tag = Tag.objects.create(name="Backend")
         self.url = reverse("registration:register", args=[self.event.id])
 
-    def test_email_is_sent_and_activates_account(self):
+    def test_registration_completes_without_verification_email_or_token(self):
         payload = {
             "display_name": "Test User",
             "email": "test@example.com",
+            "email_confirmation": "test@example.com",
+            "age": 29,
+            "country": "GB",
             "tag_ids": [str(self.tag.id)],
-            "accepted_terms": True,
+            "consents": {
+                "age_confirmation": True,
+                "sensitive_data_processing": True,
+                "mutual_contact_sharing": True,
+                "terms_and_privacy": True,
+            },
         }
 
         # 1. Submit registration request
@@ -39,22 +47,16 @@ class RegistrationEmailTestCase(TestCase):
         )
         self.assertEqual(response.status_code, 201)
 
-        # 2. Verify email is created in outbox with English activation text
+        participant = Participant.objects.get(email="test@example.com", event=self.event)
+        self.assertEqual(participant.registration_status, RegistrationStatus.CONFIRMED)
+        self.assertIsNone(participant.email_verified_at)
+        self.assertIsNone(participant.joined_at)
+        self.assertFalse(EmailVerificationToken.objects.filter(participant=participant).exists())
         self.assertEqual(len(mail.outbox), 1)
-        email_body = mail.outbox[0].body
-        self.assertIn("activate", email_body.lower())
-
-        # 3. Verify token creation and account activation via verification URL
-        participant = Participant.objects.get(
-            email="test@example.com", event=self.event
-        )
-        token_obj = EmailVerificationToken.objects.get(participant=participant)
-
-        verify_url = reverse("registration:verify-email", args=[token_obj.token])
-        verify_response = self.client.get(verify_url)
-        self.assertEqual(verify_response.status_code, 200)
-
-        participant.refresh_from_db()
-        self.assertIsNotNone(participant.joined_at)
-        if hasattr(ParticipantStatus, "CONFIRMED"):
-            self.assertEqual(participant.status, ParticipantStatus.CONFIRMED)
+        self.assertIn("Registration complete", mail.outbox[0].subject)
+        self.assertIn("9 hours", mail.outbox[0].body)
+        self.assertNotIn("/verify/", mail.outbox[0].body)
+        self.assertNotIn("/join/", mail.outbox[0].body)
+        self.assertIsNotNone(participant.registration_receipt_sent_at)
+        self.assertFalse(participant.registration_receipt_pending)
+        self.assertIn("confirmed", response.json()["message"].lower())

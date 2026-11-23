@@ -66,3 +66,55 @@ class TestParticipantAdmin:
             f"/admin/events/participant/?status={ParticipantStatus.WAITING}"
         )
         assert filter_res.status_code == 200
+
+    def test_participants_are_newest_first_with_stable_ties_and_respect_sort(
+        self, client: Client
+    ):
+        admin_user = User.objects.create_superuser(
+            username="admin", email="admin@test.com", password="adminpassword"
+        )
+        client.force_login(admin_user)
+        event = Event.objects.create(
+            name="Ordering Event",
+            num_rounds=3,
+            round_duration=timedelta(minutes=5),
+            break_duration=timedelta(seconds=30),
+            start_time=timezone.now(),
+        )
+
+        participants = [
+            Participant.objects.create(
+                event=event,
+                display_name=f"Ordering User {i}",
+                email=f"ordering{i}@test.com",
+                status=ParticipantStatus.WAITING,
+            )
+            for i in range(3)
+        ]
+        now = timezone.now()
+        Participant.objects.filter(pk=participants[0].pk).update(
+            created_at=now - timedelta(days=2)
+        )
+        Participant.objects.filter(pk=participants[1].pk).update(
+            created_at=now
+        )
+        Participant.objects.filter(pk=participants[2].pk).update(
+            created_at=now
+        )
+
+        response = client.get("/admin/events/participant/")
+        assert response.status_code == 200
+        assert [p.pk for p in response.context["cl"].result_list] == [
+            *[p.pk for p in sorted(participants[1:], key=lambda p: p.pk, reverse=True)],
+            participants[0].pk,
+        ]
+
+        # An explicit ascending sort on the name column should override the
+        # default newest-first ordering.
+        response = client.get("/admin/events/participant/?o=1")
+        assert response.status_code == 200
+        assert [p.display_name for p in response.context["cl"].result_list] == [
+            "Ordering User 0",
+            "Ordering User 1",
+            "Ordering User 2",
+        ]

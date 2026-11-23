@@ -385,6 +385,11 @@ test("backoff retries T-14 hello on a new socket and ignores the stale one", asy
   second.open();
   assert.equal(second.sent[0].type, "client.hello");
   assert.equal(second.sent[0].version, 1);
+  controller._onServerHello({ server_ts: Date.now() });
+  await delay(0);
+  assert.equal(second.sent.filter((message) => message.type === "client.ready").length, 1);
+  controller._sendClientReady();
+  assert.equal(second.sent.filter((message) => message.type === "client.ready").length, 1);
   controller.disconnect();
 });
 

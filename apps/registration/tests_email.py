@@ -5,52 +5,30 @@ from apps.registration.services.email_service import EmailService
 
 
 class EmailServiceTests(SimpleTestCase):
-    def test_verify_email_rendering_and_dispatch(self):
-        """بررسی رندر شدن نسخه متنی و HTML قالب تایید ایمیل و راست‌چین بودن آن"""
-        context = {
-            "name": "علی",
-            "event_title": "رویداد تست",
-            "action_url": "http://localhost:8000/registration/verify/test-token-123/",
-            "expiration_hours": 24,
-        }
-
-        EmailService._send_worker(
-            subject="تست تایید ایمیل",
-            template_name="emails/verify_email.html",
-            context=context,
+    def test_event_access_email_dispatches_personal_link(self):
+        EmailService.send_event_access_email(
             recipient_email="user@example.com",
+            name="علی",
+            event_title="رویداد تست",
+            join_url="https://meetakk.example/join/private-token/",
         )
 
         self.assertEqual(len(mail.outbox), 1)
         sent = mail.outbox[0]
-        self.assertEqual(sent.subject, "تست تایید ایمیل")
-        self.assertIn("علی", sent.body)
+        self.assertEqual(sent.subject, "Your access link for: رویداد تست")
+        self.assertIn("private-token", sent.body)
         self.assertEqual(sent.to, ["user@example.com"])
 
-        # بررسی وجود HTML و ساختار RTL
-        html_parts = [
-            content for content, mime in sent.alternatives if mime == "text/html"
-        ]
-        self.assertEqual(len(html_parts), 1)
-        self.assertIn('dir="rtl"', html_parts[0])
-        self.assertIn("test-token-123", html_parts[0])
-
-    def test_magic_link_email_rendering(self):
-        """بررسی رندر شدن قالب لینک ورود یکتا"""
-        context = {
-            "name": "سارا",
-            "event_title": "وبینار شبکه",
-            "action_url": "http://localhost:8000/auth/session/magic-token-456/",
-        }
-
-        EmailService._send_worker(
-            subject="پیوند ورود",
-            template_name="emails/magic_link.html",
-            context=context,
+    def test_waitlist_invitation_email_dispatches(self):
+        EmailService.send_waitlist_invitation_email(
             recipient_email="sara@example.com",
+            name="سارا",
+            event_title="وبینار شبکه",
+            message="A place is available. Accept the invitation to confirm your place.",
         )
 
         self.assertEqual(len(mail.outbox), 1)
         sent = mail.outbox[0]
+        self.assertEqual(sent.subject, "A place is available for: وبینار شبکه")
         self.assertIn("سارا", sent.body)
-        self.assertIn("magic-token-456", sent.body)
+        self.assertIn("Accept the invitation", sent.body)

@@ -1,21 +1,40 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import logging
+import re
+import secrets
+from datetime import timedelta
 
 from django import forms
+from django.conf import settings
 from django.contrib import admin, messages
 from django.core.exceptions import ValidationError
+from django.core.validators import EmailValidator
+from django.db import transaction
 from django.db.models import Count, Q
-from django.http import HttpResponse
+from django.http import (
+    Http404,
+    HttpResponse,
+    HttpResponseForbidden,
+    HttpResponseNotAllowed,
+)
 from django.shortcuts import get_object_or_404, redirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils import timezone
 
+from apps.registration.services.email_service import EmailService
+
+from .auth import scheduled_event_end
+from .countries import COUNTRY_NAMES
+from .email_notifications import send_event_access_email_manually
 from .models import (
     DisconnectionCause,
     DisconnectionLog,
     Event,
+    EventRegistrationStatsSnapshot,
     EventStatus,
     OperatorActionLog,
     Pair,
@@ -23,9 +42,14 @@ from .models import (
     ParticipantIncidentNote,
     ParticipantStatus,
     ParticipantTag,
+    RegistrationStatus,
     Round,
     Tag,
+    WaitlistInvitation,
 )
+from .scheduler import has_live_schedule_evidence
+
+logger = logging.getLogger(__name__)
 
 for model in (ParticipantTag, Round, Pair):
     admin.site.register(model)
@@ -73,12 +97,47 @@ class EventAdminForm(forms.ModelForm):
         model = Event
         fields = "__all__"
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if "reminder_audience" in self.fields:
+            self.fields["reminder_audience"].required = False
+        if "early_exit_min_minutes" in self.fields:
+            self.fields["early_exit_min_minutes"].required = False
+        if "max_dates_per_participant" in self.fields:
+            self.fields["max_dates_per_participant"].required = False
+
     def clean(self):
         cleaned = super().clean()
         # Only validate when the instance already exists in the DB
         # (i.e. we are editing, not creating).
         if not self.instance.pk:
             return cleaned
+
+        if has_live_schedule_evidence(self.instance):
+            schedule_fields = (
+                "start_time",
+                "round_duration",
+                "break_duration",
+                "num_rounds",
+                "live_matching_enabled",
+            )
+            original = Event.objects.filter(pk=self.instance.pk).values(
+                *schedule_fields
+            ).first()
+            if original:
+                for field in schedule_fields:
+                    old_value = original[field]
+                    new_value = cleaned.get(field)
+                    if field == "start_time" and old_value and new_value:
+                        # Django's default admin widget round-trips to seconds,
+                        # while database timestamps may retain microseconds.
+                        old_value = old_value.replace(microsecond=0)
+                        new_value = new_value.replace(microsecond=0)
+                    if field in cleaned and new_value != old_value:
+                        self.add_error(
+                            field,
+                            "This schedule setting cannot change after live pair allocation or media evidence.",
+                        )
 
         enabling_unique = cleaned.get("unique_tags", False)
         was_unique = (
@@ -105,6 +164,38 @@ class EventAdminForm(forms.ModelForm):
                     f"then enable this setting."
                 )
         return cleaned
+
+
+class RegistrationInvitationForm(forms.Form):
+    recipients = forms.CharField(
+        label="Recipient email addresses",
+        widget=forms.Textarea(attrs={"rows": 6, "cols": 80}),
+        help_text="Enter one email address per line, or separate addresses with commas.",
+    )
+
+    def clean_recipients(self):
+        raw_value = self.cleaned_data["recipients"]
+        addresses = []
+        seen = set()
+        validator = EmailValidator()
+        for address in re.split(r"[,;\s]+", raw_value):
+            address = address.strip()
+            if not address or address.casefold() in seen:
+                continue
+            try:
+                validator(address)
+            except ValidationError as exc:
+                raise forms.ValidationError(
+                    "Enter valid email addresses; one or more entries are invalid."
+                ) from exc
+            seen.add(address.casefold())
+            addresses.append(address)
+
+        if not addresses:
+            raise forms.ValidationError("Enter at least one email address.")
+        if len(addresses) > 50:
+            raise forms.ValidationError("You can invite up to 50 people at a time.")
+        return addresses
 
 
 @admin.register(Event)
@@ -134,11 +225,39 @@ class EventAdmin(admin.ModelAdmin):
         "num_rounds",
         "round_duration",
         "break_duration",
+        "male_date_limit",
+        "female_date_limit",
+        "other_date_limit",
+        "max_dates_per_participant",
+        "male_registration_cap",
+        "female_registration_cap",
+        "intro_video_url",
+        "intro_video_duration_seconds",
         "unique_tags",
+        "live_matching_enabled",
+        "registration_paused",
+        "reminder_lead_time",
+        "reminder_audience",
+        "early_exit_min_minutes",
     )
+    readonly_fields = ("registration_paused",)
+    actions = ["send_selected_matches_summary_emails"]
+
+    @admin.action(description="Send consolidated match summary emails to participants")
+    def send_selected_matches_summary_emails(self, request, queryset):
+        from apps.events.email_notifications import send_event_matches_summary_emails
+
+        total_sent = 0
+        for event in queryset:
+            total_sent += send_event_matches_summary_emails(event.pk)
+        self.message_user(
+            request,
+            f"Delivered {total_sent} consolidated match summary email(s).",
+        )
 
     # Override the change-form template to inject custom tool buttons.
     change_form_template = "admin/events/event/change_form.html"
+    change_list_template = "admin/events/event/change_list.html"
 
     # ------------------------------------------------------------------ #
     # Queryset / display helpers                                         #
@@ -155,6 +274,31 @@ class EventAdmin(admin.ModelAdmin):
     def participants_count(self, obj):
         return obj.participants_count
 
+    def save_model(self, request, obj, form, change):
+        from apps.events.auth import extend_event_access_deadlines, scheduled_event_end
+        from apps.events.scheduler import RoundScheduler, has_live_schedule_evidence
+
+        fields = (
+            "start_time", "num_rounds", "round_duration", "break_duration",
+            "intro_video_url", "intro_video_duration_seconds", "live_matching_enabled",
+        )
+        with transaction.atomic():
+            previous = Event.objects.select_for_update().get(pk=obj.pk) if change else None
+            changed = previous is None or any(getattr(previous, field) != getattr(obj, field) for field in fields)
+            if previous and changed and has_live_schedule_evidence(previous):
+                raise ValidationError("Live allocation has started. Use the live pause, resume or extend controls instead of rebuilding the schedule.")
+            old_end = scheduled_event_end(previous) if previous else None
+            super().save_model(request, obj, form, change)
+            if changed and (obj.live_matching_enabled or obj.rounds.exists()):
+                RoundScheduler(obj).persist_schedule()
+                from django.core.cache import cache
+
+                keys = [f"orchestrator:{obj.pk}:event_end"]
+                keys.extend(f"orchestrator:{obj.pk}:r{number}:{action}" for number in range(1, 9) for action in ("pairing", "round_start", "round_end", "warning"))
+                cache.delete_many(keys)
+                if old_end is not None:
+                    extend_event_access_deadlines(obj, old_end, scheduled_event_end(obj))
+
     # ------------------------------------------------------------------ #
     # Custom URLs: matching report & live monitoring                     #
     # ------------------------------------------------------------------ #
@@ -162,6 +306,11 @@ class EventAdmin(admin.ModelAdmin):
     def get_urls(self):
         urls = super().get_urls()
         custom = [
+            path(
+                "operations-dashboard/",
+                self.admin_site.admin_view(self.operations_dashboard_view),
+                name="events_event_operations_dashboard",
+            ),
             path(
                 "<uuid:object_id>/matching-report/",
                 self.admin_site.admin_view(self.matching_report_view),
@@ -172,6 +321,31 @@ class EventAdmin(admin.ModelAdmin):
                 self.admin_site.admin_view(self.operator_monitoring_view),
                 name="events_event_live_monitoring",
             ),
+            path(
+                "<uuid:object_id>/registration-stats/",
+                self.admin_site.admin_view(self.registration_stats_view),
+                name="events_event_registration_stats",
+            ),
+            path(
+                "<uuid:object_id>/toggle-registration-pause/",
+                self.admin_site.admin_view(self.toggle_registration_pause_view),
+                name="events_event_toggle_registration_pause",
+            ),
+            path(
+                "<uuid:object_id>/waitlist/",
+                self.admin_site.admin_view(self.waitlist_view),
+                name="events_event_waitlist",
+            ),
+            path(
+                "<uuid:object_id>/registration-invitations/",
+                self.admin_site.admin_view(self.registration_invitation_view),
+                name="events_event_registration_invitations",
+            ),
+            path(
+                "<uuid:object_id>/waitlist/<uuid:participant_id>/invite/",
+                self.admin_site.admin_view(self.invite_waitlisted_participant),
+                name="events_event_waitlist_invite",
+            ),
         ]
         return custom + urls
 
@@ -181,14 +355,240 @@ class EventAdmin(admin.ModelAdmin):
 
     def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
         extra_context = extra_context or {}
+        extra_context["operations_dashboard_url"] = reverse(
+            "admin:events_event_operations_dashboard"
+        )
         if object_id:
+            extra_context["registration_pause_url"] = reverse(
+                "admin:events_event_toggle_registration_pause", args=[object_id]
+            )
+            extra_context["registration_paused"] = Event.objects.filter(
+                pk=object_id
+            ).values_list("registration_paused", flat=True).first()
+            extra_context["can_toggle_registration_pause"] = (
+                request.user.has_perm("events.change_event")
+            )
             extra_context["matching_report_url"] = reverse(
                 "admin:events_event_matching_report", args=[object_id]
             )
             extra_context["live_monitoring_url"] = reverse(
                 "admin:events_event_live_monitoring", args=[object_id]
             )
-        return super().changeform_view(request, object_id, form_url, extra_context)
+            extra_context["registration_stats_url"] = reverse(
+                "admin:events_event_registration_stats", args=[object_id]
+            )
+            extra_context["waitlist_url"] = reverse(
+                "admin:events_event_waitlist", args=[object_id]
+            )
+            extra_context["registration_invitations_url"] = reverse(
+                "admin:events_event_registration_invitations", args=[object_id]
+            )
+            if request.user.has_perm("events.view_participant"):
+                extra_context["participants_url"] = (
+                    f"{reverse('admin:events_participant_changelist')}?"
+                    f"event__id__exact={object_id}"
+                )
+        try:
+            return super().changeform_view(request, object_id, form_url, extra_context)
+        except ValidationError as exc:
+            self.message_user(request, "; ".join(exc.messages), level=messages.ERROR)
+            return redirect(request.path)
+
+    def toggle_registration_pause_view(self, request, object_id):
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+        event = get_object_or_404(Event, pk=object_id)
+        if not self.has_change_permission(request, event):
+            return HttpResponseForbidden(
+                "You do not have permission to change this event."
+            )
+
+        desired_state = request.POST.get("registration_paused")
+        if desired_state not in ("0", "1"):
+            return HttpResponse("Choose whether to pause or reopen registration.", status=400)
+
+        with transaction.atomic():
+            event = Event.objects.select_for_update().get(pk=object_id)
+            paused = desired_state == "1"
+            if event.registration_paused != paused:
+                event.registration_paused = paused
+                event.save(update_fields=["registration_paused", "updated_at"])
+                self.log_change(request, event, "Public registration paused." if paused else "Public registration reopened.")
+
+        state = "paused" if event.registration_paused else "reopened"
+        self.message_user(request, f"Public registration {state} for this event.")
+        return redirect(reverse("admin:events_event_change", args=[object_id]))
+
+    def operations_dashboard_view(self, request):
+        """Show staff a live, event-level overview and its operational tools."""
+        if not request.user.has_perm("events.view_event"):
+            return HttpResponseForbidden(
+                "You do not have permission to view the event dashboard."
+            )
+
+        now = timezone.now()
+        annotated_events = Event.objects.select_related(
+            "registration_stats_snapshot"
+        ).annotate(
+            registrations_count=Count("participants", distinct=True),
+            confirmed_count=Count(
+                "participants",
+                filter=Q(
+                    participants__registration_status=RegistrationStatus.CONFIRMED
+                ),
+                distinct=True,
+            ),
+            waitlisted_count=Count(
+                "participants",
+                filter=Q(
+                    participants__registration_status=RegistrationStatus.WAITLISTED
+                ),
+                distinct=True,
+            ),
+        )
+        live_statuses = (
+            EventStatus.ACTIVE,
+            EventStatus.RUNNING,
+            EventStatus.PAUSED,
+        )
+        upcoming_statuses = (
+            EventStatus.REGISTRATION_OPEN,
+            EventStatus.SCHEDULED,
+            EventStatus.LOCKED,
+        )
+        active_events = list(
+            annotated_events.filter(status__in=live_statuses).order_by("start_time")
+        )
+        upcoming_events = list(
+            annotated_events.filter(
+                status__in=upcoming_statuses, start_time__gte=now
+            ).order_by("start_time")[:25]
+        )
+        recent_events = list(
+            annotated_events.filter(
+                status__in=(EventStatus.COMPLETED, EventStatus.CANCELLED)
+            ).order_by("-start_time")[:10]
+        )
+        overview_statuses = (*live_statuses, *upcoming_statuses)
+
+        confirmed_qs = Participant.objects.filter(
+            event__status__in=overview_statuses,
+            registration_status=RegistrationStatus.CONFIRMED,
+        )
+        total_confirmed = confirmed_qs.count()
+        male_confirmed = confirmed_qs.filter(gender__iexact="male").count()
+        female_confirmed = confirmed_qs.filter(gender__iexact="female").count()
+        other_confirmed = total_confirmed - (male_confirmed + female_confirmed)
+
+        attended_qs = confirmed_qs.filter(joined_at__isnull=False)
+        total_attended = attended_qs.count()
+        male_attended = attended_qs.filter(gender__iexact="male").count()
+        female_attended = attended_qs.filter(gender__iexact="female").count()
+        other_attended = total_attended - (male_attended + female_attended)
+
+        total_noshow = max(0, total_confirmed - total_attended)
+        male_noshow = max(0, male_confirmed - male_attended)
+        female_noshow = max(0, female_confirmed - female_attended)
+        other_noshow = max(0, other_confirmed - other_attended)
+
+        paired_pids = set(
+            Pair.objects.values_list("participant_a_id", flat=True)
+        ) | set(
+            Pair.objects.values_list("participant_b_id", flat=True)
+        )
+        total_paired = confirmed_qs.filter(id__in=paired_pids).count()
+        male_paired = confirmed_qs.filter(id__in=paired_pids, gender__iexact="male").count()
+        female_paired = confirmed_qs.filter(id__in=paired_pids, gender__iexact="female").count()
+
+        active_online_statuses = (
+            ParticipantStatus.READY,
+            ParticipantStatus.ACTIVE,
+            ParticipantStatus.WAITING,
+        )
+        online_qs = confirmed_qs.filter(status__in=active_online_statuses)
+        total_online = online_qs.count()
+        male_online = online_qs.filter(gender__iexact="male").count()
+        female_online = online_qs.filter(gender__iexact="female").count()
+
+        attendance_metrics = {
+            "total": {
+                "confirmed": total_confirmed,
+                "attended": total_attended,
+                "noshow": total_noshow,
+                "attendance_rate": f"{(total_attended * 100 / total_confirmed):.1f}%" if total_confirmed else "0.0%",
+                "paired": total_paired,
+                "online": total_online,
+            },
+            "male": {
+                "confirmed": male_confirmed,
+                "attended": male_attended,
+                "noshow": male_noshow,
+                "attendance_rate": f"{(male_attended * 100 / male_confirmed):.1f}%" if male_confirmed else "0.0%",
+                "paired": male_paired,
+                "online": male_online,
+            },
+            "female": {
+                "confirmed": female_confirmed,
+                "attended": female_attended,
+                "noshow": female_noshow,
+                "attendance_rate": f"{(female_attended * 100 / female_confirmed):.1f}%" if female_confirmed else "0.0%",
+                "paired": female_paired,
+                "online": female_online,
+            },
+            "other": {
+                "confirmed": other_confirmed,
+                "attended": other_attended,
+                "noshow": other_noshow,
+                "attendance_rate": f"{(other_attended * 100 / other_confirmed):.1f}%" if other_confirmed else "0.0%",
+                "paired": max(0, total_paired - (male_paired + female_paired)),
+                "online": max(0, total_online - (male_online + female_online)),
+            },
+        }
+
+        for ev in active_events:
+            ev_conf = ev.participants.filter(registration_status=RegistrationStatus.CONFIRMED)
+            ev.m_conf = ev_conf.filter(gender__iexact="male").count()
+            ev.f_conf = ev_conf.filter(gender__iexact="female").count()
+            ev.m_att = ev_conf.filter(joined_at__isnull=False, gender__iexact="male").count()
+            ev.f_att = ev_conf.filter(joined_at__isnull=False, gender__iexact="female").count()
+            ev.tot_att = ev.m_att + ev.f_att
+            ev.m_onl = ev_conf.filter(status__in=active_online_statuses, gender__iexact="male").count()
+            ev.f_onl = ev_conf.filter(status__in=active_online_statuses, gender__iexact="female").count()
+            ev.tot_onl = ev.m_onl + ev.f_onl
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": "Operations Dashboard",
+            "opts": self.model._meta,
+            "now": now,
+            "active_events": active_events,
+            "upcoming_events": upcoming_events,
+            "recent_events": recent_events,
+            "attendance_metrics": attendance_metrics,
+            "active_count": Event.objects.filter(status__in=live_statuses).count(),
+            "upcoming_count": Event.objects.filter(
+                status__in=upcoming_statuses, start_time__gte=now
+            ).count(),
+            "can_change_events": self.has_change_permission(request),
+            "can_view_participants": request.user.has_perm(
+                "events.view_participant"
+            ),
+            "participant_changelist_url": reverse(
+                "admin:events_participant_changelist"
+            ),
+            "confirmed_count": Participant.objects.filter(
+                event__status__in=overview_statuses,
+                registration_status=RegistrationStatus.CONFIRMED,
+            ).count(),
+            "waitlisted_count": Participant.objects.filter(
+                event__status__in=overview_statuses,
+                registration_status=RegistrationStatus.WAITLISTED,
+            ).count(),
+            "event_changelist_url": reverse("admin:events_event_changelist"),
+        }
+        return TemplateResponse(
+            request, "admin/events/event/operations_dashboard.html", context
+        )
 
     # ------------------------------------------------------------------ #
     # Live monitoring view (T-40 & T-41)                                 #
@@ -221,7 +621,7 @@ class EventAdmin(admin.ModelAdmin):
                         )
                         messages.success(
                             request,
-                            f"یادداشت رخداد برای {participant.display_name} ذخیره شد.",
+                            f"Incident note for {participant.display_name} saved.",
                         )
                 elif action == "pause":
                     service.pause()
@@ -274,6 +674,44 @@ class EventAdmin(admin.ModelAdmin):
                 "participant_a", "participant_b"
             ).all()
 
+        ev_conf = event.participants.filter(registration_status=RegistrationStatus.CONFIRMED)
+        tot_c = ev_conf.count()
+        m_c = ev_conf.filter(gender__iexact="male").count()
+        f_c = ev_conf.filter(gender__iexact="female").count()
+
+        ev_att = ev_conf.filter(joined_at__isnull=False)
+        tot_a = ev_att.count()
+        m_a = ev_att.filter(gender__iexact="male").count()
+        f_a = ev_att.filter(gender__iexact="female").count()
+
+        active_online_statuses = (
+            ParticipantStatus.READY,
+            ParticipantStatus.ACTIVE,
+            ParticipantStatus.WAITING,
+        )
+        ev_onl = ev_conf.filter(status__in=active_online_statuses)
+        tot_o = ev_onl.count()
+        m_o = ev_onl.filter(gender__iexact="male").count()
+        f_o = ev_onl.filter(gender__iexact="female").count()
+
+        paired_ids = set(
+            Pair.objects.filter(round__event=event).values_list("participant_a_id", flat=True)
+        ) | set(
+            Pair.objects.filter(round__event=event).values_list("participant_b_id", flat=True)
+        )
+        tot_p = ev_conf.filter(id__in=paired_ids).count()
+        m_p = ev_conf.filter(id__in=paired_ids, gender__iexact="male").count()
+        f_p = ev_conf.filter(id__in=paired_ids, gender__iexact="female").count()
+
+        event_attendance = {
+            "total_confirmed": tot_c, "male_confirmed": m_c, "female_confirmed": f_c,
+            "total_attended": tot_a, "male_attended": m_a, "female_attended": f_a,
+            "attendance_rate": f"{(tot_a * 100 / tot_c):.1f}%" if tot_c else "0.0%",
+            "total_noshow": max(0, tot_c - tot_a), "male_noshow": max(0, m_c - m_a), "female_noshow": max(0, f_c - f_a),
+            "total_online": tot_o, "male_online": m_o, "female_online": f_o,
+            "total_paired": tot_p, "male_paired": m_p, "female_paired": f_p,
+        }
+
         context = {
             **self.admin_site.each_context(request),
             "title": f"Live Monitoring \u2013 {event.name}",
@@ -283,6 +721,7 @@ class EventAdmin(admin.ModelAdmin):
             "active_round": active_round,
             "action_logs": action_logs,
             "pairs": pairs,
+            "event_attendance": event_attendance,
             "disconnected_participants": disconnected_participants,
             "search_query": search_query,
             "search_results": search_results,
@@ -293,6 +732,265 @@ class EventAdmin(admin.ModelAdmin):
             "admin/events/event/live_monitoring.html",
             context,
         )
+
+    def registration_stats_view(self, request, object_id):
+        event = get_object_or_404(Event, pk=object_id)
+        if not self.has_view_permission(request, event):
+            return HttpResponseForbidden(
+                "You do not have permission to view registration statistics."
+            )
+
+        snapshot = EventRegistrationStatsSnapshot.objects.filter(event=event).first()
+        total = snapshot.total_registrations if snapshot else event.participants.count()
+        statistics_unavailable = (
+            snapshot is None
+            and total == 0
+            and scheduled_event_end(event) <= timezone.now() - timedelta(days=2)
+        )
+
+        def rows_from_counts(counts, label_for):
+            result = []
+            items = []
+            for value, count in counts.items():
+                label = label_for(value)
+                items.append((label, count))
+            # Sort by count descending (highest percentage first); tie-break by label alphabetically
+            items.sort(key=lambda item: (-item[1], item[0]))
+            for label, count in items:
+                result.append(
+                    {
+                        "label": label,
+                        "count": count,
+                        "percent": f"{(count * 100 / total):.1f}%" if total else "0.0%",
+                    }
+                )
+            return result
+
+        if snapshot:
+            gender_counts = snapshot.gender_counts
+            country_counts = snapshot.country_counts
+        elif statistics_unavailable:
+            gender_counts = {}
+            country_counts = {}
+        else:
+            gender_counts = dict(
+                event.participants.values("gender")
+                .annotate(count=Count("id"))
+                .values_list("gender", "count")
+            )
+            country_counts = dict(
+                event.participants.values("country")
+                .annotate(count=Count("id"))
+                .values_list("country", "count")
+            )
+
+        gender_rows = rows_from_counts(
+            gender_counts,
+            lambda value: (
+                "Other (small groups)"
+                if value == "__other__"
+                else value or "Not provided"
+            ),
+        )
+        country_rows = rows_from_counts(
+            country_counts,
+            lambda value: (
+                "Other (small groups)"
+                if value == "__other__"
+                else COUNTRY_NAMES.get(value or "", value or "Not provided")
+            ),
+        )
+        return TemplateResponse(
+            request,
+            "admin/events/event/registration_stats.html",
+            {
+                **self.admin_site.each_context(request),
+                "title": f"Registration statistics – {event.name}",
+                "event": event,
+                "total": total,
+                "gender_rows": gender_rows,
+                "country_rows": country_rows,
+                "statistics_unavailable": statistics_unavailable,
+                "statistics_retained": snapshot is not None,
+                "opts": self.model._meta,
+                "app_label": self.model._meta.app_label,
+            },
+        )
+
+    def waitlist_view(self, request, object_id):
+        event = get_object_or_404(Event, pk=object_id)
+        if not self.has_view_permission(request, event):
+            return HttpResponseForbidden(
+                "You do not have permission to view the waitlist."
+            )
+        eligible = (
+            event.participants.filter(
+                registration_status=RegistrationStatus.WAITLISTED,
+                gender="Female",
+            )
+            .exclude(email="")
+            .order_by("created_at")
+        )
+        return TemplateResponse(
+            request,
+            "admin/events/event/waitlist.html",
+            {
+                **self.admin_site.each_context(request),
+                "title": f"Waitlist – {event.name}",
+                "event": event,
+                "participants": eligible,
+                "can_invite": self.has_change_permission(request, event),
+                "opts": self.model._meta,
+                "app_label": self.model._meta.app_label,
+            },
+        )
+
+    def registration_invitation_view(self, request, object_id):
+        event = get_object_or_404(Event, pk=object_id)
+        if not self.has_view_permission(request, event):
+            return HttpResponseForbidden(
+                "You do not have permission to view registration invitations."
+            )
+
+        registration_url = request.build_absolute_uri(
+            reverse("registration:register-ui", args=[event.pk])
+        )
+        can_send = self.has_change_permission(request, event) and event.status in {
+            EventStatus.REGISTRATION_OPEN,
+            EventStatus.SCHEDULED,
+        }
+        form = RegistrationInvitationForm(
+            request.POST if request.method == "POST" else None
+        )
+        sent_count = 0
+        failed_recipients = []
+
+        if request.method == "POST":
+            if not self.has_change_permission(request, event):
+                return HttpResponseForbidden(
+                    "You do not have permission to send registration invitations."
+                )
+            if not can_send:
+                self.message_user(
+                    request,
+                    "Registration invitations can only be sent for scheduled or open events.",
+                    level=messages.ERROR,
+                )
+            elif form.is_valid():
+                for recipient_email in form.cleaned_data["recipients"]:
+                    try:
+                        EmailService.send_registration_invitation_email(
+                            recipient_email=recipient_email,
+                            event_title=event.name,
+                            registration_url=registration_url,
+                        )
+                    except Exception:
+                        failed_recipients.append(recipient_email)
+                    else:
+                        sent_count += 1
+
+                if sent_count:
+                    self.message_user(
+                        request,
+                        f"Registration link sent to {sent_count} recipient(s).",
+                        level=messages.SUCCESS,
+                    )
+                if failed_recipients:
+                    self.message_user(
+                        request,
+                        f"Could not send {len(failed_recipients)} invitation email(s). "
+                        "Only failed addresses remain in the form for retry.",
+                        level=messages.ERROR,
+                    )
+                    form = RegistrationInvitationForm(
+                        initial={"recipients": "\n".join(failed_recipients)}
+                    )
+                else:
+                    form = RegistrationInvitationForm()
+
+        return TemplateResponse(
+            request,
+            "admin/events/event/registration_invitations.html",
+            {
+                **self.admin_site.each_context(request),
+                "title": f"Registration invitations – {event.name}",
+                "event": event,
+                "registration_url": registration_url,
+                "can_send": can_send,
+                "form": form,
+                "opts": self.model._meta,
+                "app_label": self.model._meta.app_label,
+            },
+        )
+
+    def invite_waitlisted_participant(self, request, object_id, participant_id):
+        if request.method != "POST":
+            return HttpResponseForbidden("Invitations must be sent using POST.")
+        event = get_object_or_404(Event, pk=object_id)
+        if not self.has_change_permission(request, event):
+            return HttpResponseForbidden(
+                "You do not have permission to send invitations."
+            )
+
+        now = timezone.now()
+        with transaction.atomic():
+            locked_event = Event.objects.select_for_update().get(pk=event.pk)
+            participant = get_object_or_404(
+                Participant.objects.select_for_update(),
+                pk=participant_id,
+                event=locked_event,
+                gender="Female",
+                registration_status=RegistrationStatus.WAITLISTED,
+            )
+            if not participant.email:
+                raise Http404
+            WaitlistInvitation.objects.filter(
+                participant=participant,
+                accepted_at__isnull=True,
+                revoked_at__isnull=True,
+            ).update(revoked_at=now)
+            token = secrets.token_urlsafe(32)
+            invitation = WaitlistInvitation.objects.create(
+                event=locked_event,
+                participant=participant,
+                token_digest=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+                created_by=request.user,
+                expires_at=now
+                + timedelta(
+                    hours=getattr(settings, "WAITLIST_INVITATION_TTL_HOURS", 48)
+                ),
+            )
+            invitation_url = request.build_absolute_uri(
+                reverse("registration:accept-waitlist-invitation", args=[token])
+            )
+            email_args = {
+                "recipient_email": participant.email,
+                "name": participant.display_name,
+                "event_title": locked_event.name,
+                "message": (
+                    f"A place is available for {locked_event.name}. Accept your "
+                    f"invitation within {getattr(settings, 'WAITLIST_INVITATION_TTL_HOURS', 48)} hours "
+                    f"using this personal link:\n\n{invitation_url}\n\n"
+                    "If the remaining place is taken before you accept, your waitlist status will remain unchanged."
+                ),
+            }
+
+        try:
+            EmailService.send_waitlist_invitation_email(**email_args)
+        except Exception:
+            WaitlistInvitation.objects.filter(pk=invitation.pk).update(
+                revoked_at=timezone.now()
+            )
+            self.message_user(
+                request,
+                "The invitation email could not be sent. The link was revoked.",
+                level=messages.ERROR,
+            )
+        else:
+            self.message_user(
+                request, "Waitlist invitation sent.", level=messages.SUCCESS
+            )
+        return redirect("admin:events_event_waitlist", object_id)
 
     # ------------------------------------------------------------------ #
     # Matching report view                                               #
@@ -352,9 +1050,17 @@ class EventAdmin(admin.ModelAdmin):
                         schedule = generate_schedule(match_input)
                         pids = frozenset(mp.pid for mp in match_input.participants)
                         violations = validate_schedule(
-                            schedule, pids, num_rounds=event.num_rounds
+                            schedule,
+                            pids,
+                            num_rounds=event.num_rounds,
+                            match_input=match_input,
                         )
-                        report = build_report(schedule, violations)
+                        report = build_report(
+                            schedule,
+                            violations,
+                            round_duration=event.round_duration,
+                            break_duration=event.break_duration,
+                        )
 
                         if action == "lock":
                             if report.can_lock:
@@ -376,6 +1082,8 @@ class EventAdmin(admin.ModelAdmin):
                                     f"the schedule can be locked."
                                 )
                     except MatchingError as exc:
+                        error_message = str(exc)
+                    except ValidationError as exc:
                         error_message = str(exc)
                     except Exception as exc:  # noqa: BLE001
                         error_message = f"Unexpected error during matching: {exc}"
@@ -449,8 +1157,10 @@ class TagAdmin(admin.ModelAdmin):
 
 @admin.register(Participant)
 class ParticipantAdmin(admin.ModelAdmin):
+    ordering = ("-created_at", "-pk")
     list_display = (
         "display_name",
+        "country_name",
         "email",
         "status",
         "display_tags",
@@ -462,12 +1172,16 @@ class ParticipantAdmin(admin.ModelAdmin):
     list_filter = ("status", "tags", "event")
     search_fields = ("display_name", "email")
     list_per_page = 50
-    actions = ["export_as_csv"]
+    actions = ["export_as_csv", "send_selected_access_links"]
 
     readonly_fields = (
         "join_token_hash",
         "join_token_digest",
         "join_token_expires_at",
+        "registration_receipt_pending",
+        "registration_receipt_sent_at",
+        "reminder_email_sent_at",
+        "matches_email_sent_at",
         "created_at",
         "updated_at",
     )
@@ -485,9 +1199,77 @@ class ParticipantAdmin(admin.ModelAdmin):
         tags = [tag.name for tag in obj.tags.all()]
         return ", ".join(tags) if tags else "-"
 
+    @admin.display(description="Country")
+    def country_name(self, obj):
+        return COUNTRY_NAMES.get(obj.country, obj.country or "-")
+
     @admin.display(description="Token")
     def token_status(self, obj):
         return "Configured" if obj.join_token_digest else "Missing"
+
+    @admin.action(
+        description="Send or resend selected room access links",
+        permissions=["change"],
+    )
+    def send_selected_access_links(self, request, queryset):
+        participant_ids = list(queryset.values_list("pk", flat=True).distinct()[:51])
+        if len(participant_ids) > 50:
+            self.message_user(
+                request,
+                "Select no more than 50 participants at a time.",
+                level=messages.ERROR,
+            )
+            return
+
+        access_sent = verification_sent = skipped = failed = 0
+        for participant_id in participant_ids:
+            try:
+                participant = Participant.objects.select_related("event").get(
+                    pk=participant_id
+                )
+                if (
+                    participant.registration_status == RegistrationStatus.CONFIRMED
+                ):
+                    if send_event_access_email_manually(participant_id):
+                        access_sent += 1
+                    else:
+                        skipped += 1
+                else:
+                    skipped += 1
+            except Exception:
+                logger.exception(
+                    "Selected event access email failed for participant %s",
+                    participant_id,
+                )
+                failed += 1
+
+        if access_sent:
+            self.message_user(
+                request,
+                f"Sent/resend room access emails to {access_sent} participant(s).",
+                level=messages.SUCCESS,
+            )
+        if verification_sent:
+            self.message_user(
+                request,
+                f"Sent {verification_sent} verification email(s). After confirming, "
+                "confirmed participants receive their room link automatically; "
+                "waitlisted participants must accept an invitation first.",
+                level=messages.SUCCESS,
+            )
+        if skipped:
+            self.message_user(
+                request,
+                f"Skipped {skipped} participant(s): no valid email, registration "
+                "needs organizer review, or the event has ended.",
+                level=messages.WARNING,
+            )
+        if failed:
+            self.message_user(
+                request,
+                f"Could not send {failed} event access email(s). Check server logs.",
+                level=messages.ERROR,
+            )
 
     @admin.action(description="Export selected participants to CSV (Excel UTF-8)")
     def export_as_csv(self, request, queryset):

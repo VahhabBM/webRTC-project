@@ -104,7 +104,10 @@ REDIS_URL = env("REDIS_URL", default="redis://127.0.0.1:6379/0")
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {"hosts": [REDIS_URL]},
+        # redis-py 8 defaults socket_timeout to 5s. The channel layer blocks
+        # for 5s while waiting for a message, so the default tears down idle
+        # WebSockets before Redis can return an empty blocking-pop result.
+        "CONFIG": {"hosts": [{"address": REDIS_URL, "socket_timeout": None}]},
     }
 }
 
@@ -175,6 +178,7 @@ CLOCK_SYNC_SAMPLE_COUNT = env_int("CLOCK_SYNC_SAMPLE_COUNT", 5)
 CLOCK_SYNC_INTERVAL_SECONDS = env_int("CLOCK_SYNC_INTERVAL_SECONDS", 30)
 CLOCK_SYNC_MAX_RTT_MS = env_int("CLOCK_SYNC_MAX_RTT_MS", 2000)
 ORCHESTRATOR_FINAL_SECONDS = env_int("ORCHESTRATOR_FINAL_SECONDS", 30)
+EVENT_REGISTRATION_CAPACITY = env_int("EVENT_REGISTRATION_CAPACITY", 200)
 
 MEDIA_FALLBACK_ROOM_ID = os.environ.get("MEDIA_FALLBACK_ROOM_ID", "")
 MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS = env_int(
@@ -189,13 +193,14 @@ EMAIL_BACKEND = env(
 )
 EMAIL_HOST = env("EMAIL_HOST", default="smtp.gmail.com")
 EMAIL_PORT = env_int("EMAIL_PORT", default=587)
+EMAIL_TIMEOUT = env_int("EMAIL_TIMEOUT", default=10)
 EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", default=True)
 EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 
 DEFAULT_FROM_EMAIL = env(
     "DEFAULT_FROM_EMAIL",
-    default="رویداد همسان‌گزینی <noreply@eventmatching.ir>",
+    default="Meetakk <admin@meetakk.com>",
 )
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
 

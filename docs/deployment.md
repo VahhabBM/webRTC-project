@@ -210,13 +210,31 @@ secret.
 | `MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS` | T-39; default 6000. |
 | `PARTICIPANT_JOIN_BASE_URL` | Public base URL used to build join links. |
 | `FRONTEND_URL` | Public base URL used in registration/magic-link emails. |
-| `DJANGO_EMAIL_BACKEND` | Defaults to the console backend; set a real backend to send registration email. |
-| `DEFAULT_FROM_EMAIL` | Sender address for registration email. |
+| `DJANGO_EMAIL_BACKEND` | Production defaults to SMTP; local settings use the console backend. |
+| `DEFAULT_FROM_EMAIL` | Sender name and address for outgoing email; defaults to `Meetakk <admin@meetakk.com>`. |
+| `EMAIL_TIMEOUT` | SMTP timeout in seconds; defaults to 10. Failed registration receipts stay queued for retry. |
 
-SMTP host/port/credentials are not currently read from the environment by
-`config/settings/base.py`. Sending real email therefore needs a backend that
-does not require them, or a follow-up settings change — do not assume
-`EMAIL_HOST`-style variables work today.
+New public registrations complete without an email-verification step. A separate
+registration receipt is sent after the registration transaction commits; a failed
+receipt remains queued. Existing registrations are not automatically backfilled.
+Waitlisted registrants receive a waitlist receipt without a room link or a promise
+of a confirmed place.
+
+The production Compose stack runs `email_scheduler`, which checks every minute
+for queued receipts and confirmed participants' room links. Each automatic room
+link is sent once, starting 9 hours before the event and until the event ends.
+Late registrants are included. The admin's selected-participant send/resend action
+can still send a room link explicitly outside this automatic window. The stack also
+runs `data_retention`, which removes participants and their related registration
+records two days after an event ends, checking once per hour.
+
+SMTP settings use `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`, `EMAIL_HOST_USER`,
+`EMAIL_HOST_PASSWORD`, and `EMAIL_TIMEOUT` from the environment.
+
+The event change page provides POST-only **Pause registration** / **Reopen
+registration** controls. Pausing prevents new submissions and waitlist acceptance;
+it does not change event timing or confirmed participants' room access. The
+Participants list defaults to newest registrations first.
 
 ### Deployment-only
 
@@ -228,7 +246,8 @@ does not require them, or a follow-up settings change — do not assume
 
 ## 5. Startup and health checks
 
-1. All three services are up and healthy:
+1. All five services are present; `db`, `redis`, and `web` are healthy, and
+   `email_scheduler` and `data_retention` are running:
 
    ```bash
    docker compose --env-file .env.production -f docker-compose.prod.yml ps

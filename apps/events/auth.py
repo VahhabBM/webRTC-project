@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
+from datetime import timedelta
 
 from django.conf import settings
 
@@ -14,7 +15,7 @@ from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Participant
+from .models import Participant, ParticipantAccessToken, RegistrationStatus
 
 logger = logging.getLogger(__name__)
 
@@ -36,18 +37,60 @@ class ExpiredJoinToken(Exception):
 
 
 def event_end(participant: Participant):
-    event = participant.event
-    return event.start_time + (
+    return scheduled_event_end(participant.event)
+
+
+def scheduled_event_end(event):
+    intro_offset = (
+        timedelta(seconds=event.intro_video_duration_seconds + 20)
+        if event.intro_video_url
+        else timedelta(0)
+    )
+    calculated = event.start_time + intro_offset + (
         event.num_rounds * event.round_duration
         + max(event.num_rounds - 1, 0) * event.break_duration
     )
+    if not getattr(getattr(event, "_state", None), "adding", True):
+        last_end = event.rounds.order_by("-ends_at").values_list("ends_at", flat=True).first()
+        if last_end:
+            calculated = max(calculated, last_end)
+    return calculated
+
+
+def extend_event_access_deadlines(event, previous_end, new_end):
+    """Keep already emailed links valid after an authorized schedule extension.
+
+    Deliberately short/revoked deadlines are not revived. Personal links issued
+    for the former whole-event window extend to the newly authorized end.
+    """
+    if new_end <= previous_end:
+        return
+    Participant.objects.filter(
+        event=event, join_token_expires_at__gte=previous_end,
+        join_token_expires_at__lt=new_end,
+    ).update(join_token_expires_at=new_end)
+    ParticipantAccessToken.objects.filter(
+        participant__event=event, expires_at__gte=previous_end, expires_at__lt=new_end,
+    ).update(expires_at=new_end)
 
 
 def issue_join_token(participant: Participant) -> str:
-    """Rotate a participant token and return the raw token once, in memory."""
+    """Issue a fresh token while retaining the previously emailed token."""
+    previous_expiry = event_end(participant)
+    if participant.join_token_digest and participant.join_token_hash:
+        retained_expiry = participant.join_token_expires_at or previous_expiry
+        previous_token, _ = ParticipantAccessToken.objects.get_or_create(
+            digest=participant.join_token_digest,
+            defaults={
+                "participant": participant,
+                "token_hash": participant.join_token_hash,
+                "expires_at": retained_expiry,
+            },
+        )
+
     raw_token = TOKEN_PREFIX + secrets.token_urlsafe(TOKEN_BYTES)
     participant.set_join_token(raw_token)
-    participant.join_token_expires_at = event_end(participant)
+    participant.join_token_expires_at = previous_expiry
     participant.save(
         update_fields=[
             "join_token_hash",
@@ -67,20 +110,53 @@ def personal_join_link(participant: Participant, raw_token: str | None = None) -
     return f"{base}/join/{raw_token}/" if base else f"/join/{raw_token}/"
 
 
+def _access_deadline_expired(participant, deadline):
+    if participant.event.status in ("cancelled", "completed"):
+        return True
+    whole_event_end = scheduled_event_end(participant.event)
+    deadline = deadline or whole_event_end
+    if deadline > timezone.now():
+        return False
+    # A whole-event link remains usable while an operator has frozen the event.
+    # Intentionally shorter/revoked deadlines are never revived by a pause.
+    return not (participant.event.status == "paused" and deadline >= whole_event_end)
+
+
 @transaction.atomic
 def authenticate_join_token(raw_token: str) -> Participant:
     if not raw_token or not raw_token.startswith(TOKEN_PREFIX):
         raise InvalidJoinToken
     digest = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-    participant = (
-        Participant.objects.select_related("event")
-        .filter(join_token_digest=digest)
+    retained_token = (
+        ParticipantAccessToken.objects.select_related(
+            "participant", "participant__event"
+        )
+        .filter(digest=digest)
         .first()
     )
-    if participant is None or not participant.verify_join_token(raw_token):
-        raise InvalidJoinToken
-    if participant.token_is_expired():
-        raise ExpiredJoinToken
+    if retained_token is not None:
+        participant = retained_token.participant
+        if (
+            participant.registration_status != RegistrationStatus.CONFIRMED
+            or not retained_token.verify(raw_token)
+        ):
+            raise InvalidJoinToken
+        if _access_deadline_expired(participant, retained_token.expires_at):
+            raise ExpiredJoinToken
+    else:
+        participant = (
+            Participant.objects.select_related("event")
+            .filter(join_token_digest=digest)
+            .first()
+        )
+        if (
+            participant is None
+            or participant.registration_status != RegistrationStatus.CONFIRMED
+            or not participant.verify_join_token(raw_token)
+        ):
+            raise InvalidJoinToken
+        if _access_deadline_expired(participant, participant.join_token_expires_at):
+            raise ExpiredJoinToken
     if participant.joined_at is None:
         participant.joined_at = timezone.now()
         participant.save(update_fields=["joined_at", "updated_at"])

@@ -29,12 +29,14 @@ from apps.events.call_room_logic import (
     partner_presence_from_protocol,
     should_announce_partner_gone,
 )
-from apps.events.models import Pair, Round
+from apps.events.models import Pair, Participant, Round
 from apps.events.orchestrator import (
     OrchestratorRealtime,
+    connection_channel_key,
     current_pair_for_participant,
     partner_on_pair,
 )
+from apps.events.presence import _presence_key
 from apps.events.scheduler import RoundScheduler
 from apps.protocol.constants import ErrorCode, MessageType, PartnerState
 from tests.test_orchestrator_realtime import (
@@ -79,6 +81,24 @@ def _activate_round(setup_round, *, remaining_minutes=5):
     return now
 
 
+async def _hello_and_drain_snapshot(communicator, participant):
+    await communicator.send_json_to(_hello())
+    hello = await communicator.receive_json_from()
+    assert hello["type"] == MessageType.SERVER_HELLO
+    expected = await database_sync_to_async(
+        OrchestratorRealtime(participant.event).reconnect_snapshot_messages
+    )(participant)
+    snapshots = []
+    for expected_message in expected:
+        snapshot = await communicator.receive_json_from()
+        snapshots.append(snapshot)
+        assert snapshot["type"] == expected_message["type"]
+        if snapshot["type"] == MessageType.SERVER_PAIRING:
+            assert snapshot["payload"]["room_id"] == expected_message["payload"]["room_id"]
+            assert snapshot["payload"]["partner_id"] == expected_message["payload"]["partner_id"]
+    return snapshots
+
+
 @pytest.fixture
 def inmemory_channels(settings):
     settings.CHANNEL_LAYERS = {
@@ -91,7 +111,7 @@ def inmemory_channels(settings):
 
 @pytest.fixture
 def setup_round(db):
-    event = _make_event()
+    event = _make_event(live_matching_enabled=False)
     p1 = _participant(event, "Alice")
     p2 = _participant(event, "Bob")
     p3 = _participant(event, "Cara")
@@ -280,14 +300,9 @@ def test_long_absence_marks_partner_gone_without_reassignment(
         assert (await left.connect())[0]
         assert (await staying.connect())[0]
         assert (await other_room.connect())[0]
-        await staying.send_json_to(_hello())
-        assert (await staying.receive_json_from())["type"] == MessageType.SERVER_HELLO
-        await other_room.send_json_to(_hello())
-        assert (await other_room.receive_json_from())[
-            "type"
-        ] == MessageType.SERVER_HELLO
-        await left.send_json_to(_hello())
-        assert (await left.receive_json_from())["type"] == MessageType.SERVER_HELLO
+        await _hello_and_drain_snapshot(staying, p2)
+        await _hello_and_drain_snapshot(other_room, p3)
+        await _hello_and_drain_snapshot(left, p1)
         connected = await staying.receive_json_from()
         assert connected["type"] == MessageType.SERVER_PARTNER_STATE
         assert connected["payload"]["state"] == PartnerState.CONNECTED
@@ -324,11 +339,9 @@ def test_long_absence_marks_partner_gone_without_reassignment(
 
         returning = _connect(new_cookie)
         assert (await returning.connect())[0]
-        await returning.send_json_to(_hello())
-        hello = await returning.receive_json_from()
-        assert hello["type"] == MessageType.SERVER_HELLO
-        pairing = await returning.receive_json_from()
-        start = await returning.receive_json_from()
+        snapshot = await _hello_and_drain_snapshot(returning, p1)
+        pairing = next(msg for msg in snapshot if msg["type"] == MessageType.SERVER_PAIRING)
+        start = next(msg for msg in snapshot if msg["type"] == MessageType.SERVER_ROUND_START)
         assert pairing["type"] == MessageType.SERVER_PAIRING
         assert pairing["payload"]["room_id"] == "room-r1-a"
         assert pairing["payload"]["partner_id"] == str(p2.pk)
@@ -363,18 +376,11 @@ def test_newer_session_kicks_stale_socket(setup_round, inmemory_channels, settin
     async def scenario():
         first = _connect(cookie)
         assert (await first.connect())[0]
-        await first.send_json_to(_hello())
-        assert (await first.receive_json_from())["type"] == MessageType.SERVER_HELLO
+        await _hello_and_drain_snapshot(first, p1)
 
         second = _connect(cookie)
         assert (await second.connect())[0]
-        await second.send_json_to(_hello())
-        assert (await second.receive_json_from())["type"] == MessageType.SERVER_HELLO
-        pairing = await second.receive_json_from()
-        start = await second.receive_json_from()
-        assert pairing["type"] == MessageType.SERVER_PAIRING
-        assert pairing["payload"]["room_id"] == "room-r1-a"
-        assert start["type"] == MessageType.SERVER_ROUND_START
+        await _hello_and_drain_snapshot(second, p1)
 
         replaced = await first.receive_json_from()
         assert replaced["type"] == MessageType.SERVER_ERROR
@@ -382,6 +388,14 @@ def test_newer_session_kicks_stale_socket(setup_round, inmemory_channels, settin
         assert "another window" in replaced["payload"]["message"].lower()
         close = await first.receive_output()
         assert close["type"] == "websocket.close"
+
+        owner = cache.get(connection_channel_key(p1.pk))
+        lease = cache.get(_presence_key(p1.pk))
+        assert owner and lease and lease["channel"] == owner
+        status = await database_sync_to_async(
+            lambda: Participant.objects.get(pk=p1.pk).status
+        )()
+        assert status == "active"
 
         await second.send_json_to(
             {"type": "client.ping", "version": 1, "payload": {"client_ts": 2}}
@@ -409,10 +423,8 @@ def test_brief_drop_within_grace_does_not_mark_partner_gone(
         staying = _connect(cookie_b)
         assert (await left.connect())[0]
         assert (await staying.connect())[0]
-        await staying.send_json_to(_hello())
-        assert (await staying.receive_json_from())["type"] == MessageType.SERVER_HELLO
-        await left.send_json_to(_hello())
-        assert (await left.receive_json_from())["type"] == MessageType.SERVER_HELLO
+        await _hello_and_drain_snapshot(staying, p2)
+        await _hello_and_drain_snapshot(left, p1)
         assert (await staying.receive_json_from())[
             "type"
         ] == MessageType.SERVER_PARTNER_STATE
@@ -421,13 +433,10 @@ def test_brief_drop_within_grace_does_not_mark_partner_gone(
         await asyncio.sleep(0.05)
         returning = _connect(cookie_a)
         assert (await returning.connect())[0]
-        await returning.send_json_to(_hello())
-        assert (await returning.receive_json_from())["type"] == MessageType.SERVER_HELLO
-        pairing = await returning.receive_json_from()
-        start = await returning.receive_json_from()
-        assert pairing["type"] == MessageType.SERVER_PAIRING
+        snapshot = await _hello_and_drain_snapshot(returning, p1)
+        pairing = next(msg for msg in snapshot if msg["type"] == MessageType.SERVER_PAIRING)
         assert pairing["payload"]["room_id"] == "room-r1-a"
-        assert start["type"] == MessageType.SERVER_ROUND_START
+        assert pairing["payload"]["partner_id"] == str(p2.pk)
 
         back = await staying.receive_json_from()
         assert back["type"] == MessageType.SERVER_PARTNER_STATE

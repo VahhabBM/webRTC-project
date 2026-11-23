@@ -4,7 +4,13 @@ import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone
 
-from apps.events.models import Event, OperatorActionLog, OperatorActionType, Round
+from apps.events.models import (
+    Event,
+    EventStatus,
+    OperatorActionLog,
+    OperatorActionType,
+    Round,
+)
 from apps.events.operator import OperatorService
 from apps.events.scheduler import RoundScheduler
 
@@ -49,6 +55,14 @@ class TestOperatorControl:
         assert pause_res["status"] == "paused"
         assert pause_res["round_number"] == 1
         assert pause_res["remaining_seconds"] > 0
+        setup_event.refresh_from_db()
+        assert setup_event.status == EventStatus.PAUSED
+        paused_phase, paused_round, frozen_remaining = RoundScheduler(
+            setup_event
+        ).get_current_phase(now=r1.ends_at + timedelta(minutes=1))
+        assert paused_phase.value == "paused"
+        assert paused_round.pk == r1.pk
+        assert int(frozen_remaining.total_seconds()) == pause_res["remaining_seconds"]
 
         # بررسی ثبت لاگ و اتصال به راند جاری
         log = OperatorActionLog.objects.filter(event=setup_event).first()
@@ -62,10 +76,21 @@ class TestOperatorControl:
         # اجرای Resume
         resume_res = service.resume()
         assert resume_res["status"] == "resumed"
+        setup_event.refresh_from_db()
+        assert setup_event.status == EventStatus.DRAFT
 
         # بررسی شیفت پیدا کردن راند دوم
         r2.refresh_from_db()
         assert r2.starts_at > initial_r2_start
+
+        r1.refresh_from_db()
+        frozen_end = r1.ends_at
+        with pytest.raises(ValidationError, match="operator pause"):
+            RoundScheduler(setup_event).persist_schedule(
+                start_time=setup_event.start_time - timedelta(hours=1)
+            )
+        r1.refresh_from_db()
+        assert r1.ends_at == frozen_end
 
     def test_extend_round_shifts_future_rounds(self, setup_event):
         """تست افزایش زمان راند جاری و جابجایی زمان راندهای آینده"""
@@ -85,3 +110,27 @@ class TestOperatorControl:
 
         assert r1.ends_at == old_r1_end + timedelta(seconds=120)
         assert r2.starts_at == old_r2_start + timedelta(seconds=120)
+
+        frozen_end = r1.ends_at
+        with pytest.raises(ValidationError, match="operator pause"):
+            RoundScheduler(setup_event).persist_schedule(
+                start_time=setup_event.start_time - timedelta(hours=1)
+            )
+        r1.refresh_from_db()
+        assert r1.ends_at == frozen_end
+
+    @pytest.mark.parametrize(
+        "prior_status",
+        [EventStatus.SCHEDULED, EventStatus.ACTIVE, EventStatus.RUNNING],
+    )
+    def test_pause_resume_restores_pre_pause_event_status(self, setup_event, prior_status):
+        setup_event.status = prior_status
+        setup_event.save(update_fields=["status"])
+        service = OperatorService(setup_event, is_leader=True)
+
+        service.pause()
+        setup_event.refresh_from_db()
+        assert setup_event.status == EventStatus.PAUSED
+        service.resume()
+        setup_event.refresh_from_db()
+        assert setup_event.status == prior_status

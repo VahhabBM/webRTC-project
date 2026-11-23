@@ -53,6 +53,9 @@ class TermsAcceptance(models.Model):
     )
     accepted_at = models.DateTimeField(auto_now_add=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
+    terms_version = models.CharField(max_length=32, blank=True, default="")
+    privacy_version = models.CharField(max_length=32, blank=True, default="")
+    consents = models.JSONField(default=dict)
 
 
 class DeviceCheckLog(models.Model):

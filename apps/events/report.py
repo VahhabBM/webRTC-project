@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from apps.events.matching import GeneratedSchedule, ScheduleViolation
 
@@ -22,6 +23,7 @@ class RoundReport:
     p10_score: float
     zero_tag_pairs: int
     unmatched_pid: str | None
+    unmatched_count: int = 0
 
 
 @dataclass
@@ -34,6 +36,8 @@ class MatchingReport:
     # Maps unmatched pid -> number of rounds that participant received a bye.
     bye_distribution: dict[str, int] = field(default_factory=dict)
     violation_count: int = 0
+    total_unmatched_slots: int = 0
+    longest_gap_minutes: float | None = None
     violations: list[ScheduleViolation] = field(default_factory=list)
 
     @property
@@ -62,6 +66,9 @@ def _percentile10(scores: list[float]) -> float:
 def build_report(
     schedule: GeneratedSchedule,
     violations: list[ScheduleViolation],
+    *,
+    round_duration: timedelta = timedelta(minutes=7),
+    break_duration: timedelta = timedelta(minutes=2),
 ) -> MatchingReport:
     """Compute quality metrics from a GeneratedSchedule.
 
@@ -81,7 +88,9 @@ def build_report(
     round_reports: list[RoundReport] = []
     total_pairs = 0
     total_zero_tag = 0
+    total_unmatched = 0
     bye_distribution: dict[str, int] = {}
+    meeting_rounds: dict[str, list[int]] = {}
 
     for rnd in schedule.rounds:
         scores = [sp.score for sp in rnd.pairs]
@@ -97,20 +106,42 @@ def build_report(
                 p10_score=p10,
                 zero_tag_pairs=zero_tag,
                 unmatched_pid=rnd.unmatched_pid,
+                unmatched_count=len(rnd.all_unmatched_pids),
             )
         )
         total_pairs += len(rnd.pairs)
         total_zero_tag += zero_tag
+        total_unmatched += len(rnd.all_unmatched_pids)
 
+        for pair in rnd.pairs:
+            meeting_rounds.setdefault(pair.pid_a, []).append(rnd.number)
+            meeting_rounds.setdefault(pair.pid_b, []).append(rnd.number)
         if rnd.unmatched_pid:
             bye_distribution[rnd.unmatched_pid] = (
                 bye_distribution.get(rnd.unmatched_pid, 0) + 1
             )
 
+    longest_gap_seconds = max(
+        (
+            (
+                round_duration * (next_round - previous_round - 1)
+                + break_duration * (next_round - previous_round)
+            ).total_seconds()
+            for rounds in meeting_rounds.values()
+            for previous_round, next_round in zip(rounds, rounds[1:])
+        ),
+        default=None,
+    )
     return MatchingReport(
         rounds=round_reports,
         total_pairs=total_pairs,
         total_zero_tag_pairs=total_zero_tag,
+        total_unmatched_slots=total_unmatched,
+        longest_gap_minutes=(
+            round(longest_gap_seconds / 60, 1)
+            if longest_gap_seconds is not None
+            else None
+        ),
         bye_distribution=bye_distribution,
         violation_count=len(violations),
         violations=violations,

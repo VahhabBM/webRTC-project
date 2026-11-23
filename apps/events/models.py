@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator, URLValidator
 from django.db import models
 from django.utils import timezone
 from django.utils.timezone import now as django_now
@@ -39,6 +39,13 @@ class ParticipantStatus(models.TextChoices):
     COMPLETED = "completed", "Completed"
 
 
+class RegistrationStatus(models.TextChoices):
+    PENDING = "pending", "Pending email verification"
+    CONFIRMED = "confirmed", "Confirmed"
+    WAITLISTED = "waitlisted", "Waitlisted"
+    WITHDRAWN = "withdrawn", "Withdrawn"
+
+
 class RoundStatus(models.TextChoices):
     SCHEDULED = "scheduled", "Scheduled"
     ACTIVE = "active", "Active"
@@ -65,14 +72,46 @@ class Event(models.Model):
     status = models.CharField(
         max_length=20, choices=EventStatus.choices, default=EventStatus.DRAFT
     )
-    num_rounds = models.PositiveSmallIntegerField(validators=[MinValueValidator(1)])
+    num_rounds = models.PositiveSmallIntegerField(
+        default=5, validators=[MinValueValidator(1), MaxValueValidator(8)]
+    )
     round_duration = models.DurationField(
-        validators=[MinValueValidator(timedelta(seconds=1))]
+        default=timedelta(minutes=7),
+        validators=[MinValueValidator(timedelta(seconds=1))],
     )
     break_duration = models.DurationField(
-        validators=[MinValueValidator(timedelta(seconds=0))]
+        default=timedelta(minutes=2),
+        validators=[MinValueValidator(timedelta(seconds=0))],
     )
     start_time = models.DateTimeField()
+    male_date_limit = models.PositiveSmallIntegerField(default=4)
+    female_date_limit = models.PositiveSmallIntegerField(default=8)
+    other_date_limit = models.PositiveSmallIntegerField(default=5)
+    max_dates_per_participant = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="Maximum dates any participant can attend in this event (across all genders). If set, this caps everyone regardless of gender.",
+    )
+    male_registration_cap = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Maximum male participants allowed to register (leave blank for unlimited).",
+    )
+    female_registration_cap = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Maximum female participants allowed to register (leave blank for unlimited).",
+    )
+    intro_video_url = models.URLField(
+        blank=True,
+        default="",
+        validators=[URLValidator(schemes=["https"])],
+        help_text="Optional direct HTTPS MP4/WebM video URL played before the first round.",
+    )
+    intro_video_duration_seconds = models.PositiveSmallIntegerField(
+        default=0, validators=[MaxValueValidator(300)]
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     scoring_weights = models.JSONField(default=_default_scoring_weights)
@@ -85,6 +124,46 @@ class Event(models.Model):
             "When disabled, the existing multiple-tag behavior remains unchanged."
         ),
     )
+    live_matching_enabled = models.BooleanField(
+        default=True,
+        help_text="Allocate pairs from currently online, media-ready participants.",
+    )
+    registration_paused = models.BooleanField(
+        default=False,
+        help_text="Temporarily prevent new public registrations for this event.",
+    )
+    reminder_lead_time = models.DurationField(
+        default=timedelta(hours=6),
+        null=True,
+        blank=True,
+        help_text="Time before event start to send reminder email (e.g. 06:00:00).",
+    )
+    reminder_audience = models.CharField(
+        max_length=10,
+        choices=[("female", "Females Only"), ("male", "Males Only"), ("all", "All Participants")],
+        default="female",
+        blank=True,
+        help_text="Audience for reminder emails.",
+    )
+    early_exit_min_minutes = models.PositiveSmallIntegerField(
+        default=3,
+        blank=True,
+        help_text="Minutes into a date before Leave Date button appears.",
+    )
+
+    def clean(self):
+        super().clean()
+        if bool(self.intro_video_url) != (self.intro_video_duration_seconds > 0):
+            from django.core.exceptions import ValidationError
+
+            raise ValidationError(
+                {
+                    "intro_video_duration_seconds": (
+                        "Set a positive duration when an intro video URL is provided; "
+                        "leave both fields empty/zero to disable the intro."
+                    )
+                }
+            )
 
     class Meta:
         ordering = ("-start_time",)
@@ -94,6 +173,18 @@ class Event(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+
+class EventRegistrationStatsSnapshot(models.Model):
+    """Event-level counts retained after individual registration records expire."""
+
+    event = models.OneToOneField(
+        Event, on_delete=models.CASCADE, related_name="registration_stats_snapshot"
+    )
+    total_registrations = models.PositiveIntegerField()
+    gender_counts = models.JSONField(default=dict)
+    country_counts = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
 
 
 class Tag(models.Model):
@@ -111,8 +202,12 @@ class Tag(models.Model):
 class Participant(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     age = models.IntegerField(null=True, blank=True)
+    country = models.CharField(max_length=2, blank=True, default="")
+    city = models.CharField(max_length=120, blank=True, default="")
     gender = models.CharField(max_length=50, default="Other/Prefer Not to Say")
-    want_to_date = models.CharField(max_length=50, default="Any")
+    want_to_date = models.CharField(max_length=120, default="Any")
+    age_pref_min = models.PositiveSmallIntegerField(null=True, blank=True)
+    age_pref_max = models.PositiveSmallIntegerField(null=True, blank=True)
     whatsapp = models.CharField(max_length=50, blank=True, null=True)
     event = models.ForeignKey(
         Event, on_delete=models.CASCADE, related_name="participants"
@@ -124,12 +219,26 @@ class Participant(models.Model):
         choices=ParticipantStatus.choices,
         default=ParticipantStatus.WAITING,
     )
+    registration_status = models.CharField(
+        max_length=16,
+        choices=RegistrationStatus.choices,
+        default=RegistrationStatus.CONFIRMED,
+        db_index=True,
+    )
     join_token_hash = models.CharField(max_length=256)
     join_token_digest = models.CharField(
         max_length=64, blank=True, default="", db_index=True
     )
     join_token_expires_at = models.DateTimeField(null=True, blank=True)
     joined_at = models.DateTimeField(null=True, blank=True)
+    email_verified_at = models.DateTimeField(null=True, blank=True)
+    reservation_expires_at = models.DateTimeField(null=True, blank=True)
+    intro_video_completed_at = models.DateTimeField(null=True, blank=True)
+    event_access_email_sent_at = models.DateTimeField(null=True, blank=True)
+    registration_receipt_pending = models.BooleanField(default=False, db_index=True)
+    registration_receipt_sent_at = models.DateTimeField(null=True, blank=True)
+    reminder_email_sent_at = models.DateTimeField(null=True, blank=True)
+    matches_email_sent_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     tags = models.ManyToManyField(
@@ -137,11 +246,6 @@ class Participant(models.Model):
     )
 
     class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=("event", "display_name"), name="uniq_participant_name_per_event"
-            ),
-        ]
         indexes = [
             models.Index(fields=("event", "status")),
             models.Index(fields=("event", "created_at")),
@@ -166,6 +270,31 @@ class Participant(models.Model):
             self.join_token_expires_at
             and self.join_token_expires_at <= (now or timezone.now())
         )
+
+
+class ParticipantAccessToken(models.Model):
+    """Retain previously emailed room links when a fresh link is issued."""
+
+    participant = models.ForeignKey(
+        Participant,
+        on_delete=models.CASCADE,
+        related_name="access_tokens",
+    )
+    digest = models.CharField(max_length=64, unique=True)
+    token_hash = models.CharField(max_length=256)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=("participant", "expires_at"),
+                name="events_access_parti_24ad09_idx",
+            )
+        ]
+
+    def verify(self, raw_token: str) -> bool:
+        return bool(raw_token) and check_password(raw_token, self.token_hash)
 
 
 class ParticipantTag(models.Model):
@@ -235,6 +364,9 @@ class Pair(models.Model):
     )
     room_id = models.CharField(max_length=100, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    live_allocated = models.BooleanField(default=False)
+    media_received_a = models.BooleanField(default=False)
+    media_received_b = models.BooleanField(default=False)
 
     # T-53: Path Type Tracking (Direct vs TURN)
     path_type = models.CharField(
@@ -282,10 +414,12 @@ class Pair(models.Model):
             ),
             models.UniqueConstraint(
                 fields=("round", "participant_a"),
+                condition=~models.Q(status=PairStatus.CANCELLED),
                 name="uniq_pair_participant_a_per_round",
             ),
             models.UniqueConstraint(
                 fields=("round", "participant_b"),
+                condition=~models.Q(status=PairStatus.CANCELLED),
                 name="uniq_pair_participant_b_per_round",
             ),
         ]
@@ -313,6 +447,61 @@ class Pair(models.Model):
         return (
             f"Pair({self.room_id}: {self.participant_a_id} - {self.participant_b_id})"
         )
+
+
+class PairInterest(models.Model):
+    """Private, time-limited contact-sharing choices for one completed pair."""
+
+    pair = models.OneToOneField(Pair, on_delete=models.CASCADE, related_name="interest")
+    participant_a_interested = models.BooleanField(null=True, blank=True)
+    participant_a_responded_at = models.DateTimeField(null=True, blank=True)
+    participant_b_interested = models.BooleanField(null=True, blank=True)
+    participant_b_responded_at = models.DateTimeField(null=True, blank=True)
+    email_sent_to_a_at = models.DateTimeField(null=True, blank=True)
+    email_sent_to_b_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def is_mutual(self) -> bool:
+        return (
+            self.participant_a_interested is True
+            and self.participant_b_interested is True
+        )
+
+    def response_for(self, participant) -> bool | None:
+        if participant.pk == self.pair.participant_a_id:
+            return self.participant_a_interested
+        if participant.pk == self.pair.participant_b_id:
+            return self.participant_b_interested
+        raise ValueError("Participant is not part of this pair")
+
+
+class WaitlistInvitation(models.Model):
+    """Single-use, auditable invite from the verified female waitlist."""
+
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="waitlist_invitations")
+    participant = models.ForeignKey(
+        Participant, on_delete=models.CASCADE, related_name="waitlist_invitations"
+    )
+    token_digest = models.CharField(max_length=64, unique=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="meetakk_waitlist_invitations",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [models.Index(fields=("event", "created_at"))]
+
+    def __str__(self) -> str:
+        return f"Waitlist invitation for {self.participant_id} ({self.event_id})"
 
 
 class EventTransitionLog(models.Model):

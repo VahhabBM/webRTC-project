@@ -91,7 +91,7 @@
       <th>Avg Score</th>
       <th>10th Pct Score</th>
       <th>Zero-tag Pairs</th>
-      <th>Bye (Unmatched PID)</th>
+      <th>Unmatched Participants</th>
     </tr>
   </thead>
   <tbody>
@@ -102,9 +102,7 @@
       <td style="text-align:right;">{{ r.avg_score|floatformat:4 }}</td>
       <td style="text-align:right;">{{ r.p10_score|floatformat:4 }}</td>
       <td style="text-align:center;">{{ r.zero_tag_pairs }}</td>
-      <td style="font-family:monospace;font-size:0.85em;">
-        {% if r.unmatched_pid %}{{ r.unmatched_pid|slice:":8" }}&hellip;{% else %}&mdash;{% endif %}
-      </td>
+      <td style="text-align:center;">{{ r.unmatched_count }}</td>
     </tr>
     {% endfor %}
   </tbody>
@@ -116,6 +114,10 @@
       <td>{{ report.total_pairs }}</td></tr>
   <tr><th style="text-align:left;padding-right:2em;">Zero-tag Pairs (total)</th>
       <td>{{ report.total_zero_tag_pairs }}</td></tr>
+  <tr><th style="text-align:left;padding-right:2em;">Unmatched participant rounds</th>
+      <td>{{ report.total_unmatched_slots }}</td></tr>
+  <tr><th style="text-align:left;padding-right:2em;">Longest gap between dates</th>
+      <td>{% if report.longest_gap_minutes is not None %}{{ report.longest_gap_minutes|floatformat:1 }} minutes{% else %}&mdash;{% endif %}</td></tr>
   <tr><th style="text-align:left;padding-right:2em;">Constraint Violations</th>
       <td>
         <strong>{{ report.violation_count }}</strong>
@@ -126,6 +128,7 @@
         {% endif %}
       </td></tr>
 </table>
+<p class="help">The gap is measured from the end of one conversation to the start of the participant’s next scheduled conversation. A 10-minute target cannot be guaranteed when compatible partners or available dates are limited.</p>
 
 {# ── Bye distribution ────────────────────────────────────────────────────── #}
 {% if report.bye_distribution %}

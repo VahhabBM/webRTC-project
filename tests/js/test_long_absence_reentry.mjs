@@ -179,8 +179,36 @@ test("stale session error is user-facing and does not look technical", () => {
     code: "ERR_ALREADY_CONNECTED",
     message: "You joined from another window. This session is no longer active.",
   });
-  assert.match(elements.errorBanner.textContent, /another window/i);
+  assert.match(elements.errorBanner.textContent, /another tab or device/i);
   assert.doesNotMatch(elements.errorBanner.textContent, /traceback|websocket close/i);
   assert.equal(elements.connectionBadge.dataset.quality, "session-replaced");
   controller.disconnect();
+});
+
+test("expired access is not described as a second window taking over", async () => {
+  const { controller, elements } = makeController();
+  elements.waitingBanner = { hidden: false, textContent: "Waiting for your next partner." };
+  controller._onServerError({ code: "ERR_NOT_AUTHENTICATED", message: "Authentication is required." });
+  assert.match(elements.errorBanner.textContent, /personal event link from your email/);
+  assert.doesNotMatch(elements.errorBanner.textContent, /another tab|another window|another device/);
+  assert.equal(elements.connectionBadge.dataset.quality, "authentication-required");
+  assert.equal(elements.waitingBanner.hidden, true);
+  await controller._handleMessage({ type: "server.waiting", payload: {} });
+  controller.ensureLocalMedia = () => { throw new Error("inactive page must not restart media"); };
+  controller.connect();
+  assert.equal(elements.waitingBanner.hidden, true);
+  assert.equal(controller.ws, null);
+});
+
+test("replaced connection cannot be revived by queued room updates", async () => {
+  const { controller, elements } = makeController();
+  elements.waitingBanner = { hidden: false, textContent: "Waiting for your next partner." };
+  controller._onSessionReplaced();
+  for (const type of ["server.waiting", "server.hello", "server.pairing"]) {
+    await controller._handleMessage({ type, payload: {} });
+  }
+  assert.equal(elements.waitingBanner.hidden, true);
+  assert.equal(elements.connectionBadge.dataset.quality, "session-replaced");
+  assert.equal(controller._reconnectTimer, null);
+  assert.equal(controller.ws, null);
 });

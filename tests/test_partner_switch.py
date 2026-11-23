@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from apps.events.call_room_logic import CallRoomPhase, CallRoomState
 
@@ -83,6 +86,7 @@ def test_python_lifecycle_round_change_does_not_end_event():
     assert state.partner.display_name == "Alex"
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js tests run in the JavaScript test job")
 def test_node_partner_switch_lifecycle():
     completed = subprocess.run(
         ["node", "--test", str(NODE_TEST)],
