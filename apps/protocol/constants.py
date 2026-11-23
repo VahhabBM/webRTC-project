@@ -30,6 +30,19 @@ SUPPORTED_VERSIONS: frozenset[int] = frozenset({1})
 DEFAULT_RECONNECT_WINDOW_SECONDS: int = 5 * 60
 DEFAULT_RATE_LIMIT_MESSAGES_PER_MINUTE: int = 60
 
+# Event model permits up to eight rounds; protocol bounds must match it.
+MAX_EVENT_ROUNDS: int = 8
+WAITING_REASONS: frozenset[str] = frozenset(
+    {
+        "waiting_for_partner",
+        "limit_reached",
+        "no_compatible_partner",
+        "partner_left",
+        "standby_fewer_women",
+        "standby_fewer_men",
+    }
+)
+
 # RFC 6455 standard close codes plus private-use application codes.
 CLOSE_NORMAL = 1000
 CLOSE_MESSAGE_TOO_BIG = 1009
@@ -91,7 +104,10 @@ class MessageType(StrEnum):
     #: round and when that round starts / ends.
     SERVER_PAIRING = "server.pairing"
 
-    #: Client → Server.  Client signals it is ready to begin the round.
+    #: Server → Client. Waiting for a live, compatible partner.
+    SERVER_WAITING = "server.waiting"
+
+    #: Client → Server. Round 0 means initial media setup is ready before allocation.
     CLIENT_READY = "client.ready"
 
     #: Server → Client.  Authoritative signal that a round has started.
@@ -102,6 +118,9 @@ class MessageType(StrEnum):
 
     #: Server → Client.  Authoritative signal that a round has ended.
     SERVER_ROUND_END = "server.round_end"
+
+    #: Server → Client. Offers a private, time-limited contact-sharing choice.
+    SERVER_INTEREST_PROMPT = "server.interest_prompt"
 
     # ------------------------------------------------------------------
     # Partner state

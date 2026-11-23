@@ -24,15 +24,39 @@ class TestRegistrationUI:
         assert response.status_code == 200
         content = response.content.decode("utf-8")
         assert 'dir="ltr"' in content
-        assert event.name in content
+        assert "SPEED DATING REGISTRATION" in content
+        assert "Meetakk Matching Form" in content
+        assert "Fill out the form below to register." in content
+        assert "Join us for an exciting evening" not in content
         assert tag.name in content
         assert "tag-search" in content
+        assert 'id="countrySearch"' in content
+        assert 'id="country" name="country"' in content
+        assert 'value="+44" selected' in content
+        assert "country-search.js" not in content
+
+    def test_registration_heading_omits_date_suffix_from_event_name(
+        self, client: Client
+    ):
+        event = Event.objects.create(
+            name="Meetakk - 14 Nov 2026",
+            start_time=timezone.now() + timedelta(days=6),
+        )
+
+        response = client.get(f"/registration/{event.id}/")
+
+        assert response.status_code == 200
+        content = response.content.decode("utf-8")
+        assert "Meetakk" in content
+        assert "14 Nov 2026" not in content
+        event.refresh_from_db()
+        assert event.name == "Meetakk - 14 Nov 2026"
 
     def test_check_email_page_renders_successfully(self, client: Client):
         response = client.get("/registration/check-email/?email=user@example.com")
         assert response.status_code == 200
         content = response.content.decode("utf-8")
-        assert "Check Your Inbox" in content
+        assert "Registration confirmed" in content
         assert "user@example.com" in content
 
     def test_verify_email_renders_html_success_page(self, client: Client):

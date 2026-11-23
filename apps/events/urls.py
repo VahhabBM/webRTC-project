@@ -3,11 +3,15 @@ from django.urls import path
 from .views import (
     TurnCredentialsAPIView,
     clock_sync_page,
+    complete_event_intro,
     current_participant,
     ice_servers_view,
     join_participant,
     landing_page,
+    leave_date,
+    report_incident,
     submit_connection_report,
+    submit_round_interest,
     video_room_page,
 )
 
@@ -15,6 +19,9 @@ urlpatterns = [
     path("", landing_page, name="landing-page"),
     path("join/<str:token>/", join_participant, name="participant-join"),
     path("participant/me/", current_participant, name="participant-me"),
+    path(
+        "participant/intro/complete/", complete_event_intro, name="event-intro-complete"
+    ),
     path("clock-sync/", clock_sync_page, name="clock-sync"),
     path("room/", video_room_page, name="video-room"),
     path("api/ice-servers/", ice_servers_view, name="ice_servers"),
@@ -30,5 +37,20 @@ urlpatterns = [
         "api/telemetry/connection/",
         submit_connection_report,
         name="submit-connection-report",
+    ),
+    path(
+        "api/round-interest/",
+        submit_round_interest,
+        name="submit-round-interest",
+    ),
+    path(
+        "api/leave-date/",
+        leave_date,
+        name="leave-date",
+    ),
+    path(
+        "api/report-incident/",
+        report_incident,
+        name="report-incident",
     ),
 ]

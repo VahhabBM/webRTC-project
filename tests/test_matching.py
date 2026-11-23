@@ -672,6 +672,11 @@ def _db_event(name="T", num_rounds=6):
     return Event.objects.create(
         name=name,
         num_rounds=num_rounds,
+        # Persistence tests exercise a complete round schedule; production
+        # defaults (4/8/5) intentionally cap dates and are tested separately.
+        male_date_limit=num_rounds,
+        female_date_limit=num_rounds,
+        other_date_limit=num_rounds,
         round_duration=timedelta(minutes=5),
         break_duration=timedelta(seconds=30),
         start_time=timezone.now(),
@@ -920,6 +925,14 @@ def test_900_participant_benchmark():
         event_name="Benchmark 900",
     )
     event = Event.objects.get(name__startswith="Benchmark 900")
+    # This benchmark measures schedule generation at the requested six rounds,
+    # not the production default date limits.
+    event.male_date_limit = 6
+    event.female_date_limit = 6
+    event.other_date_limit = 6
+    event.save(
+        update_fields=["male_date_limit", "female_date_limit", "other_date_limit"]
+    )
 
     t0 = time.perf_counter()
     call_command("generate_schedule", str(event.pk))

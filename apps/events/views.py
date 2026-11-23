@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_safe
 from rest_framework import status
@@ -21,10 +24,23 @@ from apps.events.auth import (
     establish_participant_session,
     resolve_participant_from_session,
 )
-from apps.events.models import ConnectionType, Pair, Participant
-from apps.events.orchestrator import invalidate_participant_sockets
+from apps.events.interest import PairInterestError, submit_pair_interest
+from apps.events.models import (
+    ConnectionType,
+    DisconnectionCause,
+    DisconnectionLog,
+    Pair,
+    Participant,
+    ParticipantIncidentNote,
+)
+from apps.events.orchestrator import (
+    OrchestratorRealtime,
+    invalidate_participant_sockets,
+)
 from apps.events.turn import TurnCredentialService, generate_ice_servers
 from apps.protocol.media_transport import DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS
+
+logger = logging.getLogger(__name__)
 
 
 def get_authenticated_participant(request: HttpRequest) -> Participant | None:
@@ -39,7 +55,7 @@ def landing_page(request: HttpRequest) -> HttpResponse:
 
 
 @require_GET
-def join_participant(request: HttpRequest, token: str) -> JsonResponse:
+def join_participant(request: HttpRequest, token: str) -> HttpResponse:
     """Authenticate participant using Join Token with distinct 400 and 410 error handling."""
     try:
         participant = authenticate_join_token(token)
@@ -68,6 +84,8 @@ def join_participant(request: HttpRequest, token: str) -> JsonResponse:
 
     establish_participant_session(request, participant)
     invalidate_participant_sockets(participant.pk)
+    if "text/html" in request.headers.get("Accept", "").lower():
+        return redirect("video-room")
     return JsonResponse(
         {
             "authenticated": True,
@@ -94,13 +112,31 @@ def current_participant(request: HttpRequest) -> JsonResponse:
             status=401,
         )
 
+    now = timezone.now()
+    event = participant.event
+    intro_configured = bool(event.intro_video_url)
+    intro_completed = (
+        not intro_configured or participant.intro_video_completed_at is not None
+    )
     return JsonResponse(
         {
             "authenticated": True,
+            "server_time": now.isoformat(),
             "participant": {
                 "id": str(participant.pk),
                 "display_name": participant.display_name,
                 "event_id": str(participant.event_id),
+                "intro_video": {
+                    "configured": intro_configured,
+                    "url": event.intro_video_url,
+                    "duration_seconds": event.intro_video_duration_seconds,
+                    "completed": intro_completed,
+                    "event_start_at": event.start_time.isoformat(),
+                    "start_delay_ms": max(
+                        0,
+                        int((event.start_time - now).total_seconds() * 1000),
+                    ),
+                },
             },
         }
     )
@@ -108,6 +144,144 @@ def current_participant(request: HttpRequest) -> JsonResponse:
 
 # Alias for backward compatibility
 participant_me_view = current_participant
+
+
+@require_POST
+def complete_event_intro(request: HttpRequest) -> JsonResponse:
+    participant = get_authenticated_participant(request)
+    if not participant:
+        return JsonResponse(
+            {"error": "Authentication required", "authenticated": False},
+            status=401,
+        )
+    with transaction.atomic():
+        participant = (
+            Participant.objects.select_for_update()
+            .select_related("event")
+            .get(pk=participant.pk)
+        )
+        now = timezone.now()
+        if not participant.event.intro_video_url:
+            return JsonResponse({"configured": False, "completed": True})
+        if now < participant.event.start_time:
+            return JsonResponse(
+                {"error": "The event introduction has not started yet."}, status=409
+            )
+        if participant.intro_video_completed_at is None:
+            participant.intro_video_completed_at = now
+            participant.save(update_fields=["intro_video_completed_at", "updated_at"])
+    return JsonResponse({"configured": True, "completed": True})
+
+
+@require_POST
+def submit_round_interest(request: HttpRequest) -> JsonResponse:
+    """Record a participant's private contact-sharing choice for one pair."""
+    participant = get_authenticated_participant(request)
+    if participant is None:
+        return JsonResponse({"error": {"code": "authentication_required"}}, status=401)
+
+    try:
+        payload = json.loads(request.body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"error": {"code": "invalid_json"}}, status=400)
+    if not isinstance(payload, dict):
+        return JsonResponse({"error": {"code": "invalid_payload"}}, status=400)
+
+    room_id = payload.get("room_id")
+    round_number = payload.get("round_number")
+    interested = payload.get("interested")
+    if (
+        not isinstance(room_id, str)
+        or not room_id.strip()
+        or len(room_id) > 100
+        or isinstance(round_number, bool)
+        or not isinstance(round_number, int)
+        or round_number < 1
+        or not isinstance(interested, bool)
+    ):
+        return JsonResponse({"error": {"code": "invalid_payload"}}, status=400)
+
+    try:
+        result = submit_pair_interest(
+            participant=participant,
+            room_id=room_id,
+            round_number=round_number,
+            interested=interested,
+        )
+    except PairInterestError as exc:
+        return JsonResponse(
+            {"error": {"code": exc.code, "message": str(exc)}},
+            status=exc.status_code,
+        )
+    except Exception:
+        logger.exception(
+            "Failed saving contact-sharing choice for participant %s",
+            participant.pk,
+        )
+        return JsonResponse({"error": {"code": "internal_error"}}, status=500)
+
+    if result.get("mutual"):
+        pair = (
+            Pair.objects.filter(
+                event_id=participant.event_id,
+                round__number=round_number,
+                room_id=room_id,
+            )
+            .select_related("participant_a", "participant_b", "round", "interest")
+            .first()
+        )
+        if pair is not None:
+            OrchestratorRealtime(participant.event).broadcast_interest_result(pair)
+
+    return JsonResponse(result)
+
+
+@require_POST
+def report_incident(request: HttpRequest) -> JsonResponse:
+    """Record an incident or misconduct report from a participant."""
+    participant = get_authenticated_participant(request)
+    if participant is None:
+        return JsonResponse({"error": {"code": "authentication_required"}}, status=401)
+
+    try:
+        payload = json.loads(request.body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"error": {"code": "invalid_json"}}, status=400)
+
+    if not isinstance(payload, dict):
+        return JsonResponse({"error": {"code": "invalid_payload"}}, status=400)
+
+    report_text = payload.get("report") or payload.get("note")
+    room_id = payload.get("room_id")
+    round_number = payload.get("round_number")
+    if not isinstance(report_text, str) or not report_text.strip():
+        return JsonResponse({"error": {"code": "empty_report"}}, status=400)
+
+    partner = None
+    if room_id:
+        pair = (
+            Pair.objects.filter(room_id=room_id, event_id=participant.event_id)
+            .select_related("participant_a", "participant_b")
+            .first()
+        )
+        if pair:
+            partner = (
+                pair.participant_b
+                if pair.participant_a_id == participant.pk
+                else pair.participant_a
+            )
+
+    target_participant = partner or participant
+    note_text = (
+        f"Misconduct report by {participant.display_name} "
+        f"(Round {round_number or '?'}): {report_text.strip()}"
+    )
+    ParticipantIncidentNote.objects.create(
+        event=participant.event,
+        participant=target_participant,
+        note=note_text,
+    )
+    return JsonResponse({"ok": True, "reported": True})
 
 
 @require_GET
@@ -160,8 +334,19 @@ def video_room_page(request: HttpRequest) -> HttpResponse:
             "warning_threshold_seconds": getattr(
                 settings, "ORCHESTRATOR_FINAL_SECONDS", 30
             ),
-            "media_fallback_room_id": getattr(settings, "MEDIA_FALLBACK_ROOM_ID", "")
-            or "",
+            "break_duration_seconds": (
+                int(participant.event.break_duration.total_seconds())
+                if participant.event.break_duration
+                else 120
+            ),
+            "early_exit_min_minutes": getattr(
+                participant.event, "early_exit_min_minutes", 3
+            )
+            or 3,
+            # Scope relay fallback to the authenticated participant's current
+            # room by default. An explicit setting can still narrow this to
+            # a single diagnostic pair when needed.
+            "media_fallback_room_id": getattr(settings, "MEDIA_FALLBACK_ROOM_ID", ""),
             "media_fallback_escalation_timeout_ms": int(
                 getattr(
                     settings,
@@ -254,7 +439,7 @@ def submit_connection_report(request: HttpRequest) -> JsonResponse:
             status=400,
         )
 
-    if not isinstance(conn_time_ms, int) or conn_time_ms < 0:
+    if type(conn_time_ms) is not int or conn_time_ms < 0:
         return JsonResponse(
             {
                 "error": {
@@ -265,23 +450,44 @@ def submit_connection_report(request: HttpRequest) -> JsonResponse:
             status=400,
         )
 
-    # Atomic update without lock contention to support heavy round scaling (up to 905 pairs)
-    updated_a = Pair.objects.filter(
+    audio_bytes = data.get("audio_bytes_received", 0)
+    video_frames = data.get("video_frames_decoded", 0)
+    if any(
+        type(value) is not int or value < 0 for value in (audio_bytes, video_frames)
+    ):
+        return JsonResponse(
+            {
+                "error": {
+                    "code": "invalid_payload",
+                    "message": "Media counters must be non-negative integers.",
+                }
+            },
+            status=400,
+        )
+    media_received = audio_bytes > 0 and video_frames > 0
+    now = timezone.now()
+    from apps.events.orchestrator import current_pair_for_participant
+
+    current_pair = current_pair_for_participant(participant.event, participant, now=now)
+    eligible_pairs = Pair.objects.filter(
+        pk=current_pair.pk if current_pair else None,
+        status__in=("pending", "active"),
+    )
+    report_a = {"connection_type_a": conn_type, "connection_time_ms_a": conn_time_ms}
+    report_b = {"connection_type_b": conn_type, "connection_time_ms_b": conn_time_ms}
+    if media_received:
+        report_a["media_received_a"] = True
+        report_b["media_received_b"] = True
+    updated_a = eligible_pairs.filter(
         room_id=room_id,
         participant_a=participant,
-    ).update(
-        connection_type_a=conn_type,
-        connection_time_ms_a=conn_time_ms,
-    )
+    ).update(**report_a)
 
     if not updated_a:
-        updated_b = Pair.objects.filter(
+        updated_b = eligible_pairs.filter(
             room_id=room_id,
             participant_b=participant,
-        ).update(
-            connection_type_b=conn_type,
-            connection_time_ms_b=conn_time_ms,
-        )
+        ).update(**report_b)
         if not updated_b:
             return JsonResponse(
                 {
@@ -294,3 +500,52 @@ def submit_connection_report(request: HttpRequest) -> JsonResponse:
             )
 
     return JsonResponse({"status": "recorded"})
+
+
+@require_POST
+def leave_date(request: HttpRequest) -> JsonResponse:
+    """Allow a participant to gracefully leave an active date early (Task 3)."""
+    participant = get_authenticated_participant(request)
+    if not participant:
+        return JsonResponse({"error": "Authentication required"}, status=401)
+
+    try:
+        data = json.loads(request.body)
+        room_id = data.get("room_id")
+    except Exception:
+        room_id = None
+
+    now = timezone.now()
+    pair = None
+    if room_id:
+        pair = (
+            Pair.objects.filter(event=participant.event, room_id=room_id)
+            .filter(Q(participant_a=participant) | Q(participant_b=participant))
+            .select_related("participant_a", "participant_b", "round")
+            .first()
+        )
+
+    if pair:
+        partner = (
+            pair.participant_b
+            if pair.participant_a_id == participant.pk
+            else pair.participant_a
+        )
+        DisconnectionLog.objects.create(
+            event=participant.event,
+            participant=participant,
+            round=pair.round,
+            cause=DisconnectionCause.TAB_CLOSED,
+            detail=f"Participant voluntarily left date early in room {room_id} with partner {partner.display_name if partner else 'unknown'}",
+            disconnected_at=now,
+        )
+    else:
+        DisconnectionLog.objects.create(
+            event=participant.event,
+            participant=participant,
+            cause=DisconnectionCause.TAB_CLOSED,
+            detail=f"Participant voluntarily left date early in room {room_id or 'unknown'}",
+            disconnected_at=now,
+        )
+
+    return JsonResponse({"ok": True, "message": "Left date successfully."})

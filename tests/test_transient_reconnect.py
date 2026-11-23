@@ -203,8 +203,19 @@ def test_t14_reconnect_replays_snapshot_only_on_that_socket(setup_round, setting
         await first.send_json_to(_hello())
         hello = await first.receive_json_from()
         assert hello["type"] == MessageType.SERVER_HELLO
+        # The first-ever hello also receives the authoritative live snapshot.
+        first_snapshot = [
+            await first.receive_json_from(),
+            await first.receive_json_from(),
+        ]
+        assert [msg["type"] for msg in first_snapshot] == [
+            MessageType.SERVER_PAIRING,
+            MessageType.SERVER_ROUND_START,
+        ]
         await other.send_json_to(_hello())
         assert (await other.receive_json_from())["type"] == MessageType.SERVER_HELLO
+        await other.receive_json_from()
+        await other.receive_json_from()
         await first.disconnect()
 
         second = _connect(cookie_a)
@@ -237,7 +248,7 @@ def test_t14_reconnect_replays_snapshot_only_on_that_socket(setup_round, setting
 
 @pytest.fixture
 def setup_round(db):
-    event = _make_event()
+    event = _make_event(live_matching_enabled=False)
     p1 = _participant(event, "Alice")
     p2 = _participant(event, "Bob")
     p3 = _participant(event, "Cara")

@@ -1,0 +1,142 @@
+from __future__ import annotations
+
+import time
+from datetime import timedelta
+
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
+from django.utils import timezone
+
+from apps.events.auth import scheduled_event_end
+from apps.events.email_notifications import (
+    EVENT_ACCESS_LEAD_HOURS,
+    send_due_event_reminders_for_event,
+    send_event_access_email_once,
+    send_registration_receipt_once,
+)
+from apps.events.models import Event, EventStatus, Participant, RegistrationStatus
+
+
+class Command(BaseCommand):
+    help = "Retry queued registration receipts and send room links from 9 hours before an event until it ends."
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--loop",
+            action="store_true",
+            help="Keep checking for due emails at the configured interval.",
+        )
+        parser.add_argument(
+            "--interval-seconds",
+            type=int,
+            default=60,
+            help="Delay between checks when --loop is enabled (default: 60).",
+        )
+        parser.add_argument(
+            "--confirm-production",
+            action="store_true",
+            help="Confirm sending real emails from production.",
+        )
+
+    def handle(self, *args, **options):
+        if not settings.DEBUG and not options["confirm_production"]:
+            raise CommandError(
+                "Refusing to send production emails without --confirm-production."
+            )
+
+        interval = options["interval_seconds"]
+        if options["loop"] and interval < 30:
+            raise CommandError("--interval-seconds must be at least 30.")
+        self.loop_mode = options["loop"]
+
+        while True:
+            try:
+                self.send_due_emails()
+            except Exception as exc:
+                if not options["loop"]:
+                    raise CommandError(
+                        f"Could not send due event access emails: {exc}"
+                    ) from exc
+                self.stderr.write(f"Event access email check failed: {exc}")
+
+            if not options["loop"]:
+                return
+            time.sleep(interval)
+
+    def send_due_emails(self):
+        now = timezone.now()
+        due_events = Event.objects.filter(
+            status__in=(
+                EventStatus.REGISTRATION_OPEN,
+                EventStatus.SCHEDULED,
+                EventStatus.LOCKED,
+                EventStatus.ACTIVE,
+                EventStatus.RUNNING,
+            ),
+            start_time__lte=now + timedelta(hours=EVENT_ACCESS_LEAD_HOURS),
+        ).order_by("start_time")
+
+        sent = 0
+        reminders_sent = 0
+        failed = 0
+        receipt_sent = 0
+        pending_receipts = (
+            Participant.objects.filter(
+                registration_receipt_pending=True,
+                registration_receipt_sent_at__isnull=True,
+                registration_status__in=(
+                    RegistrationStatus.CONFIRMED,
+                    RegistrationStatus.WAITLISTED,
+                ),
+            )
+            .exclude(email="")
+            .values_list("pk", flat=True)
+        )
+        for participant_id in pending_receipts.iterator():
+            try:
+                receipt_sent += send_registration_receipt_once(participant_id)
+            except Exception:
+                failed += 1
+                self.stderr.write(
+                    f"Failed registration receipt for participant {participant_id}."
+                )
+        for event in due_events:
+            if scheduled_event_end(event) <= now:
+                continue
+
+            try:
+                reminders_sent += send_due_event_reminders_for_event(event, now=now)
+            except Exception as exc:
+                self.stderr.write(
+                    f"Failed sending event reminders for event {event.pk}: {exc}"
+                )
+
+            participant_ids = list(
+                Participant.objects.filter(
+                    event=event,
+                    registration_status=RegistrationStatus.CONFIRMED,
+                    event_access_email_sent_at__isnull=True,
+                )
+                .exclude(email="")
+                .values_list("pk", flat=True)
+            )
+            for participant_id in participant_ids:
+                try:
+                    sent += send_event_access_email_once(
+                        participant_id, allow_event_in_progress=True
+                    )
+                except Exception as exc:
+                    failed += 1
+                    self.stderr.write(
+                        f"Failed to send event access email for participant "
+                        f"{participant_id}: {exc}"
+                    )
+
+        if sent or receipt_sent or reminders_sent or failed or not self.loop_mode:
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Sent {sent} event access email(s), {receipt_sent} registration receipt(s), {reminders_sent} reminder(s); failed {failed}."
+                )
+            )
+        if failed:
+            raise CommandError(f"Failed to send {failed} event access email(s).")

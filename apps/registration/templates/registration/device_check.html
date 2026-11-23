@@ -83,7 +83,7 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transform: scaleX(-1); /* اثر آینه‌ای طبیعی */
+    transform: scaleX(-1); /* Natural mirror effect */
   }
 
   .preview-placeholder {
@@ -289,12 +289,12 @@
     const iabWarning = document.getElementById('iab-warning');
     const httpsWarning = document.getElementById('https-warning');
 
-    // ۱. بررسی Secure Context (HTTPS)
+    // 1. Check Secure Context (HTTPS)
     if (window.isSecureContext === false && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
       httpsWarning.style.display = 'block';
     }
 
-    // ۲. تشخیص In-App Browser (Telegram, Instagram, etc.)
+    // 2. Detect In-App Browser (Telegram, Instagram, etc.)
     function detectInAppBrowser() {
       const ua = navigator.userAgent || navigator.vendor || window.opera;
       const isIAB = /FBAN|FBAV|Instagram|Telegram|LinkedInApp|MicroMessenger|musical_ly|BytedanceWebview|Line\/|Snapchat/i.test(ua) ||
@@ -306,7 +306,7 @@
     }
     const inAppBrowserDetected = detectInAppBrowser();
 
-    // ۳. لاگ نتیجه به سرور
+    // 3. Log results to server
     async function reportTestResult(camOk, micOk, errType = "") {
       const eventId = "{{ event_id|default:'' }}";
       const reportUrl = eventId ? `/registration/${eventId}/device-check/report/` : `/registration/device-check/report/`;
@@ -326,7 +326,7 @@
       }
     }
 
-    // ۴. لیست کردن دستگاه‌های متصل
+    // 4. Enumerate connected devices
     async function populateDeviceSelectors() {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
@@ -358,7 +358,7 @@
       }
     }
 
-    // ۵. آغاز دریافت جریان وب‌کم و صوت
+    // 5. Initialize webcam and audio stream
     async function initMedia(videoDeviceId = null, audioDeviceId = null) {
       deniedGuide.style.display = 'none';
 
@@ -376,14 +376,14 @@
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         currentStream = stream;
 
-        // بارگذاری ویدیو
+        // Load video stream
         videoEl.srcObject = stream;
         placeholder.style.display = 'none';
 
-        // راه‌اندازی Audio Visualizer
+        // Setup audio visualizer
         setupAudioMeter(stream);
 
-        // پر کردن منوهای دستگاه‌ها پس از کسب مجوز (Labels نمایان می‌شوند)
+        // Populate device selectors after permissions granted
         await populateDeviceSelectors();
 
         recheckBtn.textContent = 'Everything Looks Great ✓';
@@ -415,7 +415,7 @@
       }
     }
 
-    // ۶. محاسبه و انیمیشن لول میکروفن
+    // 6. Audio meter volume calculation
     function setupAudioMeter(stream) {
       const audioTracks = stream.getAudioTracks();
       if (!audioTracks.length) return;
@@ -449,12 +449,12 @@
       }
     }
 
-    // لیسنرهای تعویض دستگاه ورودی
+    // Device change event listeners
     videoSelect.addEventListener('change', () => initMedia(videoSelect.value, audioSelect.value));
     audioSelect.addEventListener('change', () => initMedia(videoSelect.value, audioSelect.value));
     recheckBtn.addEventListener('click', () => initMedia(videoSelect.value, audioSelect.value));
 
-    // شروع اولیه بررسی به محض بارگذاری صفحه
+    // Initial check on page load
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       initMedia();
     } else {

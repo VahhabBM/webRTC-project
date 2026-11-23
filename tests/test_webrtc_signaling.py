@@ -2,11 +2,13 @@ import asyncio
 from datetime import timedelta
 
 import pytest
+from channels.db import database_sync_to_async
 from channels.layers import channel_layers
 from channels.testing import WebsocketCommunicator
 from django.utils import timezone
 
 from apps.events.models import Event, Pair, Participant, Round
+from apps.events.orchestrator import OrchestratorRealtime
 from apps.protocol.constants import ErrorCode, MessageType
 from apps.protocol.schemas import (
     build_client_ice_candidate,
@@ -21,6 +23,18 @@ from tests.test_websocket_auth import (
 )
 
 
+async def _hello_and_drain_snapshot(communicator, participant):
+    await communicator.send_json_to(_hello())
+    hello = await communicator.receive_json_from()
+    assert hello["type"] == MessageType.SERVER_HELLO
+    expected = await database_sync_to_async(
+        OrchestratorRealtime(participant.event).reconnect_snapshot_messages
+    )(participant)
+    for message in expected:
+        snapshot = await communicator.receive_json_from()
+        assert snapshot["type"] == message["type"]
+
+
 @pytest.fixture
 def signaling_setup(db):
     now = timezone.now()
@@ -30,6 +44,7 @@ def signaling_setup(db):
         round_duration=timedelta(minutes=5),
         break_duration=timedelta(),
         start_time=now,
+        live_matching_enabled=False,
     )
     p_a = Participant.objects.create(
         event=event, display_name="UserA", join_token_hash="!"
@@ -92,13 +107,8 @@ def test_webrtc_signaling_relay_between_paired_participants(
         assert connected_a and connected_b
 
         # Handshake & Hello
-        await comm_a.send_json_to(_hello())
-        res_hello_a = await comm_a.receive_json_from()
-        assert res_hello_a["type"] == MessageType.SERVER_HELLO
-
-        await comm_b.send_json_to(_hello())
-        res_hello_b = await comm_b.receive_json_from()
-        assert res_hello_b["type"] == MessageType.SERVER_HELLO
+        await _hello_and_drain_snapshot(comm_a, p_a)
+        await _hello_and_drain_snapshot(comm_b, p_b)
 
         # Send Offer (User A -> User B)
         offer_msg = build_client_webrtc_offer(room_id=room_id, sdp="v=0\r\ntest-offer")
@@ -155,9 +165,7 @@ def test_webrtc_signaling_wrong_room_rejected(signaling_setup, inmemory_channels
         connected, _ = await comm_a.connect()
         assert connected
 
-        await comm_a.send_json_to(_hello())
-        res_hello = await comm_a.receive_json_from()
-        assert res_hello["type"] == MessageType.SERVER_HELLO
+        await _hello_and_drain_snapshot(comm_a, p_a)
 
         # Send offer with unassigned/wrong room_id
         bad_msg = build_client_webrtc_offer(room_id="room-fake-999", sdp="v=0\r\nfake")

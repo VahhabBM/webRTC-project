@@ -54,6 +54,7 @@ class FakePC {
     this.localDescription = null;
     this.remoteDescription = null;
     this.addTrackCalls = 0;
+    this.addedCandidates = [];
     this.closed = false;
     FakePC.instances.push(this);
   }
@@ -99,7 +100,7 @@ class FakePC {
     this.remoteDescription = desc;
     this.signalingState = desc.type === "offer" ? "have-remote-offer" : "stable";
   }
-  async addIceCandidate() {}
+  async addIceCandidate(candidate) { this.addedCandidates.push(candidate); }
   async getStats() {
     return new Map();
   }
@@ -158,7 +159,7 @@ const {
   AdapterKind,
 } = mediaMod;
 const { CallRoomController, CallRoomPhase } = callRoomMod;
-const { resetSharedLocalMediaForTests, getSharedGetUserMediaCallCount } = negotiatorMod;
+const { resetSharedLocalMediaForTests, getSharedGetUserMediaCallCount, PerfectNegotiator } = negotiatorMod;
 
 function pairingPayload(roundNumber, roomId, partnerId) {
   return {
@@ -187,13 +188,14 @@ afterEach(() => {
   resetSharedLocalMediaForTests();
 });
 
-test("fallbackAllowedForRoom is pair-scoped and off by default", () => {
+test("fallbackAllowedForRoom permits assigned pairs by default and honors diagnostics", () => {
   assert.equal(fallbackAllowedForRoom("test-room-101", "test-room-101"), true);
   assert.equal(fallbackAllowedForRoom("test-room-202", "test-room-101"), false);
-  assert.equal(fallbackAllowedForRoom("test-room-101", ""), false);
+  assert.equal(fallbackAllowedForRoom("test-room-101", ""), true);
+  assert.equal(fallbackAllowedForRoom("", ""), false);
 });
 
-test("primary path never activates fallback without the pair key", async () => {
+test("primary path can activate fallback without a diagnostic room key", async () => {
   const failures = [];
   const transport = new FailoverMediaTransport({
     myParticipantId: "participant-a",
@@ -207,14 +209,38 @@ test("primary path never activates fallback without the pair key", async () => {
   await transport.preconnect("room-1", "partner-b");
   await transport.open();
   assert.equal(transport.adapterKind, AdapterKind.DIRECT);
-  assert.equal(await transport.forceFallback(), false);
+  assert.equal(await transport.forceFallback(), true);
   await transport._onActiveFailure(
     "ICE_CONNECTION_FAILED",
     transport._generation,
   );
-  assert.equal(transport.usingFallback, false);
+  assert.equal(transport.usingFallback, true);
   assert.deepEqual(failures, ["ICE_CONNECTION_FAILED"]);
   transport.leave();
+});
+
+test("early ICE waits for remote SDP and is cleared when the partner changes", async () => {
+  const negotiator = new PerfectNegotiator({
+    myParticipantId: "participant-a",
+    partnerParticipantId: "partner-b",
+    roomId: "room-a",
+    sendSignalingMessage: () => {},
+  });
+  const pc = negotiator.pc;
+  await negotiator.handleSignalingMessage({
+    type: "server.webrtc.ice_candidate",
+    payload: { room_id: "room-a", candidate: "candidate:early", sdp_mid: "0", sdp_mline_index: 0 },
+  });
+  assert.equal(pc.addedCandidates.length, 0);
+  await negotiator.handleSignalingMessage({
+    type: "server.webrtc.offer",
+    payload: { room_id: "room-a", sdp: "offer" },
+  });
+  assert.equal(pc.addedCandidates.length, 1);
+  assert.equal(pc.addedCandidates[0].candidate, "candidate:early");
+  await negotiator.prepareRound("room-b", "partner-c");
+  assert.equal(negotiator._pendingRemoteCandidates.length, 0);
+  negotiator.leave();
 });
 
 test("forceFallback switches one selected pair and reuses tracks", async () => {
@@ -251,6 +277,30 @@ test("forceFallback switches one selected pair and reuses tracks", async () => {
   transport.leave();
 });
 
+test("relay fallback refreshes expired ICE credentials before constructing the retry peer", async () => {
+  let refreshes = 0;
+  const transport = new FailoverMediaTransport({
+    myParticipantId: "participant-a",
+    partnerParticipantId: "partner-b",
+    roomId: "room-refresh",
+    selectedRoomId: "room-refresh",
+    rtcConfig: { iceServers: [{ urls: "stun:old.example" }] },
+    refreshRtcConfig: async () => {
+      refreshes += 1;
+      return { iceServers: [{ urls: "turn:new.example", username: "fresh" }] };
+    },
+    sendSignalingMessage: () => {},
+  });
+  await transport.acquireLocalMedia();
+  await transport.preconnect("room-refresh", "partner-b");
+  await transport.open();
+  assert.equal(await transport.forceFallback(), true);
+  assert.equal(refreshes, 1);
+  assert.equal(transport.pc.config.iceServers[0].username, "fresh");
+  assert.equal(transport.pc.config.iceTransportPolicy, "relay");
+  transport.leave();
+});
+
 test("stale primary peer cannot control the room after fallback", async () => {
   const failures = [];
   const transport = new FailoverMediaTransport({
@@ -274,7 +324,7 @@ test("stale primary peer cannot control the room after fallback", async () => {
   transport.leave();
 });
 
-test("call room fallback is isolated to the selected pair", async () => {
+test("call room fallback is available to every assigned pair", async () => {
   const selected = new CallRoomController({
     myParticipantId: "participant-a",
     mediaFallbackRoomId: "room-keep",
@@ -287,7 +337,6 @@ test("call room fallback is isolated to the selected pair", async () => {
   });
   const other = new CallRoomController({
     myParticipantId: "participant-c",
-    mediaFallbackRoomId: "",
     elements: {
       localVideo: { srcObject: null },
       remoteVideo: { srcObject: null },
@@ -306,7 +355,7 @@ test("call room fallback is isolated to the selected pair", async () => {
   const otherOldPc = other.negotiator.pc;
 
   assert.equal(await selected.forceMediaFallback(), true);
-  assert.equal(await other.forceMediaFallback(), false);
+  assert.equal(await other.forceMediaFallback(), true);
 
   assert.equal(selected.phase, CallRoomPhase.IN_ROUND);
   assert.equal(other.phase, CallRoomPhase.IN_ROUND);
@@ -314,11 +363,11 @@ test("call room fallback is isolated to the selected pair", async () => {
   assert.equal(selected.partner.roomId, "room-keep");
   assert.equal(other.partner.partnerId, "partner-d");
   assert.equal(selected.negotiator.adapterKind, AdapterKind.RELAY);
-  assert.equal(other.negotiator.adapterKind, AdapterKind.DIRECT);
+  assert.equal(other.negotiator.adapterKind, AdapterKind.RELAY);
   assert.equal(selected.negotiator.localStream, selectedStream);
   assert.equal(other.negotiator.localStream, otherStream);
   assert.equal(selectedOldPc.closed, true);
-  assert.equal(otherOldPc.closed, false);
+  assert.equal(otherOldPc.closed, true);
   assert.equal(getSharedGetUserMediaCallCount(), 1);
 
   selected._stopTimer();
@@ -360,7 +409,115 @@ test("ICE failure on a selected pair swaps adapters without a second getUserMedi
   controller.disconnect();
 });
 
-test("primary call-room path still works without the fallback flag", async () => {
+test("default relay fallback remains eligible after the assigned room changes", async () => {
+  const controller = new CallRoomController({
+    myParticipantId: "participant-a",
+    elements: {
+      localVideo: { srcObject: null },
+      remoteVideo: { srcObject: null },
+      connectionBadge: { textContent: "", className: "", dataset: {} },
+      errorBanner: { hidden: true, textContent: "" },
+    },
+  });
+  await controller._onPairing(pairingPayload(1, "room-first", "partner-b"));
+  await controller._onRoundStart({ round_number: 1 });
+  const stream = controller.negotiator.localStream;
+  assert.equal(await controller.forceMediaFallback(), true);
+  await controller._onPairing(pairingPayload(2, "room-next", "partner-c"));
+  assert.equal(controller.negotiator.usingFallback, true);
+  assert.equal(controller.negotiator.roomId, "room-next");
+  assert.equal(controller.negotiator.partnerId, "partner-c");
+  assert.equal(controller.negotiator.localStream, stream);
+  assert.equal(getSharedGetUserMediaCallCount(), 1);
+  controller._stopTimer();
+  controller.disconnect();
+});
+
+test("server waiting notice clears partner media but keeps the camera stream alive", async () => {
+  const waitingBanner = { hidden: true, textContent: "" };
+  const controller = new CallRoomController({
+    myParticipantId: "participant-a",
+    elements: {
+      localVideo: { srcObject: null },
+      remoteVideo: { srcObject: null },
+      connectionBadge: { textContent: "", className: "", dataset: {} },
+      errorBanner: { hidden: false, textContent: "internal error" },
+      waitingBanner,
+    },
+  });
+  await controller._onPairing(pairingPayload(1, "room-wait", "partner-b"));
+  const stream = controller.negotiator.localStream;
+  const now = Date.now();
+  controller._onServerWaiting({
+    reason: "partner_left",
+    server_ts: now,
+    next_check_ts: now + 2000,
+  });
+  assert.equal(controller.partner, null);
+  assert.equal(controller.negotiator.localStream, stream);
+  assert.equal(waitingBanner.hidden, false);
+  assert.match(waitingBanner.textContent, /connected automatically/);
+  assert.doesNotMatch(waitingBanner.textContent, /seconds|check again|Next check/);
+  assert.equal(controller.elements.errorBanner.hidden, true);
+  controller._clearServerWaiting();
+  controller.disconnect();
+});
+
+test("repeated background matching checks keep one stable waiting message", () => {
+  let text = "";
+  let writes = 0;
+  const waitingBanner = {
+    hidden: true,
+    get textContent() { return text; },
+    set textContent(value) { text = value; writes += 1; },
+  };
+  const controller = new CallRoomController({ elements: { waitingBanner } });
+  for (const reason of ["partner_left", "waiting_for_partner", "no_compatible_partner", "waiting_for_partner"]) {
+    controller._onServerWaiting({ reason, server_ts: 1000, next_check_ts: 3000 });
+  }
+  assert.equal(writes, 1);
+  assert.equal(waitingBanner.hidden, false);
+  assert.match(text, /connected automatically/);
+  controller.disconnect();
+});
+
+test("event end removes waiting text and stale timer; late updates cannot reopen it", async () => {
+  const waitingBanner = { hidden: true, textContent: "" };
+  const timerDisplay = { textContent: "00:21", dataset: { state: "warning" } };
+  const controller = new CallRoomController({ elements: { waitingBanner, timerDisplay } });
+  controller._onServerWaiting({ reason: "waiting_for_partner", next_check_ts: Date.now() + 2000 });
+  controller.roundEndTs = Date.now() + 21000;
+  await controller._handleMessage({ type: "server.event_end", payload: { reason: "completed" } });
+  for (const type of ["server.waiting", "server.hello", "server.pairing", "server.round_start", "operator.resume"]) {
+    await controller._handleMessage({ type, payload: { reason: "partner_left" } });
+  }
+  controller._onServerWaiting({ reason: "waiting_for_partner" });
+  assert.equal(controller.phase, CallRoomPhase.EVENT_ENDED);
+  assert.equal(waitingBanner.hidden, true);
+  assert.equal(waitingBanner.textContent, "");
+  assert.equal(timerDisplay.textContent, "--:--");
+  assert.equal(controller.roundEndTs, null);
+  assert.equal(controller._timerInterval, null);
+  controller.disconnect();
+});
+
+test("subsecond timer ticks do not rewrite unchanged countdown text", () => {
+  let text = "";
+  let writes = 0;
+  const timerDisplay = {
+    dataset: {},
+    get textContent() { return text; },
+    set textContent(value) { text = value; writes += 1; },
+  };
+  const controller = new CallRoomController({ elements: { timerDisplay } });
+  for (let tick = 0; tick < 4; tick += 1) controller._renderTimer("00:21", "warning");
+  assert.equal(writes, 1);
+  controller._renderTimer("00:20", "warning");
+  assert.equal(writes, 2);
+  controller.disconnect();
+});
+
+test("primary call-room path starts direct and can fall back by default", async () => {
   const controller = new CallRoomController({
     myParticipantId: "participant-a",
     elements: {
@@ -375,7 +532,8 @@ test("primary call-room path still works without the fallback flag", async () =>
   assert.equal(controller.phase, CallRoomPhase.IN_ROUND);
   assert.equal(controller.negotiator.adapterKind, AdapterKind.DIRECT);
   assert.equal(controller.negotiator.usingFallback, false);
-  assert.equal(await controller.forceMediaFallback(), false);
+  assert.equal(await controller.forceMediaFallback(), true);
+  assert.equal(controller.negotiator.usingFallback, true);
   assert.equal(getSharedGetUserMediaCallCount(), 1);
   await controller._onEventEnd({ reason: "completed" });
   assert.equal(controller.phase, CallRoomPhase.EVENT_ENDED);

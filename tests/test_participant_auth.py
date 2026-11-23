@@ -7,6 +7,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.events.auth import (
+    ExpiredJoinToken,
     InvalidJoinToken,
     authenticate_join_token,
     issue_join_token,
@@ -101,6 +102,37 @@ def test_websocket_hook_resolves_session_participant(participant, issued_token):
 def test_token_is_reusable_until_expiry(participant, issued_token):
     assert authenticate_join_token(issued_token) == participant
     assert authenticate_join_token(issued_token) == participant
+
+
+@pytest.mark.django_db
+def test_rotating_a_join_link_keeps_the_previous_link_valid(participant):
+    previous_token = issue_join_token(participant)
+    current_token = issue_join_token(participant)
+
+    assert previous_token != current_token
+    assert authenticate_join_token(previous_token) == participant
+    assert authenticate_join_token(current_token) == participant
+
+
+@pytest.mark.django_db
+def test_rotating_a_link_does_not_revive_an_intentionally_shortened_old_link(
+    participant,
+):
+    previous_token = issue_join_token(participant)
+    shortened_expiry = timezone.now() - timedelta(seconds=1)
+    participant.join_token_expires_at = shortened_expiry
+    participant.save(update_fields=["join_token_expires_at"])
+
+    current_token = issue_join_token(participant)
+
+    participant.refresh_from_db()
+    retained = participant.access_tokens.get(
+        digest=hashlib.sha256(previous_token.encode()).hexdigest()
+    )
+    assert retained.expires_at == shortened_expiry
+    with pytest.raises(ExpiredJoinToken):
+        authenticate_join_token(previous_token)
+    assert authenticate_join_token(current_token) == participant
 
 
 @pytest.mark.django_db

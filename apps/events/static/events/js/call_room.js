@@ -53,7 +53,7 @@ export const PARTNER_GONE_FOOTER =
 export function partnerLeftBanner(
   name = "Partner",
 ) {
-  return `${name} left. Waiting for them to return — the round continues.`;
+  return `${name} got disconnected. Please wait up to 1 minute — they may reconnect. If not, you will be connected to your next date.`;
 }
 
 export function partnerPresenceFromProtocol(
@@ -266,6 +266,7 @@ export class CallRoomController {
     onTimerTick = null,
 
     fetchIceServers = null,
+    submitInterest = null,
 
     negotiatorFactory = null,
     transportFactory = null,
@@ -281,6 +282,8 @@ export class CallRoomController {
 
     reconnectWindowMs =
       RECONNECT_WINDOW_MS,
+
+    earlyExitMinMinutes = 3,
 
     createWebSocket = null,
     now = null,
@@ -343,6 +346,21 @@ export class CallRoomController {
 
     this._fetchIceServers =
       fetchIceServers;
+
+    this._submitInterest =
+      submitInterest;
+
+    this._interestPrompts =
+      new Map();
+
+    this._activeInterestPromptId =
+      null;
+
+    this._interestTimer =
+      null;
+
+    this._interestSubmitting =
+      false;
 
     /*
      * transportFactory has priority over negotiatorFactory
@@ -430,6 +448,8 @@ export class CallRoomController {
     this._sharedStream =
       null;
 
+    this._observedMediaStreams = new WeakSet();
+
     this._mediaPromise =
       null;
 
@@ -438,6 +458,9 @@ export class CallRoomController {
 
     this._wsGeneration =
       0;
+    this._messageQueue = Promise.resolve();
+    this._signalQueues = new Map();
+    this._sessionInactive = false;
 
     this._reconnectAttempt =
       0;
@@ -456,6 +479,34 @@ export class CallRoomController {
 
     this._intentionalClose =
       false;
+
+    this.earlyExitMinMinutes =
+      Number(earlyExitMinMinutes) || 3;
+    this._leaveDateTimer = null;
+    this._autoReloadTimer = null;
+    this._standbyTimer = null;
+
+    if (this.elements.leaveDateBtn) {
+      this.elements.leaveDateBtn.addEventListener('click', () => {
+        if (this.elements.leaveDateConfirmModal) {
+          this.elements.leaveDateConfirmModal.hidden = false;
+        } else {
+          this.leaveDateEarly();
+        }
+      });
+    }
+    if (this.elements.cancelLeaveDateBtn) {
+      this.elements.cancelLeaveDateBtn.addEventListener('click', () => {
+        if (this.elements.leaveDateConfirmModal) {
+          this.elements.leaveDateConfirmModal.hidden = true;
+        }
+      });
+    }
+    if (this.elements.confirmLeaveDateBtn) {
+      this.elements.confirmLeaveDateBtn.addEventListener('click', () => {
+        this.leaveDateEarly();
+      });
+    }
   }
 
   get transport() {
@@ -469,34 +520,12 @@ export class CallRoomController {
   _liveStream(stream) {
     return Boolean(
       stream &&
-        stream
-          .getTracks()
-          .some(
-            (track) =>
-              track.readyState !==
-              "ended",
-          ),
+        stream.getAudioTracks?.().some((track) => track.readyState !== "ended") &&
+        stream.getVideoTracks?.().some((track) => track.readyState !== "ended"),
     );
   }
 
   async forceMediaFallback() {
-    const currentRoomId =
-      this.partner?.roomId ??
-      this.negotiator?.roomId ??
-      "";
-
-    if (
-      !this.mediaFallbackRoomId ||
-      String(
-        currentRoomId,
-      ) !==
-        String(
-          this.mediaFallbackRoomId,
-        )
-    ) {
-      return false;
-    }
-
     if (!this.negotiator) {
       return false;
     }
@@ -531,6 +560,7 @@ export class CallRoomController {
   }
 
   connect() {
+    if (this._sessionInactive || this.phase === CallRoomPhase.EVENT_ENDED) return;
     void this.ensureLocalMedia();
 
     this._bindOnlineListener();
@@ -620,6 +650,8 @@ export class CallRoomController {
 
     this.ws =
       factory(url);
+    this._serverHelloReceived = false;
+    this._readySentGeneration = null;
 
     const socket =
       this.ws;
@@ -634,6 +666,13 @@ export class CallRoomController {
       }
 
       this._clearReconnect();
+      this._clearEarlyExitTimer();
+      this._clearStandbyCountdown();
+      this._clearAutoReload();
+
+      if (this.elements.disconnectNotificationBanner) {
+        this.elements.disconnectNotificationBanner.hidden = true;
+      }
 
       this._reconnectAttempt =
         0;
@@ -669,11 +708,34 @@ export class CallRoomController {
           return;
         }
 
-        this._handleMessage(
-          JSON.parse(
-            event.data,
-          ),
-        );
+        // Pairing awaits ICE configuration and device acquisition. Keep later
+        // round-start and signaling messages behind it so open() cannot run
+        // before preconnect() has created (and muted) the senders.
+        this._messageQueue = this._messageQueue.then(async () => {
+          if (generation !== this._wsGeneration || this.ws !== socket) return;
+          const message = JSON.parse(event.data);
+          if (message.type?.startsWith("server.webrtc.")) {
+            const roomId = message.payload?.room_id;
+            const previous = this._signalQueues.get(roomId) || Promise.resolve();
+            const pending = previous.then(async () => {
+              if (generation !== this._wsGeneration || this.ws !== socket || this.partner?.roomId !== roomId) return;
+              await this._handleMessage(message);
+            }).catch(() => {});
+            this._signalQueues.set(roomId, pending);
+            // Browser SDP promises can stay pending after an old peer closes.
+            // They must not block lifecycle messages or another assigned room.
+            for (const key of this._signalQueues.keys()) {
+              if (key !== this.partner?.roomId) this._signalQueues.delete(key);
+            }
+          } else {
+            await this._handleMessage(message);
+          }
+        }).catch(() => {
+          // A malformed frame must not poison the queue or stop heartbeats.
+          if (generation === this._wsGeneration && this.ws === socket) {
+            this._showConnectionError("A call update could not be applied. Reconnecting…");
+          }
+        });
       };
 
     socket.onclose =
@@ -689,12 +751,16 @@ export class CallRoomController {
         if (
           event &&
           (
-            event.code === 4001 ||
             event.reason ===
               "session_replaced"
           )
         ) {
           this._onSessionReplaced();
+          return;
+        }
+
+        if (event?.code === 4001) {
+          this._onSessionReplaced(true);
           return;
         }
 
@@ -732,6 +798,7 @@ export class CallRoomController {
   }
 
   disconnect() {
+    this._clearServerWaiting();
     this._intentionalClose =
       true;
 
@@ -740,6 +807,10 @@ export class CallRoomController {
 
     this.isPaused =
       false;
+
+    try {
+      sessionStorage.removeItem("meetakk_active_date");
+    } catch (e) {}
 
     this._clearPartnerGone();
 
@@ -750,6 +821,9 @@ export class CallRoomController {
     this._unbindBeforeUnloadListener();
 
     this._clearReconnect();
+    this._clearEarlyExitTimer();
+    this._clearStandbyCountdown();
+    this._clearAutoReload();
 
     this._reconnectGaveUp =
       false;
@@ -787,6 +861,10 @@ export class CallRoomController {
     const { type, payload } =
       msg;
 
+    // Queued room updates must not revive an event that has already ended.
+    // A final interest prompt may still arrive after the closing message.
+    if (this._sessionInactive || (this.phase === CallRoomPhase.EVENT_ENDED && type !== "server.interest_prompt")) return;
+
     switch (type) {
       case "server.hello":
         this._onServerHello(
@@ -801,9 +879,14 @@ export class CallRoomController {
         break;
 
       case "server.pairing":
+        this._clearServerWaiting();
         await this._onPairing(
           payload,
         );
+        break;
+
+      case "server.waiting":
+        this._onServerWaiting(payload || {});
         break;
 
       case "server.round_start":
@@ -820,6 +903,12 @@ export class CallRoomController {
 
       case "server.round_end":
         await this._onRoundEnd(
+          payload,
+        );
+        break;
+
+      case "server.interest_prompt":
+        this._onInterestPrompt(
           payload,
         );
         break;
@@ -882,6 +971,7 @@ export class CallRoomController {
   }
 
   _onServerHello(payload) {
+    this._serverHelloReceived = true;
     if (
       this._helloClientTs !==
         null &&
@@ -923,7 +1013,7 @@ export class CallRoomController {
     if (resumeRound) {
       this._refreshQualityFromPeer();
 
-      void this.ensureLocalMedia();
+      void this.ensureLocalMedia().then(() => this._sendClientReady());
 
       this.negotiator
         ?.recoverAfterSignalingRestore?.();
@@ -935,7 +1025,109 @@ export class CallRoomController {
       CallRoomPhase.IDLE,
     );
 
-    void this.ensureLocalMedia();
+    try {
+      const savedDate = sessionStorage.getItem('meetakk_active_date');
+      if (savedDate) {
+        const parsed = JSON.parse(savedDate);
+        sessionStorage.removeItem('meetakk_active_date');
+        const durationSec = (this._now() - (parsed.start_ts || 0)) / 1000;
+        if (durationSec >= 180 && parsed.partner_name && parsed.room_id) {
+          const promptId = `${parsed.round_number}:${parsed.room_id}`;
+          if (!this._interestPrompts.has(promptId)) {
+            const prompt = {
+              round_number: parsed.round_number,
+              room_id: parsed.room_id,
+              partner_display_name: parsed.partner_name,
+              server_ts: this._now(),
+              deadline_ts: this._now() + 60000,
+              own_response: null,
+              mutual: false,
+            };
+            this._interestPrompts.set(promptId, prompt);
+            this._renderInterestPrompt(promptId, prompt);
+            if (this.elements.interestTitle) {
+              this.elements.interestTitle.textContent = `You were disconnected from your previous date with ${parsed.partner_name}. Would you like to stay in touch with them?`;
+            }
+          }
+        }
+      }
+    } catch (e) {}
+
+    void this.ensureLocalMedia().then(() => this._sendClientReady());
+  }
+
+  _sendClientReady(ready = true) {
+    if (this.ws?.readyState !== 1 || !this._serverHelloReceived) return;
+    const hasUsableMedia = this._liveStream(this._sharedStream);
+    if (ready && !hasUsableMedia) return;
+    const readyValue = Boolean(ready && hasUsableMedia);
+    if (this._readySentGeneration === this._wsGeneration && this._readySentValue === readyValue) return;
+    const roundNumber = Math.max(0, Math.min(8, Number(this.roundNumber) || 0));
+    try {
+      this.ws.send(JSON.stringify({
+        type: "client.ready",
+        version: 1,
+        payload: { round_number: roundNumber, ready: readyValue },
+      }));
+      this._readySentGeneration = this._wsGeneration;
+      this._readySentValue = readyValue;
+    } catch {}
+  }
+
+  _clearServerWaiting() {
+    if (this.elements.waitingBanner) {
+      this.elements.waitingBanner.hidden = true;
+      this.elements.waitingBanner.textContent = "";
+    }
+  }
+
+  _onServerWaiting(payload) {
+    if (this._sessionInactive || this.phase === CallRoomPhase.EVENT_ENDED) return;
+    const reason = String(payload.reason || "waiting_for_partner");
+
+    if (reason === "standby_fewer_women" || reason === "standby_fewer_men") {
+      if (this.elements.mainRoomStandbyBanner) {
+        if (this.elements.standbyTitle) {
+          this.elements.standbyTitle.textContent = "You are in the Main Room for this round";
+        }
+        if (this.elements.standbyMessage) {
+          if (reason === "standby_fewer_women") {
+            this.elements.standbyMessage.innerHTML = "We apologize, but because there are fewer women than men active in this round, you are in the Main Room for this round until your next date starts in 7 minutes.";
+          } else {
+            this.elements.standbyMessage.innerHTML = "We apologize, but because there are fewer men than women active in this round, you are in the Main Room for this round until your next date starts in 7 minutes.";
+          }
+        }
+        this.elements.mainRoomStandbyBanner.hidden = false;
+        this._startStandbyCountdown(payload.remaining_seconds || 420);
+      }
+      this._stopTimer();
+      this.roundEndTs = null;
+      this._renderTimer("--:--", TimerVisualState.WAITING);
+      this._setPhase(CallRoomPhase.IDLE);
+      return;
+    } else {
+      this._clearStandbyCountdown();
+    }
+
+    const message = reason === "limit_reached"
+      ? (payload?.message || "You have completed your dates for tonight. You will not receive any more dates. We hope you have a wonderful night!")
+      : (payload?.message || "Waiting for your next partner. You’ll be connected automatically when someone is available.");
+    if ((reason === "partner_left" || reason === "limit_reached") && this.negotiator && this.partner) {
+      void this.negotiator.endRound?.();
+      this.partner = null;
+      this._updatePartnerUI();
+      this._stopTimer();
+      this.roundEndTs = null;
+      this._renderTimer("--:--", TimerVisualState.WAITING);
+      this._setPhase(CallRoomPhase.IDLE);
+    }
+    this._clearConnectionError();
+    if (!this.elements.waitingBanner) return;
+    // Server checks continue silently; repeated checks do not rewrite the live region.
+    if (this.elements.waitingBanner.textContent !== message) {
+      this.elements.waitingBanner.textContent = message;
+    }
+    if (this.elements.waitingBanner.hidden) this.elements.waitingBanner.hidden = false;
   }
 
   async ensureLocalMedia() {
@@ -974,7 +1166,11 @@ export class CallRoomController {
               this._sharedStream =
                 stream;
 
+              this._watchLocalMediaTracks(stream);
+
               this._bindLocalPreview();
+
+              this._sendClientReady();
 
               return stream;
             },
@@ -1018,6 +1214,20 @@ export class CallRoomController {
     return this._mediaPromise;
   }
 
+  _watchLocalMediaTracks(stream) {
+    if (!stream || this._observedMediaStreams.has(stream)) return;
+    this._observedMediaStreams.add(stream);
+    for (const track of stream.getTracks()) {
+      track.addEventListener?.("ended", () => {
+        if (stream !== this._sharedStream) return;
+        this._readySentGeneration = null;
+        this._mediaPromise = null;
+        this._sendClientReady(false);
+        this._showConnectionError("Your camera or microphone stopped. Reconnect it, then try again.");
+      }, { once: true });
+    }
+  }
+
   async _onPairing(payload) {
     const next =
       parsePairingPayload(
@@ -1059,11 +1269,28 @@ export class CallRoomController {
     this.serverWarningActive =
       false;
 
-    this.isPaused =
-      false;
-
     this.partnerPresence =
       "connected";
+
+    this.roundStartTs = this._now();
+    try {
+      sessionStorage.setItem(
+        "meetakk_active_date",
+        JSON.stringify({
+          room_id: this.partner.roomId,
+          round_number: this.partner.roundNumber,
+          partner_name: this.partner.displayName,
+          start_ts: this.roundStartTs,
+        }),
+      );
+    } catch (e) {}
+    if (this._breakTimer) {
+      clearInterval(this._breakTimer);
+      this._breakTimer = null;
+    }
+    if (this.elements.breakBanner) {
+      this.elements.breakBanner.hidden = true;
+    }
 
     this._clearConnectionError();
     this._clearPartnerGone();
@@ -1091,6 +1318,8 @@ export class CallRoomController {
 
     const rtcConfig =
       await this._loadRtcConfig();
+
+    this.negotiator?.setRtcConfig?.(rtcConfig);
 
     try {
       await this.ensureLocalMedia();
@@ -1168,9 +1397,6 @@ export class CallRoomController {
     this.serverWarningActive =
       false;
 
-    this.isPaused =
-      false;
-
     if (
       this.elements
         .statusFooter &&
@@ -1184,6 +1410,7 @@ export class CallRoomController {
       await this.negotiator.open();
     }
 
+    this._startEarlyExitTimer();
     this._tickTimer();
   }
 
@@ -1204,6 +1431,7 @@ export class CallRoomController {
   }
 
   async _onRoundEnd(payload) {
+    this._clearEarlyExitTimer();
     this.roundNumber =
       Number(
         payload.round_number ??
@@ -1219,6 +1447,10 @@ export class CallRoomController {
 
     this.isPaused =
       false;
+
+    try {
+      sessionStorage.removeItem("meetakk_active_date");
+    } catch (e) {}
 
     this._clearPartnerGone();
     this._clearPermanentIceFailureTimer();
@@ -1239,9 +1471,289 @@ export class CallRoomController {
     this.partner = null;
 
     this._updatePartnerUI();
+
+    const breakDurationSec = Number(payload.break_duration_seconds ?? 120);
+    this._startBreakCountdown(breakDurationSec);
+  }
+
+  _startBreakCountdown(durationSec) {
+    if (this._breakTimer) {
+      clearInterval(this._breakTimer);
+      this._breakTimer = null;
+    }
+    if (this.elements.breakBanner) {
+      this.elements.breakBanner.hidden = false;
+    }
+    let remaining = durationSec;
+    const updateDisplay = () => {
+      if (this.elements.breakCountdown) {
+        const m = Math.floor(remaining / 60);
+        const s = remaining % 60;
+        this.elements.breakCountdown.textContent = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+      }
+    };
+    updateDisplay();
+    this._breakTimer = setInterval(() => {
+      remaining = Math.max(0, remaining - 1);
+      updateDisplay();
+      if (remaining <= 0) {
+        clearInterval(this._breakTimer);
+        this._breakTimer = null;
+      }
+    }, 1000);
+  }
+
+  _onInterestPrompt(payload) {
+    const roomId = String(payload.room_id || "");
+    const roundNumber = Number(payload.round_number);
+    const deadlineTs = Number(payload.deadline_ts);
+    if (!roomId || !Number.isFinite(roundNumber) || !Number.isFinite(deadlineTs)) {
+      return;
+    }
+
+    const promptId = `${roundNumber}:${roomId}`;
+    const previous = this._interestPrompts.get(promptId) || {};
+    const prompt = {
+      ...previous,
+      ...payload,
+      room_id: roomId,
+      round_number: roundNumber,
+      deadline_ts: deadlineTs,
+      partner_display_name: String(payload.partner_display_name || "your partner"),
+      own_response:
+        typeof payload.own_response === "boolean"
+          ? payload.own_response
+          : null,
+      mutual: Boolean(payload.mutual),
+      partner_whatsapp:
+        typeof payload.partner_whatsapp === "string"
+          ? payload.partner_whatsapp
+          : null,
+    };
+    this._interestPrompts.set(promptId, prompt);
+    if (this._activeInterestPromptId === promptId) {
+      this._renderInterestPrompt(promptId, prompt);
+    } else {
+      this._showNextInterestPrompt();
+    }
+  }
+
+  _showNextInterestPrompt() {
+    if (this._activeInterestPromptId !== null) {
+      return;
+    }
+
+    const now = this._now() + (this.clockSync.offsetMs || 0);
+    for (const [promptId, prompt] of this._interestPrompts) {
+      if (!prompt.mutual && prompt.deadline_ts < now) {
+        this._interestPrompts.delete(promptId);
+      }
+    }
+    const next = [...this._interestPrompts.entries()]
+      .filter(([, prompt]) => prompt.mutual || prompt.deadline_ts >= now)
+      .sort((a, b) => {
+        const aHasOpenWindow = !a[1].mutual && a[1].deadline_ts >= now;
+        const bHasOpenWindow = !b[1].mutual && b[1].deadline_ts >= now;
+        if (aHasOpenWindow !== bHasOpenWindow) return aHasOpenWindow ? -1 : 1;
+        return a[1].deadline_ts - b[1].deadline_ts;
+      })[0];
+    if (!next) {
+      return;
+    }
+
+    const [promptId, prompt] = next;
+    this._renderInterestPrompt(promptId, prompt);
+  }
+
+  _renderInterestPrompt(promptId, prompt) {
+    if (this._activeInterestPromptId !== promptId) {
+      this._interestSubmitting = false;
+    }
+    this._activeInterestPromptId = promptId;
+    if (this.elements.interestDialog) {
+      this.elements.interestDialog.hidden = false;
+    }
+    if (this.elements.interestPartnerName) {
+      this.elements.interestPartnerName.textContent =
+        prompt.partner_display_name;
+    }
+
+    const hasResponded = prompt.own_response !== null;
+    if (this.elements.interestChoiceButtons) {
+      this.elements.interestChoiceButtons.hidden = hasResponded || prompt.mutual;
+    }
+    if (this.elements.interestCloseButton) {
+      this.elements.interestCloseButton.hidden = !hasResponded && !prompt.mutual;
+    }
+    if (this.elements.interestCountdownWrap) {
+      this.elements.interestCountdownWrap.hidden = prompt.mutual;
+    }
+    if (this.elements.interestStatus) {
+      this.elements.interestStatus.textContent = prompt.mutual
+        ? "You both said yes. You can now contact each other on WhatsApp."
+        : hasResponded
+          ? "Your choice is saved. If you both say yes, your WhatsApp numbers will appear here."
+          : "If you both say yes, your WhatsApp numbers will be shared here.";
+    }
+    if (this.elements.interestContact) {
+      this.elements.interestContact.hidden = !prompt.mutual;
+    }
+    if (this.elements.interestContactLink) {
+      const phone = String(prompt.partner_whatsapp || "").trim();
+      const digits = phone.replace(/\D/g, "");
+      this.elements.interestContactLink.textContent = phone;
+      this.elements.interestContactLink.hidden = !digits;
+      if (digits) {
+        this.elements.interestContactLink.href = `https://wa.me/${digits}`;
+      } else {
+        this.elements.interestContactLink.removeAttribute("href");
+      }
+    }
+    if (this.elements.interestContactMissing) {
+      this.elements.interestContactMissing.hidden = Boolean(
+        String(prompt.partner_whatsapp || "").replace(/\D/g, ""),
+      );
+    }
+
+    if (prompt.mutual) {
+      this._stopInterestCountdown();
+    } else {
+      this._startInterestCountdown();
+      this._tickInterestCountdown();
+    }
+  }
+
+  _startInterestCountdown() {
+    this._stopInterestCountdown();
+    this._interestTimer = setInterval(
+      () => this._tickInterestCountdown(),
+      250,
+    );
+    if (this._interestTimer?.unref) {
+      this._interestTimer.unref();
+    }
+  }
+
+  _stopInterestCountdown() {
+    if (this._interestTimer) {
+      clearInterval(this._interestTimer);
+      this._interestTimer = null;
+    }
+  }
+
+  _tickInterestCountdown() {
+    if (this._activeInterestPromptId === null) {
+      this._stopInterestCountdown();
+      return;
+    }
+    const prompt = this._interestPrompts.get(this._activeInterestPromptId);
+    if (!prompt) {
+      this._finishInterestPrompt();
+      return;
+    }
+    if (prompt.mutual) {
+      this._stopInterestCountdown();
+      return;
+    }
+
+    const remainingMs = Math.max(
+      0,
+      prompt.deadline_ts - (this._now() + (this.clockSync.offsetMs || 0)),
+    );
+    if (this.elements.interestCountdown) {
+      this.elements.interestCountdown.textContent = String(
+        Math.ceil(remainingMs / 1000),
+      );
+    }
+    if (remainingMs === 0) {
+      if (this._interestSubmitting) {
+        if (this.elements.interestStatus) {
+          this.elements.interestStatus.textContent = "Saving your choice…";
+        }
+        return;
+      }
+      if (this.elements.interestStatus) {
+        this.elements.interestStatus.textContent =
+          "This choice window has ended.";
+      }
+      if (this.elements.interestChoiceButtons) {
+        this.elements.interestChoiceButtons.hidden = true;
+      }
+      this._finishInterestPrompt();
+    }
+  }
+
+  async submitInterestChoice(interested) {
+    const prompt = this._interestPrompts.get(this._activeInterestPromptId);
+    if (
+      !prompt ||
+      prompt.own_response !== null ||
+      this._interestSubmitting ||
+      typeof this._submitInterest !== "function"
+    ) {
+      return;
+    }
+    this._interestSubmitting = true;
+    this._setInterestButtonsDisabled(true);
+    if (this.elements.interestStatus) {
+      this.elements.interestStatus.textContent = "Saving your choice…";
+    }
+
+    try {
+      const result = await this._submitInterest({
+        room_id: prompt.room_id,
+        round_number: prompt.round_number,
+        interested: Boolean(interested),
+      });
+      if (!result || result.ok === false) {
+        throw new Error(result?.error?.message || "Your choice could not be saved.");
+      }
+      prompt.own_response = Boolean(interested);
+      prompt.mutual = Boolean(result.mutual);
+      prompt.partner_whatsapp = result.partner_whatsapp || null;
+      this._renderInterestPrompt(this._activeInterestPromptId, prompt);
+    } catch (error) {
+      if (this.elements.interestStatus) {
+        this.elements.interestStatus.textContent =
+          error.message || "Your choice could not be saved. Please try again.";
+      }
+      this._setInterestButtonsDisabled(false);
+    } finally {
+      this._interestSubmitting = false;
+    }
+  }
+
+  _setInterestButtonsDisabled(disabled) {
+    for (const button of [
+      this.elements.interestYesButton,
+      this.elements.interestNoButton,
+    ]) {
+      if (button) {
+        button.disabled = disabled;
+      }
+    }
+  }
+
+  dismissInterestPrompt() {
+    this._finishInterestPrompt();
+  }
+
+  _finishInterestPrompt() {
+    const promptId = this._activeInterestPromptId;
+    this._stopInterestCountdown();
+    if (promptId !== null) {
+      this._interestPrompts.delete(promptId);
+    }
+    this._activeInterestPromptId = null;
+    this._interestSubmitting = false;
+    if (this.elements.interestDialog) {
+      this.elements.interestDialog.hidden = true;
+    }
+    this._showNextInterestPrompt();
   }
 
   async _onEventEnd(payload) {
+    this._clearServerWaiting();
     this._intentionalClose =
       true;
 
@@ -1259,6 +1771,10 @@ export class CallRoomController {
     this.isPaused =
       false;
 
+    try {
+      sessionStorage.removeItem("meetakk_active_date");
+    } catch (e) {}
+
     this._clearPartnerGone();
     this._clearPermanentIceFailureTimer();
 
@@ -1266,10 +1782,17 @@ export class CallRoomController {
     this._unbindBeforeUnloadListener();
 
     this._clearReconnect();
+    this._clearEarlyExitTimer();
+    this._clearStandbyCountdown();
+    this._clearAutoReload();
 
     this._wsGeneration += 1;
 
     this._stopTimer();
+
+    this.roundEndTs = null;
+    this.serverWarningActive = false;
+    this._renderTimer("--:--", TimerVisualState.WAITING);
 
     this.clockSync.stop();
 
@@ -1300,6 +1823,12 @@ export class CallRoomController {
 
     this._detachSocket();
 
+    this._applyConnectionQuality("closed");
+    this._clearConnectionError();
+    if (this.elements.statusFooter) {
+      this.elements.statusFooter.textContent = "Event ended. Thank you for participating.";
+    }
+
     this._intentionalClose =
       false;
   }
@@ -1320,6 +1849,11 @@ export class CallRoomController {
       payload?.error ||
       "";
 
+    if (code === "ERR_NOT_AUTHENTICATED" || code === "4001") {
+      this._onSessionReplaced(true);
+      return;
+    }
+
     if (
       code ===
         "ERR_ALREADY_CONNECTED" ||
@@ -1327,7 +1861,6 @@ export class CallRoomController {
         "session_replaced" ||
       reason ===
         "session_replaced" ||
-      code === "4001" ||
       /another window/i.test(
         msg,
       )
@@ -1343,18 +1876,30 @@ export class CallRoomController {
     );
   }
 
-  _onSessionReplaced() {
+  _onSessionReplaced(authenticationRequired = false) {
+    if (this._sessionInactive) return;
+    this._sessionInactive = true;
+    this._wsGeneration += 1;
+    this._clearServerWaiting();
+    const message = authenticationRequired
+      ? "Your access session is no longer valid. Reopen your personal event link from your email."
+      : "Your personal link is active in another tab or device. Close the other room tabs, then reopen your personal event link here.";
     this._intentionalClose =
       true;
 
     this._clearPartnerGone();
     this._clearPermanentIceFailureTimer();
     this._clearReconnect();
+    this._clearEarlyExitTimer();
+    this._clearStandbyCountdown();
+    this._clearAutoReload();
 
     this._unbindOnlineListener();
     this._unbindBeforeUnloadListener();
 
     this._stopTimer();
+    this.roundEndTs = null;
+    this._renderTimer("--:--", TimerVisualState.WAITING);
     this.clockSync.stop();
 
     if (this.negotiator) {
@@ -1394,21 +1939,21 @@ export class CallRoomController {
         false;
 
       this.elements.errorBanner.textContent =
-        "You joined from another window. This session is no longer active.";
+        message;
     }
 
     if (
       this.elements.statusFooter
     ) {
       this.elements.statusFooter.textContent =
-        "You joined from another window. This session is no longer active.";
+        message;
     }
 
     if (
       this.elements.connectionBadge
     ) {
       this.elements.connectionBadge.textContent =
-        "SESSION REPLACED";
+        authenticationRequired ? "ACCESS LINK REQUIRED" : "SESSION REPLACED";
 
       this.elements.connectionBadge.className =
         "badge failed";
@@ -1422,7 +1967,7 @@ export class CallRoomController {
       }
 
       this.elements.connectionBadge.dataset.quality =
-        "session-replaced";
+        authenticationRequired ? "authentication-required" : "session-replaced";
     }
   }
 
@@ -1493,6 +2038,36 @@ export class CallRoomController {
     }
 
     this._updatePartnerUI();
+
+    if (this._partnerDisconnectWaitTimer) {
+      clearTimeout(this._partnerDisconnectWaitTimer);
+      this._partnerDisconnectWaitTimer = null;
+    }
+
+    const currentPartner = this.partner;
+    const conversationDurationSec = this.roundStartTs ? (this._now() - this.roundStartTs) / 1000 : 0;
+
+    this._partnerDisconnectWaitTimer = setTimeout(() => {
+      if (this.partnerPresence === "gone" && currentPartner) {
+        if (conversationDurationSec >= 180) {
+          const promptId = `${currentPartner.roundNumber || this.roundNumber}:${currentPartner.roomId}`;
+          const prompt = {
+            round_number: currentPartner.roundNumber || this.roundNumber,
+            room_id: currentPartner.roomId,
+            partner_display_name: name,
+            server_ts: this._now(),
+            deadline_ts: this._now() + 60000,
+            own_response: null,
+            mutual: false,
+          };
+          this._interestPrompts.set(promptId, prompt);
+          this._renderInterestPrompt(promptId, prompt);
+          if (this.elements.interestTitle) {
+            this.elements.interestTitle.textContent = `Your date with ${name} ended early. Did you like them?`;
+          }
+        }
+      }
+    }, 60000);
   }
 
   _onPartnerState(payload) {
@@ -1592,6 +2167,11 @@ export class CallRoomController {
   }
 
   _clearPartnerGone() {
+    if (this._partnerDisconnectWaitTimer) {
+      clearTimeout(this._partnerDisconnectWaitTimer);
+      this._partnerDisconnectWaitTimer = null;
+    }
+
     if (
       this._partnerGoneTimer
     ) {
@@ -1766,18 +2346,14 @@ export class CallRoomController {
 
       roomId,
 
-      /*
-       * CRITICAL:
-       * Fallback must be scoped to mediaFallbackRoomId.
-       *
-       * Do NOT use:
-       *   selectedRoomId: roomId
-       *
-       * because that would make every current pair automatically
-       * eligible for relay fallback.
-       */
       selectedRoomId:
+        this.mediaFallbackRoomId || roomId,
+
+      fallbackRoomId:
         this.mediaFallbackRoomId,
+
+      refreshRtcConfig:
+        () => this._loadRtcConfig(),
 
       rtcConfig,
 
@@ -2286,12 +2862,6 @@ export class CallRoomController {
     ) {
       message =
         "Connection to this partner failed. Your camera stays on; other rounds are not stopped.";
-    } else if (
-      reason ===
-      "ESCALATION_FALLBACK_UNAVAILABLE"
-    ) {
-      message =
-        "Direct call did not connect and fallback is not available for this pair. Other rooms are not affected.";
     }
 
     this._showConnectionError(
@@ -2302,7 +2872,7 @@ export class CallRoomController {
       this.elements.connectionBadge
     ) {
       this.elements.connectionBadge.textContent =
-        `FAILED: ${reason}`;
+        "Connection problem";
 
       this.elements.connectionBadge.className =
         "badge failed";
@@ -2456,18 +3026,21 @@ export class CallRoomController {
     if (
       this.elements.timerDisplay
     ) {
-      this.elements.timerDisplay.textContent =
-        display;
+      if (this.elements.timerDisplay.textContent !== display) {
+        this.elements.timerDisplay.textContent = display;
+      }
 
-      this.elements.timerDisplay.dataset.state =
-        visual;
+      if (this.elements.timerDisplay.dataset.state !== visual) {
+        this.elements.timerDisplay.dataset.state = visual;
+      }
     }
 
     if (
       this.elements.timerContainer
     ) {
-      this.elements.timerContainer.dataset.state =
-        visual;
+      if (this.elements.timerContainer.dataset.state !== visual) {
+        this.elements.timerContainer.dataset.state = visual;
+      }
     }
   }
 
@@ -2477,7 +3050,7 @@ export class CallRoomController {
     ) {
       this.elements.partnerName.textContent =
         this.partner?.displayName ??
-        "—";
+        "Partner";
     }
 
     if (
@@ -2549,6 +3122,9 @@ export class CallRoomController {
     }
 
     this._clearReconnect();
+    this._clearEarlyExitTimer();
+    this._clearStandbyCountdown();
+    this._clearAutoReload();
 
     const now =
       this._now();
@@ -2644,6 +3220,8 @@ export class CallRoomController {
       this.elements.connectionBadge.dataset.quality =
         "failed";
     }
+
+    this._startAutoReload(5);
   }
 
   _showReconnecting() {
@@ -2676,6 +3254,12 @@ export class CallRoomController {
 
       this.elements.qualityBanner.textContent =
         "RECONNECTING — restoring the same round and partner…";
+    }
+
+    if (this.elements.disconnectNotificationBanner) {
+      this.elements.disconnectNotificationBanner.textContent =
+        "You got disconnected. Please refresh the page if your connection does not restore.";
+      this.elements.disconnectNotificationBanner.hidden = false;
     }
 
     if (
@@ -2727,6 +3311,9 @@ export class CallRoomController {
           this._now();
 
         this._clearReconnect();
+      this._clearEarlyExitTimer();
+      this._clearStandbyCountdown();
+      this._clearAutoReload();
 
         this.connect();
       };
@@ -2835,6 +3422,170 @@ export class CallRoomController {
 
       this._reconnectTimer =
         null;
+    }
+  }
+
+  _startAutoReload(seconds = 5) {
+    if (this._autoReloadTimer) {
+      clearInterval(this._autoReloadTimer);
+      this._autoReloadTimer = null;
+    }
+    let remaining = Number(seconds) || 5;
+    const renderBanner = () => {
+      if (this.elements.disconnectNotificationBanner) {
+        this.elements.disconnectNotificationBanner.innerHTML = `
+          <span>Connection dropped. Reconnecting automatically in <strong>${remaining}s</strong>...</span>
+          <button type="button" id="meetakkRefreshNowBtn" style="margin-left: 14px; padding: 4px 12px; background: #fff; color: #b91c1c; font-weight: 700; border: 1px solid #b91c1c; border-radius: 4px; cursor: pointer;">Refresh Now</button>
+        `;
+        this.elements.disconnectNotificationBanner.hidden = false;
+        const btn = this.elements.disconnectNotificationBanner.querySelector('#meetakkRefreshNowBtn');
+        if (btn) {
+          btn.onclick = () => {
+            if (typeof window !== "undefined" && window.location) {
+              window.location.reload();
+            }
+          };
+        }
+      }
+    };
+    renderBanner();
+    this._autoReloadTimer = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(this._autoReloadTimer);
+        this._autoReloadTimer = null;
+        if (typeof window !== "undefined" && window.location) {
+          window.location.reload();
+        }
+      } else {
+        renderBanner();
+      }
+    }, 1000);
+  }
+
+  _clearAutoReload() {
+    if (this._autoReloadTimer) {
+      clearInterval(this._autoReloadTimer);
+      this._autoReloadTimer = null;
+    }
+  }
+
+  _startEarlyExitTimer() {
+    this._clearEarlyExitTimer();
+    const waitMs = Math.max(1, (this.earlyExitMinMinutes || 3)) * 60 * 1000;
+    this._leaveDateTimer = setTimeout(() => {
+      if (this.elements.leaveDateWrapper && this.phase === CallRoomPhase.IN_ROUND) {
+        this.elements.leaveDateWrapper.hidden = false;
+      }
+    }, waitMs);
+  }
+
+  _clearEarlyExitTimer() {
+    if (this._leaveDateTimer) {
+      clearTimeout(this._leaveDateTimer);
+      this._leaveDateTimer = null;
+    }
+    if (this.elements.leaveDateWrapper) {
+      this.elements.leaveDateWrapper.hidden = true;
+    }
+    if (this.elements.leaveDateConfirmModal) {
+      this.elements.leaveDateConfirmModal.hidden = true;
+    }
+  }
+
+  async leaveDateEarly() {
+    this._clearEarlyExitTimer();
+    const roomId = this.partner?.roomId || this.roomId;
+    const partnerName = this.partner?.displayName || "your partner";
+    const roundNum = Number(this.roundNumber) || 1;
+    const nowTs = this._now();
+    const durationSec = this.roundStartTs ? (nowTs - this.roundStartTs) / 1000 : 0;
+
+    if (roomId) {
+      try {
+        const csrfToken =
+          document.querySelector("[name=csrfmiddlewaretoken]")?.value ||
+          (document.cookie.match(/csrftoken=([^;]+)/)?.[1] || "");
+        fetch("/api/leave-date/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": csrfToken,
+          },
+          body: JSON.stringify({ room_id: roomId, reason: "early_exit" }),
+        }).catch(() => {});
+      } catch (e) {}
+    }
+
+    if (this.negotiator) {
+      try {
+        await this.negotiator.endRound?.();
+      } catch (e) {}
+    }
+    if (this.elements.remoteVideo) {
+      this.elements.remoteVideo.srcObject = null;
+    }
+    this._bindLocalPreview();
+    this.partner = null;
+    this._updatePartnerUI();
+
+    try {
+      sessionStorage.removeItem("meetakk_active_date");
+    } catch (e) {}
+
+    const minSec = (this.earlyExitMinMinutes || 3) * 60;
+    if (durationSec >= minSec && roomId) {
+      const promptId = `${roundNum}:${roomId}`;
+      if (!this._interestPrompts.has(promptId)) {
+        const prompt = {
+          round_number: roundNum,
+          room_id: roomId,
+          partner_display_name: partnerName,
+          server_ts: nowTs,
+          deadline_ts: nowTs + 60000,
+          own_response: null,
+          mutual: false,
+        };
+        this._interestPrompts.set(promptId, prompt);
+        this._renderInterestPrompt(promptId, prompt);
+        if (this.elements.interestTitle) {
+          this.elements.interestTitle.textContent = `You left your date with ${partnerName}. Would you like to stay in touch with them?`;
+        }
+      }
+    }
+
+    this._setPhase(CallRoomPhase.IDLE);
+    this._onServerWaiting({ reason: "waiting_for_partner" });
+  }
+
+  _startStandbyCountdown(totalSeconds = 420) {
+    this._clearStandbyCountdown();
+    let remaining = Number(totalSeconds) || 420;
+    const formatTime = (secs) => {
+      const m = Math.floor(secs / 60);
+      const s = Math.floor(secs % 60);
+      return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    };
+    if (this.elements.standbyTimerCountdown) {
+      this.elements.standbyTimerCountdown.textContent = formatTime(remaining);
+    }
+    this._standbyTimer = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        this._clearStandbyCountdown();
+      } else if (this.elements.standbyTimerCountdown) {
+        this.elements.standbyTimerCountdown.textContent = formatTime(remaining);
+      }
+    }, 1000);
+  }
+
+  _clearStandbyCountdown() {
+    if (this._standbyTimer) {
+      clearInterval(this._standbyTimer);
+      this._standbyTimer = null;
+    }
+    if (this.elements.mainRoomStandbyBanner) {
+      this.elements.mainRoomStandbyBanner.hidden = true;
     }
   }
 }

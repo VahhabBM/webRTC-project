@@ -67,7 +67,12 @@ class Command(BaseCommand):
             raise CommandError(str(exc)) from exc
 
         pids = frozenset(mp.pid for mp in match_input.participants)
-        violations = validate_schedule(schedule, pids, num_rounds=event.num_rounds)
+        violations = validate_schedule(
+            schedule,
+            pids,
+            num_rounds=event.num_rounds,
+            match_input=match_input,
+        )
         if violations:
             detail = "\n".join(f"- {v.kind}: {v.detail}" for v in violations)
             raise CommandError(f"Generated schedule is invalid:\n{detail}")

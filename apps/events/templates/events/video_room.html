@@ -1,7 +1,9 @@
+{% load static %}
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Call Room</title>
   <style>
     :root {
@@ -23,7 +25,14 @@
       color: var(--text);
       padding: 1.5rem 1rem 2rem;
     }
-    h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+    .room-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .room-logo { display: block; width: 132px; height: auto; border-radius: 6px; }
+    h1 { font-size: 1.4rem; margin: 0; }
     .top-bar {
       display: flex;
       flex-wrap: wrap;
@@ -47,15 +56,90 @@
     .badge.reconnecting, .badge[data-quality="reconnecting"] {
       background: var(--warning);
       color: #1e293b;
-      animation: pulse 1s ease-in-out infinite;
     }
+    .badge.break, .badge[data-phase="round_ending"] { background: #2563eb; color: #fff; }
     .badge.failed, .badge[data-phase="disconnected"] { background: var(--danger); }
     .badge.partner-gone, .badge[data-quality="partner-gone"] {
       background: #64748b;
     }
     .badge[data-phase="preconnecting"] { background: var(--accent); }
-    .badge[data-phase="round_ending"] { background: #7c3aed; }
     .badge[data-phase="event_ended"] { background: #64748b; }
+
+    .break-banner {
+      background: linear-gradient(135deg, #1e3a8a, #2563eb);
+      color: #ffffff;
+      padding: 1rem 1.25rem;
+      border-radius: 10px;
+      margin-bottom: 1rem;
+      text-align: center;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    }
+    .break-banner-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+    }
+    .break-banner-subtitle {
+      font-size: 0.95rem;
+      opacity: 0.95;
+    }
+    #breakCountdown {
+      font-weight: 700;
+      color: #fef08a;
+    }
+
+    .interest-report-box {
+      margin-top: 1rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      padding-top: 0.75rem;
+      text-align: left;
+    }
+    .interest-report-summary {
+      font-size: 0.85rem;
+      color: #f87171;
+      cursor: pointer;
+      user-select: none;
+      font-weight: 600;
+    }
+    .interest-report-body {
+      margin-top: 0.5rem;
+    }
+    .interest-report-note {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin: 0 0 0.5rem;
+      line-height: 1.4;
+    }
+    .interest-report-textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.5rem;
+      border-radius: 6px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: var(--text);
+      font-size: 0.85rem;
+      resize: vertical;
+    }
+    .interest-report-submit {
+      padding: 0.35rem 0.75rem;
+      background: #dc2626;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .interest-report-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .interest-report-feedback {
+      margin-left: 0.5rem;
+      font-size: 0.8rem;
+      color: #4ade80;
+    }
 
     .timer-block {
       margin-left: auto;
@@ -63,9 +147,8 @@
     }
     .timer-block[data-state="waiting"] .timer-value { color: var(--muted); }
     .timer-block[data-state="normal"] .timer-value { color: var(--text); }
-    .timer-block[data-state="warning"] .timer-value { color: var(--warning); animation: pulse 1s ease-in-out infinite; }
+    .timer-block[data-state="warning"] .timer-value { color: var(--warning); }
     .timer-block[data-state="expired"] .timer-value { color: var(--danger); }
-    @keyframes pulse { 50% { opacity: 0.65; } }
     .timer-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
     .timer-value { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
 
@@ -80,7 +163,6 @@
     .meta-row { display: flex; gap: 1.5rem; margin-top: 0.5rem; font-size: 0.85rem; color: var(--muted); }
 
     .videos { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-    @media (max-width: 640px) { .videos { grid-template-columns: 1fr; } }
     .video-card {
       background: var(--surface);
       border-radius: 10px;
@@ -98,6 +180,129 @@
       transform: scaleX(-1);
     }
     #remoteVideo { transform: none; }
+    #introVideo { transform: none; }
+
+    /* ── Mobile-only PiP video layout ──────────────────────────────────────
+       On viewports ≤640 px the remote feed is large/primary and the local
+       feed is a small floating thumbnail.  Tapping either card swaps them.
+       The .is-swapped class is toggled by video_swap.js — no WebRTC,
+       MediaStream, or track state is touched.
+       Desktop (>640 px): none of these rules apply; the two-column grid
+       above is preserved exactly as before.
+    ────────────────────────────────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .videos {
+        display: block;
+        position: relative;
+        aspect-ratio: 16 / 10;
+        background: #000;
+        border-radius: 10px;
+        overflow: hidden;
+        gap: 0;
+        /* Eliminates Chrome's 300 ms double-tap-zoom delay */
+        touch-action: manipulation;
+      }
+
+      .video-card {
+        position: absolute;
+        background: transparent;
+        padding: 0;
+        border-radius: 0;
+        overflow: hidden;
+        text-align: left;
+      }
+
+      /* Remote (partner) is the large primary view by default */
+      .video-card[data-video="remote"] {
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 1;
+        cursor: default;
+      }
+
+      /* Local (you) is the small PiP thumbnail by default */
+      .video-card[data-video="local"] {
+        bottom: 0.75rem;
+        right: 0.75rem;
+        width: 28%;
+        aspect-ratio: 3 / 4;
+        top: auto;
+        left: auto;
+        z-index: 2;
+        cursor: pointer;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+        border: 2px solid rgba(255, 255, 255, 0.25);
+      }
+
+      /* Swapped: local becomes large primary */
+      .videos.is-swapped .video-card[data-video="local"] {
+        top: 0;
+        left: 0;
+        bottom: auto;
+        right: auto;
+        width: 100%;
+        height: 100%;
+        z-index: 1;
+        cursor: default;
+        border-radius: 0;
+        box-shadow: none;
+        border: none;
+        aspect-ratio: auto;
+      }
+
+      /* Swapped: remote becomes small PiP thumbnail */
+      .videos.is-swapped .video-card[data-video="remote"] {
+        top: auto;
+        left: auto;
+        bottom: 0.75rem;
+        right: 0.75rem;
+        width: 28%;
+        aspect-ratio: 3 / 4;
+        height: auto;
+        z-index: 2;
+        cursor: pointer;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+        border: 2px solid rgba(255, 255, 255, 0.25);
+      }
+
+      /* Videos fill their card completely */
+      .video-card video {
+        width: 100%;
+        height: 100%;
+        max-height: none;
+        object-fit: cover;
+        /* Prevent Chrome composited-layer video elements from swallowing
+           pointer events; taps are handled by the .video-card wrapper. */
+        pointer-events: none;
+      }
+
+      /* Hide the h3 label in the PiP thumbnail; show it in the primary view */
+      .video-card[data-video="local"] h3,
+      .videos.is-swapped .video-card[data-video="remote"] h3 {
+        display: none;
+      }
+
+      .video-card[data-video="remote"] h3,
+      .videos.is-swapped .video-card[data-video="local"] h3 {
+        position: absolute;
+        top: 0.5rem;
+        left: 0.75rem;
+        margin: 0;
+        z-index: 3;
+        font-size: 0.8rem;
+        color: rgba(255, 255, 255, 0.85);
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+      }
+
+      /* Hide quality banner when remote is the PiP thumbnail */
+      .videos.is-swapped #qualityBanner {
+        display: none !important;
+      }
+    }
 
     .status-footer {
       margin-top: 1rem;
@@ -139,53 +344,374 @@
       border-radius: 8px;
       margin-bottom: 1rem;
     }
+    [hidden] { display: none !important; }
+
+    /* Leave Date button (Task 3) */
+    .leave-date-wrapper {
+      margin-top: 1rem;
+      text-align: center;
+    }
+    .leave-date-btn {
+      background: #dc2626;
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      padding: 0.65rem 1.4rem;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      box-shadow: 0 2px 8px rgba(220, 38, 38, 0.35);
+      transition: background 0.15s ease;
+    }
+    .leave-date-btn:hover { background: #b91c1c; }
+    .leave-date-modal-card {
+      width: min(100%, 420px);
+      background: var(--surface);
+      border: 1px solid #475569;
+      border-radius: 12px;
+      padding: 1.5rem;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+    .leave-date-modal-card h3 { margin: 0; font-size: 1.2rem; color: var(--text); }
+    .btn-cancel {
+      background: #475569;
+      color: #fff;
+      border: none;
+      padding: 0.55rem 1rem;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-danger-confirm {
+      background: #dc2626;
+      color: #fff;
+      border: none;
+      padding: 0.55rem 1rem;
+      border-radius: 6px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    /* Standby Main Room Banner (Task 9) */
+    .standby-mainroom-banner {
+      background: linear-gradient(135deg, #1e293b, #0f172a);
+      border: 2px solid #3b82f6;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.25rem;
+      text-align: center;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+    .standby-badge {
+      display: inline-block;
+      background: #2563eb;
+      color: #ffffff;
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.75rem;
+    }
+    .standby-title {
+      margin: 0 0 0.5rem 0;
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+    .standby-message {
+      font-size: 1.05rem;
+      font-weight: 700;
+      line-height: 1.6;
+      color: #93c5fd;
+      margin: 0.5rem auto 1rem;
+      max-width: 650px;
+    }
+    .standby-timer-box {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid #334155;
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+    }
+    .standby-timer-label {
+      color: var(--muted);
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .standby-timer-val {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: #facc15;
+      font-variant-numeric: tabular-nums;
+    }
+    .interest-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      background: rgb(2 6 23 / 78%);
+    }
+    .interest-dialog {
+      width: min(100%, 460px);
+      padding: 1.5rem;
+      border: 1px solid #475569;
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
+    }
+    .interest-dialog h2 { margin: 0 0 0.75rem; font-size: 1.25rem; }
+    .interest-dialog p { color: var(--muted); }
+    .interest-countdown { color: var(--warning); font-weight: 700; }
+    .interest-status { min-height: 1.5rem; color: var(--text) !important; }
+    .interest-contact { margin: 1rem 0; padding: 0.85rem; border-radius: 8px; background: #0f172a; color: var(--text) !important; overflow-wrap: anywhere; }
+    .interest-contact a { color: #93c5fd; font-weight: 700; }
+    .interest-actions { display: flex; flex-wrap: wrap; gap: 0.65rem; }
+    .interest-actions button {
+      border: 0;
+      border-radius: 7px;
+      padding: 0.65rem 0.9rem;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .interest-yes { background: var(--success); color: white; }
+    .interest-no, .interest-close { background: #475569; color: white; }
+    .interest-actions button:disabled { cursor: wait; opacity: 0.65; }
+    .intro-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      display: grid;
+      place-items: center;
+      padding: 1rem;
+      background: rgb(2 6 23 / 92%);
+    }
+    .intro-dialog {
+      width: min(100%, 720px);
+      padding: 1.25rem;
+      border: 1px solid #475569;
+      border-radius: 14px;
+      background: var(--surface);
+    }
+    .intro-dialog h2 { margin-top: 0; }
+    .intro-dialog video { width: 100%; max-height: 55vh; background: #000; }
+    .intro-dialog button {
+      margin-top: 0.75rem;
+      border: 0;
+      border-radius: 7px;
+      padding: 0.65rem 0.9rem;
+      background: #475569;
+      color: white;
+      font: inherit;
+      cursor: pointer;
+    }
+    .intro-status { min-height: 1.5rem; color: var(--muted); }
+    .event-waiting-lobby {
+      position: fixed;
+      inset: 0;
+      z-index: 1300;
+      display: grid;
+      place-items: center;
+      padding: 1rem;
+      background: radial-gradient(circle at top, #1e3a5f 0, #0f172a 58%);
+    }
+    .waiting-card {
+      width: min(100%, 560px);
+      padding: clamp(1.5rem, 5vw, 3rem);
+      border: 1px solid #334155;
+      border-radius: 20px;
+      background: linear-gradient(145deg, rgb(30 41 59 / 98%), rgb(15 23 42 / 98%));
+      box-shadow: 0 24px 80px rgb(0 0 0 / 40%);
+      text-align: center;
+    }
+    .waiting-eyebrow {
+      color: #93c5fd;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    .waiting-card h2 { margin: 0.75rem 0; font-size: clamp(1.5rem, 5vw, 2.15rem); }
+    .waiting-card p { color: var(--muted); }
+    .waiting-countdown {
+      margin: 1.5rem 0;
+      padding: 1rem;
+      border: 1px solid #334155;
+      border-radius: 14px;
+      background: rgb(2 6 23 / 55%);
+    }
+    .waiting-countdown-label {
+      display: block;
+      margin-bottom: 0.4rem;
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .waiting-countdown-value {
+      color: var(--text);
+      font-size: clamp(2.25rem, 10vw, 4rem);
+      font-variant-numeric: tabular-nums;
+      font-weight: 750;
+      letter-spacing: 0.06em;
+      line-height: 1.15;
+    }
+    .waiting-note { margin-bottom: 0; font-size: 0.9rem; }
   </style>
 </head>
 <body>
 
-  <h1>Call Room</h1>
+  <section id="eventWaitingLobby" class="event-waiting-lobby" aria-labelledby="waitingTitle">
+    <div class="waiting-card">
+      <span class="waiting-eyebrow">Meetakk Event</span>
+      <h2 id="waitingTitle">Your speed dating starts soon</h2>
+      <p id="waitingStatus" aria-live="polite">Checking your event schedule…</p>
+      <div class="waiting-countdown" role="timer" aria-live="off">
+        <span class="waiting-countdown-label">Time until your event starts</span>
+        <strong id="eventStartCountdown" class="waiting-countdown-value">--:--:--</strong>
+      </div>
+      <p class="waiting-note">Keep this page open. Your call room will open automatically when the event begins. You do not need to refresh or re-enter your invite link.</p>
+    </div>
+  </section>
+
+  <div id="eventIntro" class="intro-backdrop" role="dialog" aria-modal="true" aria-labelledby="introTitle" hidden>
+    <section class="intro-dialog">
+      <h2 id="introTitle">Welcome to Meetakk</h2>
+      <p id="introStatus" class="intro-status" aria-live="polite">Your introduction will begin when the event starts.</p>
+      <video id="introVideo" controls playsinline preload="metadata" hidden></video>
+      <button id="introContinue" type="button" disabled>Continue without video</button>
+    </section>
+  </div>
+
+  <header class="room-header">
+    <img class="room-logo" src="{% static 'events/images/meetakk-logo.jpg' %}" alt="Meetakk">
+  </header>
 
   <div id="eventEndedBanner" class="event-ended-banner">
     <strong>Event ended.</strong> Thank you for participating.
   </div>
 
   <div id="mediaErrorBanner" class="error-banner" hidden></div>
+  <div id="serverWaitingBanner" class="partner-gone-banner" aria-live="polite" hidden></div>
   <div id="partnerGoneBanner" class="partner-gone-banner" hidden></div>
+  <div id="disconnectNotificationBanner" class="partner-gone-banner" style="background: #991b1b; color: white;" hidden></div>
+
+  <div id="mainRoomStandbyBanner" class="standby-mainroom-banner" hidden>
+    <div class="standby-header">
+      <span class="standby-badge">MAIN ROOM &bull; STANDBY</span>
+      <h2 class="standby-title" id="standbyTitle">You are in the Main Room for this round</h2>
+    </div>
+    <div class="standby-body">
+      <p id="standbyMessage" class="standby-message">
+        We apologize, but because there are fewer participants of your preference active in this round, you are in the Main Room for this round until your next date starts in 7 minutes.
+      </p>
+      <div class="standby-timer-box">
+        <span class="standby-timer-label">Next round starts in:</span>
+        <span id="standbyTimerCountdown" class="standby-timer-val">07:00</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="breakBanner" class="break-banner" hidden>
+    <div class="break-banner-content">
+      <div class="break-banner-title">You are in break time</div>
+      <div class="break-banner-subtitle">
+        Your next date will start in <span id="breakCountdown">02:00</span> minutes.
+      </div>
+    </div>
+  </div>
 
   <div class="top-bar">
-    <span id="phaseBadge" class="badge" data-phase="idle">CONNECTING</span>
-    <span>Quality: <span id="connectionBadge" class="badge">—</span></span>
+    <span>Status: <span id="connectionBadge" class="badge">—</span></span>
     <div id="timerContainer" class="timer-block" data-state="waiting">
       <div class="timer-label">Time remaining</div>
       <div id="timerDisplay" class="timer-value">--:--</div>
     </div>
   </div>
 
-  <div class="partner-card">
-    <h2 id="partnerName">—</h2>
-    <p id="partnerTags" class="partner-tags" hidden></p>
-    <div class="meta-row">
-      <span id="roundLabel">—</span>
-      <span>Room: <span id="roomLabel">—</span></span>
-    </div>
-  </div>
-
   <div class="videos">
-    <div class="video-card">
+    <div class="video-card" data-video="local">
       <h3>You</h3>
       <video id="localVideo" autoplay playsinline muted></video>
     </div>
-    <div class="video-card">
-      <h3>Partner</h3>
+    <div class="video-card" data-video="remote">
+      <h3 id="partnerName">Partner</h3>
       <div id="qualityBanner" class="quality-banner" hidden></div>
       <video id="remoteVideo" autoplay playsinline></video>
     </div>
   </div>
 
+  <div id="leaveDateWrapper" class="leave-date-wrapper" hidden>
+    <button id="leaveDateBtn" class="leave-date-btn" type="button">
+      Leave Date
+    </button>
+  </div>
+
+  <div id="leaveDateConfirmModal" class="intro-backdrop" hidden>
+    <div class="leave-date-modal-card">
+      <h3>Leave this date early?</h3>
+      <p style="color: var(--muted); margin: 12px 0 20px;">
+        Are you sure you want to end this conversation? You will return to the Main Room until the next round starts.
+      </p>
+      <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button id="cancelLeaveDateBtn" type="button" class="btn-cancel">Continue Date</button>
+        <button id="confirmLeaveDateBtn" type="button" class="btn-danger-confirm">Yes, Leave Date</button>
+      </div>
+    </div>
+  </div>
+
   <p id="statusFooter" class="status-footer">Connecting…</p>
+
+  <div id="interestDialog" class="interest-backdrop" hidden>
+    <section class="interest-dialog" role="dialog" aria-modal="true" aria-labelledby="interestTitle">
+      <h2 id="interestTitle">Would you like to stay in touch with <span id="interestPartnerName"></span>?</h2>
+      <p>
+        You have <span id="interestCountdownWrap" class="interest-countdown"><span id="interestCountdown">60</span> seconds</span>
+        to choose. If you both say yes, you will see each other's WhatsApp number here.
+      </p>
+      <p id="interestStatus" class="interest-status" aria-live="polite"></p>
+      <p id="interestContact" class="interest-contact" hidden>
+        WhatsApp: <a id="interestContactLink" target="_blank" rel="noopener noreferrer"></a>
+        <span id="interestContactMissing" hidden>No WhatsApp number is on file.</span>
+      </p>
+      <div id="interestChoiceButtons" class="interest-actions">
+        <button id="interestYesButton" class="interest-yes" type="button">Yes, share our WhatsApp numbers</button>
+        <button id="interestNoButton" class="interest-no" type="button">No, thanks</button>
+      </div>
+      <div class="interest-actions">
+        <button id="interestCloseButton" class="interest-close" type="button" hidden>Close</button>
+      </div>
+      <div class="interest-report-box">
+        <details class="interest-report-details">
+          <summary class="interest-report-summary">Report harassment or misconduct</summary>
+          <div class="interest-report-body">
+            <p class="interest-report-note">If this person engaged in harassment or inappropriate behavior, please report it here so we can take action and ban them according to our rules.</p>
+            <textarea id="interestReportText" class="interest-report-textarea" rows="2" placeholder="Briefly describe what happened (optional)..."></textarea>
+            <div style="margin-top: 6px;">
+              <button id="interestReportButton" class="interest-report-submit" type="button">Submit Report</button>
+              <span id="interestReportFeedback" class="interest-report-feedback" hidden></span>
+            </div>
+          </div>
+        </details>
+      </div>
+    </section>
+  </div>
+  <form id="interestCsrfForm" hidden>{% csrf_token %}</form>
 
   <script type="module">
     import { CallRoomController, CallRoomPhase } from '/static/events/js/call_room.js';
+    import { waitForEventStart as waitForFreshEventStart } from '/static/events/js/event_waiting_lobby.js';
+    import { initVideoSwap } from '/static/events/js/video_swap.js';
 
     const WARNING_THRESHOLD_SECONDS = {{ warning_threshold_seconds }};
     const params = new URLSearchParams(window.location.search);
@@ -199,6 +725,7 @@
     const controller = new CallRoomController({
       myParticipantId: null,
       warningThresholdSeconds: WARNING_THRESHOLD_SECONDS,
+      earlyExitMinMinutes: Number("{{ early_exit_min_minutes|default:3 }}"),
       mediaFallbackRoomId,
       forceMediaFallback,
       escalationTimeoutMs: mediaFallbackEscalationTimeoutMs,
@@ -215,48 +742,272 @@
         connectionBadge: document.getElementById('connectionBadge'),
         qualityBanner: document.getElementById('qualityBanner'),
         errorBanner: document.getElementById('mediaErrorBanner'),
+        waitingBanner: document.getElementById('serverWaitingBanner'),
         partnerGoneBanner: document.getElementById('partnerGoneBanner'),
         statusFooter: document.getElementById('statusFooter'),
+        interestDialog: document.getElementById('interestDialog'),
+        interestPartnerName: document.getElementById('interestPartnerName'),
+        interestCountdown: document.getElementById('interestCountdown'),
+        interestCountdownWrap: document.getElementById('interestCountdownWrap'),
+        interestStatus: document.getElementById('interestStatus'),
+        interestContact: document.getElementById('interestContact'),
+        interestContactLink: document.getElementById('interestContactLink'),
+        interestContactMissing: document.getElementById('interestContactMissing'),
+        interestChoiceButtons: document.getElementById('interestChoiceButtons'),
+        interestYesButton: document.getElementById('interestYesButton'),
+        interestNoButton: document.getElementById('interestNoButton'),
+        interestCloseButton: document.getElementById('interestCloseButton'),
+        breakBanner: document.getElementById('breakBanner'),
+        breakCountdown: document.getElementById('breakCountdown'),
+        disconnectNotificationBanner: document.getElementById('disconnectNotificationBanner'),
+        leaveDateWrapper: document.getElementById('leaveDateWrapper'),
+        leaveDateBtn: document.getElementById('leaveDateBtn'),
+        leaveDateConfirmModal: document.getElementById('leaveDateConfirmModal'),
+        cancelLeaveDateBtn: document.getElementById('cancelLeaveDateBtn'),
+        confirmLeaveDateBtn: document.getElementById('confirmLeaveDateBtn'),
+        mainRoomStandbyBanner: document.getElementById('mainRoomStandbyBanner'),
+        standbyTitle: document.getElementById('standbyTitle'),
+        standbyMessage: document.getElementById('standbyMessage'),
+        standbyTimerCountdown: document.getElementById('standbyTimerCountdown'),
       },
       fetchIceServers: async () => {
         const res = await fetch('/api/ice-servers/');
         if (!res.ok) throw new Error('ICE servers unavailable');
         return res.json();
       },
+      submitInterest: async (choice) => {
+        const csrfToken = document.querySelector(
+          '#interestCsrfForm [name="csrfmiddlewaretoken"]',
+        )?.value;
+        const response = await fetch('{% url "submit-round-interest" %}', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken || '',
+          },
+          body: JSON.stringify(choice),
+        });
+        const result = await response.json().catch(() => ({}));
+        return { ...result, ok: response.ok };
+      },
       onPhaseChange: (phase) => {
         const footer = document.getElementById('statusFooter');
         const banner = document.getElementById('eventEndedBanner');
+        const connBadge = document.getElementById('connectionBadge');
+        const breakBanner = document.getElementById('breakBanner');
+
         if (phase === CallRoomPhase.EVENT_ENDED) {
           banner.classList.add('visible');
           footer.textContent = 'Event has ended.';
+          if (breakBanner) breakBanner.hidden = true;
+          if (connBadge) {
+            connBadge.textContent = 'EVENT ENDED';
+            connBadge.className = 'badge';
+          }
         } else if (phase === CallRoomPhase.DISCONNECTED) {
           footer.textContent = 'RECONNECTING — connection lost';
+          if (connBadge) {
+            connBadge.textContent = 'DISCONNECTED';
+            connBadge.className = 'badge failed';
+          }
         } else if (phase === CallRoomPhase.PRECONNECTING) {
           footer.textContent = 'Preparing next round…';
+          if (breakBanner) breakBanner.hidden = true;
+          if (connBadge) {
+            connBadge.textContent = 'CONNECTING';
+            connBadge.className = 'badge';
+          }
         } else if (phase === CallRoomPhase.IN_ROUND) {
           footer.textContent = 'Round in progress';
+          if (breakBanner) breakBanner.hidden = true;
+          if (connBadge) {
+            connBadge.textContent = 'CONNECTED';
+            connBadge.className = 'badge connected';
+          }
         } else if (phase === CallRoomPhase.ROUND_ENDING) {
           footer.textContent = 'Round ended — waiting for next pairing…';
+          if (breakBanner) breakBanner.hidden = false;
+          if (connBadge) {
+            connBadge.textContent = 'BREAK';
+            connBadge.className = 'badge break';
+          }
         } else {
           footer.textContent = 'Waiting for pairing…';
         }
       },
     });
 
+    const reportBtn = document.getElementById('interestReportButton');
+    const reportText = document.getElementById('interestReportText');
+    const reportFeedback = document.getElementById('interestReportFeedback');
+    if (reportBtn && reportText) {
+      reportBtn.addEventListener('click', async () => {
+        const text = reportText.value.trim();
+        if (!text) {
+          reportText.focus();
+          return;
+        }
+        reportBtn.disabled = true;
+        const csrfToken = document.querySelector(
+          '#interestCsrfForm [name="csrfmiddlewaretoken"]',
+        )?.value;
+        try {
+          const res = await fetch('{% url "report-incident" %}', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': csrfToken || '',
+            },
+            body: JSON.stringify({
+              report: text,
+              room_id: controller.partner?.roomId || '',
+              round_number: controller.roundNumber || 0,
+            }),
+          });
+          if (res.ok) {
+            reportFeedback.textContent = 'Report submitted. Thank you for letting us know.';
+            reportFeedback.style.color = '#4ade80';
+            reportFeedback.hidden = false;
+            reportText.value = '';
+          } else {
+            reportFeedback.textContent = 'Could not submit report. Please try again.';
+            reportFeedback.style.color = '#f87171';
+            reportFeedback.hidden = false;
+            reportBtn.disabled = false;
+          }
+        } catch (e) {
+          reportFeedback.textContent = 'Network error. Please try again.';
+          reportFeedback.style.color = '#f87171';
+          reportFeedback.hidden = false;
+          reportBtn.disabled = false;
+        }
+      });
+    }
+
+    const waitingLobby = document.getElementById('eventWaitingLobby');
+    const eventStartCountdown = document.getElementById('eventStartCountdown');
+    const waitingStatus = document.getElementById('waitingStatus');
+
+    function waitForEventStart(initialData, requestStartedAt, responseReceivedAt) {
+      waitingLobby.hidden = false;
+      return waitForFreshEventStart(initialData, {
+        initialRequestStartedAtMs: requestStartedAt,
+        initialResponseReceivedAtMs: responseReceivedAt,
+        fetchCurrentParticipant: async () => {
+          const response = await fetch('/participant/me/', {
+            credentials: 'same-origin',
+          });
+          if (!response.ok) throw new Error('Could not refresh event schedule');
+          return response.json();
+        },
+        onCountdown: (value) => {
+          if (eventStartCountdown.textContent !== value) eventStartCountdown.textContent = value;
+        },
+        onStatus: (message) => {
+          if (waitingStatus.textContent !== message) waitingStatus.textContent = message;
+        },
+      });
+    }
+
+    document.getElementById('interestYesButton').addEventListener(
+      'click',
+      () => controller.submitInterestChoice(true),
+    );
+    document.getElementById('interestNoButton').addEventListener(
+      'click',
+      () => controller.submitInterestChoice(false),
+    );
+    document.getElementById('interestCloseButton').addEventListener(
+      'click',
+      () => controller.dismissInterestPrompt(),
+    );
+
     async function init() {
-      const meRes = await fetch('/participant/me/');
-      if (!meRes.ok) {
-        document.getElementById('statusFooter').textContent =
-          'Not authenticated. Please join with a valid token first.';
+      const requestStartedAt = performance.now();
+      let meRes;
+      try {
+        meRes = await fetch('/participant/me/');
+      } catch (_error) {
+        waitingStatus.textContent =
+          'We could not verify your event link. Check your connection and refresh this page.';
+        document.querySelector('.waiting-countdown').hidden = true;
         return;
       }
+      if (!meRes.ok) {
+        waitingStatus.textContent =
+          'We could not verify your event link. Reopen the access link from your email.';
+        document.querySelector('.waiting-countdown').hidden = true;
+        return;
+      }
+      const responseReceivedAt = performance.now();
       const meData = await meRes.json();
       controller.myParticipantId = meData.participant.id;
       window.__t38ForceMediaFallback = () => controller.forceMediaFallback();
-      controller.connect();
+
+      const freshMeData = await waitForEventStart(
+        meData,
+        requestStartedAt,
+        responseReceivedAt,
+      );
+      if (!freshMeData) return;
+      waitingLobby.hidden = true;
+      const intro = freshMeData.participant.intro_video;
+      if (!intro?.configured || intro.completed) {
+        controller.connect();
+        return;
+      }
+
+      const overlay = document.getElementById('eventIntro');
+      const video = document.getElementById('introVideo');
+      const status = document.getElementById('introStatus');
+      const continueButton = document.getElementById('introContinue');
+      let connected = false;
+      const connectOnce = () => {
+        if (connected) return;
+        connected = true;
+        overlay.hidden = true;
+        controller.connect();
+      };
+      const finishIntro = async () => {
+        continueButton.disabled = true;
+        status.textContent = 'Saving your progress…';
+        const csrfToken = document.querySelector(
+          '#interestCsrfForm [name="csrfmiddlewaretoken"]',
+        )?.value;
+        try {
+          const response = await fetch('/participant/intro/complete/', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'X-CSRFToken': csrfToken || '' },
+          });
+          if (!response.ok) throw new Error('Could not save intro progress');
+          connectOnce();
+        } catch (_error) {
+          status.textContent = 'Progress could not be saved. Please try again.';
+          continueButton.disabled = false;
+        }
+      };
+
+      overlay.hidden = false;
+      video.src = intro.url;
+      video.addEventListener('ended', finishIntro, { once: true });
+      video.addEventListener('error', () => {
+        status.textContent = 'The introduction video could not be loaded. You can continue without it.';
+      });
+      continueButton.addEventListener('click', finishIntro);
+      status.textContent = 'Play the introduction video, or continue without it.';
+      video.hidden = false;
+      continueButton.disabled = false;
     }
 
-    init();
+    init().catch(() => {
+      waitingStatus.textContent =
+        'We could not load your event details. Please refresh this page or reopen your event link.';
+      document.querySelector('.waiting-countdown').hidden = true;
+    });
+    initVideoSwap(document.querySelector('.videos'));
   </script>
 </body>
 </html>

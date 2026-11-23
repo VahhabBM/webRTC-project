@@ -24,7 +24,9 @@ export const AdapterKind = Object.freeze({
 export const DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS = 6000;
 
 export function fallbackAllowedForRoom(roomId, selectedRoomId) {
-  if (!selectedRoomId || !roomId) return false;
+  if (!roomId) return false;
+  // No diagnostic room means relay fallback is available for every assigned pair.
+  if (!selectedRoomId) return true;
   return String(roomId) === String(selectedRoomId);
 }
 
@@ -56,6 +58,8 @@ export class FailoverMediaTransport {
     createPrimary = createPrimaryMediaAdapter,
     createFallback = createRelayMediaAdapter,
     selectedRoomId = "",
+    fallbackRoomId = "",
+    refreshRtcConfig = null,
     forceFallback = false,
     escalationTimeoutMs = DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS,
     scheduleEscalation = null,
@@ -64,6 +68,8 @@ export class FailoverMediaTransport {
     this._createPrimary = createPrimary;
     this._createFallback = createFallback;
     this._selectedRoomId = selectedRoomId ? String(selectedRoomId) : "";
+    this._fallbackRoomId = fallbackRoomId ? String(fallbackRoomId) : "";
+    this._refreshRtcConfig = refreshRtcConfig;
     this._forceFallbackOnOpen = Boolean(forceFallback);
     this._escalationTimeoutMs = Number(escalationTimeoutMs);
     if (!Number.isFinite(this._escalationTimeoutMs)) {
@@ -125,6 +131,16 @@ export class FailoverMediaTransport {
     return this._escalationTimeoutMs;
   }
 
+  _fallbackAllowed(roomId) {
+    return this._fallbackRoomId
+      ? fallbackAllowedForRoom(roomId, this._fallbackRoomId)
+      : Boolean(roomId);
+  }
+
+  _setCurrentRoom(roomId) {
+    if (!this._fallbackRoomId && roomId) this._selectedRoomId = String(roomId);
+  }
+
   _isPrimaryConnected() {
     if (this._usingFallback) return false;
     if (this._primaryConnected) return true;
@@ -167,7 +183,7 @@ export class FailoverMediaTransport {
       timeout_ms: this._escalationTimeoutMs,
       fallback_configured: Boolean(this._selectedRoomId),
       fallback_selected_room_id: this._selectedRoomId || "",
-      fallback_allowed: fallbackAllowedForRoom(roomId, this._selectedRoomId),
+      fallback_allowed: this._fallbackAllowed(roomId),
       using_fallback: this._usingFallback,
       result,
       reason,
@@ -191,7 +207,7 @@ export class FailoverMediaTransport {
   }
 
   async _handleEscalationTimeout() {
-    const allowed = fallbackAllowedForRoom(this.roomId, this._selectedRoomId);
+    const allowed = this._fallbackAllowed(this.roomId);
     if (!allowed) {
       this._recordEscalation("skipped", "FALLBACK_UNAVAILABLE");
       this._userOnStateChange?.("failed");
@@ -264,12 +280,39 @@ export class FailoverMediaTransport {
   async _activateFallback(reason = "PRIMARY_FAILED") {
     if (this._switching || this._usingFallback) return false;
     const roomId = this.roomId;
-    if (!fallbackAllowedForRoom(roomId, this._selectedRoomId)) return false;
+    if (!this._fallbackAllowed(roomId)) return false;
 
     this._clearEscalationTimer();
     this._switching = true;
-    this._generation += 1;
     const snap = this._snapshot();
+    if (typeof this._refreshRtcConfig === "function") {
+      try {
+        snap.rtcConfig = await this._refreshRtcConfig();
+      } catch (err) {
+        this._switching = false;
+        this._userOnFailure?.("ICE_CONFIGURATION_REFRESH_FAILED");
+        return false;
+      }
+    }
+    if (typeof this._active?.pc?.setConfiguration === "function" &&
+        typeof this._active.enableRelay === "function") {
+      try {
+        this._usingFallback = true;
+        this._primaryConnected = false;
+        await this._active.enableRelay(snap.rtcConfig);
+        this._active.adapterKind = AdapterKind.RELAY;
+        this._adapterOptions.rtcConfig = { ...snap.rtcConfig, iceTransportPolicy: "relay" };
+        this.fallbackActivations += 1;
+        return true;
+      } catch (err) {
+        this._usingFallback = false;
+        this._userOnFailure?.("RELAY_CONFIGURATION_FAILED");
+        return false;
+      } finally {
+        this._switching = false;
+      }
+    }
+    this._generation += 1;
     this._detachActive();
     this._usingFallback = true;
     this._primaryConnected = false;
@@ -356,12 +399,18 @@ export class FailoverMediaTransport {
     return stream;
   }
 
+  setRtcConfig(rtcConfig = {}) {
+    this._adapterOptions.rtcConfig = rtcConfig;
+    if (this._active) this._active.rtcConfig = rtcConfig;
+  }
+
   async preconnect(roomId, partnerId) {
+    this._setCurrentRoom(roomId);
     this._clearEscalationTimer();
     this._primaryConnected = false;
     if (
       this._usingFallback &&
-      !fallbackAllowedForRoom(roomId, this._selectedRoomId)
+      !this._fallbackAllowed(roomId)
     ) {
       await this._restorePrimary(roomId, partnerId, { open: false });
       return;
@@ -387,11 +436,12 @@ export class FailoverMediaTransport {
   }
 
   async prepareRound(newRoomId, newPartnerId) {
+    this._setCurrentRoom(newRoomId);
     this._clearEscalationTimer();
     this._primaryConnected = false;
     if (
       this._usingFallback &&
-      !fallbackAllowedForRoom(newRoomId, this._selectedRoomId)
+      !this._fallbackAllowed(newRoomId)
     ) {
       await this._restorePrimary(newRoomId, newPartnerId, { open: false });
       return;
@@ -406,11 +456,12 @@ export class FailoverMediaTransport {
   }
 
   async switchPartner(newRoomId, newPartnerId) {
+    this._setCurrentRoom(newRoomId);
     this._clearEscalationTimer();
     this._primaryConnected = false;
     if (
       this._usingFallback &&
-      !fallbackAllowedForRoom(newRoomId, this._selectedRoomId)
+      !this._fallbackAllowed(newRoomId)
     ) {
       await this._restorePrimary(newRoomId, newPartnerId, { open: true });
       this._armEscalationTimer();

@@ -34,6 +34,33 @@
         </div>
     </div>
 
+    <!-- Event Attendance & Gender Breakdown (Task 4) -->
+    <div class="module" style="background:#fff; border:1px solid #ccc; padding:15px; margin-bottom:20px; border-radius:4px;">
+        <h2>📊 Event Attendance & Gender Presence</h2>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-top:10px;">
+            <div style="background:#f9fafb; padding:12px; border-radius:4px; border:1px solid #e5e7eb;">
+                <span style="font-size:12px; color:#6b7280; display:block;">Confirmed Registrations</span>
+                <strong style="font-size:18px;">{{ event_attendance.total_confirmed }}</strong>
+                <span style="font-size:12px; color:#4b5563; display:block; margin-top:4px;">👨 {{ event_attendance.male_confirmed }} Men | 👩 {{ event_attendance.female_confirmed }} Women</span>
+            </div>
+            <div style="background:#f0fdf4; padding:12px; border-radius:4px; border:1px solid #bbf7d0;">
+                <span style="font-size:12px; color:#166534; display:block;">Attended (Joined Room)</span>
+                <strong style="font-size:18px; color:#15803d;">{{ event_attendance.total_attended }}</strong> ({{ event_attendance.attendance_rate }})
+                <span style="font-size:12px; color:#166534; display:block; margin-top:4px;">👨 {{ event_attendance.male_attended }} Men | 👩 {{ event_attendance.female_attended }} Women</span>
+            </div>
+            <div style="background:#fef2f2; padding:12px; border-radius:4px; border:1px solid #fecaca;">
+                <span style="font-size:12px; color:#991b1b; display:block;">No-Shows (Never Joined)</span>
+                <strong style="font-size:18px; color:#b91c1c;">{{ event_attendance.total_noshow }}</strong>
+                <span style="font-size:12px; color:#991b1b; display:block; margin-top:4px;">👨 {{ event_attendance.male_noshow }} Men | 👩 {{ event_attendance.female_noshow }} Women</span>
+            </div>
+            <div style="background:#eff6ff; padding:12px; border-radius:4px; border:1px solid #bfdbfe;">
+                <span style="font-size:12px; color:#1e40af; display:block;">Currently Online / Active</span>
+                <strong style="font-size:18px; color:#1d4ed8;">{{ event_attendance.total_online }}</strong> online
+                <span style="font-size:12px; color:#1e40af; display:block; margin-top:4px;">👨 {{ event_attendance.male_online }} Men | 👩 {{ event_attendance.female_online }} Women</span>
+            </div>
+        </div>
+    </div>
+
     <!-- Participant Search Bar -->
     <div class="module" style="background:#f8f9fa; border:1px solid #ddd; padding:15px; margin-bottom:20px; border-radius:4px;">
         <h2>🔍 Participant Lookup (Phone Support)</h2>
