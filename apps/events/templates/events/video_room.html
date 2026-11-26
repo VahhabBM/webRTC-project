@@ -297,20 +297,34 @@
        above is preserved exactly as before.
     ────────────────────────────────────────────────────────────────────── */
     @media (max-width: 900px) {
-      body { height: auto; overflow: auto; }
-      .room-shell { height: auto; }
-      .room-stage { display: block; }
-      .videos { height: auto; min-height: 420px; }
-      .video-card { height: auto; min-height: 280px; }
-      .video-card video { height: 320px; }
+      body { height: 100dvh; overflow: hidden; padding: 8px; width: 100%; }
+      .room-shell { height: 100%; gap: 8px; }
+      .room-logo { width: 72px; }
+      .top-bar { padding: 8px 10px; }
+      .timer-label { display: none; }
+      .timer-value { font-size: 1.35rem; }
+      .video-card[data-video="local"] { right: 10px; bottom: 10px; }
+      .room-stage {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        flex: 1;
+      }
+      .videos { flex: 1; height: auto; min-height: 0; }
+      .room-dock { flex: 0 0 auto; }
+      .pair-chat-panel { max-height: 148px; }
+      .pair-chat-log { max-height: 56px; }
+      .leave-date-copy { display: none; }
+      .leave-date-btn { width: 100%; }
     }
-    @media (max-width: 640px) {
+    @media (max-width: 900px) {
       .videos {
         display: block;
         position: relative;
-        aspect-ratio: 16 / 10;
+        aspect-ratio: auto;
+        height: 100%;
         background: #000;
-        border-radius: 10px;
+        border-radius: 16px;
         overflow: hidden;
         gap: 0;
         /* Eliminates Chrome's 300 ms double-tap-zoom delay */
@@ -338,8 +352,8 @@
 
       /* Local (you) is the small PiP thumbnail by default */
       .video-card[data-video="local"] {
-        bottom: 0.75rem;
-        right: 0.75rem;
+        bottom: 12px;
+        right: 12px;
         width: 28%;
         aspect-ratio: 3 / 4;
         top: auto;
