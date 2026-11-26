@@ -54,6 +54,7 @@ _CLIENT_MESSAGE_TYPES: frozenset[str] = frozenset(
         MessageType.CLIENT_WEBRTC_OFFER,
         MessageType.CLIENT_WEBRTC_ANSWER,
         MessageType.CLIENT_WEBRTC_ICE,
+        MessageType.CLIENT_PAIR_CHAT,
     }
 )
 
@@ -72,6 +73,7 @@ _SERVER_MESSAGE_TYPES: frozenset[str] = frozenset(
         MessageType.SERVER_WEBRTC_OFFER,
         MessageType.SERVER_WEBRTC_ANSWER,
         MessageType.SERVER_WEBRTC_ICE,
+        MessageType.SERVER_PAIR_CHAT,
         MessageType.SERVER_TURN_CREDENTIALS,
         MessageType.SERVER_EVENT_END,
         MessageType.SERVER_ERROR,
@@ -237,6 +239,27 @@ def _validate_client_webrtc_answer(payload: dict) -> None:
     _require_nonempty_str(
         payload, "sdp", original_type=MessageType.CLIENT_WEBRTC_ANSWER
     )
+
+
+def _validate_client_pair_chat(payload: dict) -> None:
+    _require_nonempty_str(
+        payload, "room_id", original_type=MessageType.CLIENT_PAIR_CHAT
+    )
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise ProtocolError(
+            ErrorCode.ERR_INVALID_MESSAGE,
+            "Field 'text' must be a non-empty string.",
+            original_type=MessageType.CLIENT_PAIR_CHAT,
+            detail={"field": "text"},
+        )
+    if len(text) > 500:
+        raise ProtocolError(
+            ErrorCode.ERR_INVALID_MESSAGE,
+            "Field 'text' must be at most 500 characters.",
+            original_type=MessageType.CLIENT_PAIR_CHAT,
+            detail={"field": "text", "max": 500},
+        )
 
 
 def _validate_client_webrtc_ice(payload: dict) -> None:
@@ -559,6 +582,17 @@ def _validate_server_webrtc_answer(payload: dict) -> None:
     )
 
 
+def _validate_server_pair_chat(payload: dict) -> None:
+    _require_nonempty_str(
+        payload, "room_id", original_type=MessageType.SERVER_PAIR_CHAT
+    )
+    _require_nonempty_str(
+        payload, "from_participant_id", original_type=MessageType.SERVER_PAIR_CHAT
+    )
+    _require_nonempty_str(payload, "text", original_type=MessageType.SERVER_PAIR_CHAT)
+    _require_positive_int(payload, "server_ts", original_type=MessageType.SERVER_PAIR_CHAT)
+
+
 def _validate_server_webrtc_ice(payload: dict) -> None:
     _require_nonempty_str(
         payload, "room_id", original_type=MessageType.SERVER_WEBRTC_ICE
@@ -658,6 +692,7 @@ _PAYLOAD_VALIDATORS: dict[str, Any] = {
     MessageType.CLIENT_WEBRTC_OFFER: _validate_client_webrtc_offer,
     MessageType.CLIENT_WEBRTC_ANSWER: _validate_client_webrtc_answer,
     MessageType.CLIENT_WEBRTC_ICE: _validate_client_webrtc_ice,
+    MessageType.CLIENT_PAIR_CHAT: _validate_client_pair_chat,
     MessageType.SERVER_HELLO: _validate_server_hello,
     MessageType.SERVER_CLOCK_SYNC: _validate_server_clock_sync,
     MessageType.SERVER_PONG: _validate_server_pong,
@@ -671,6 +706,7 @@ _PAYLOAD_VALIDATORS: dict[str, Any] = {
     MessageType.SERVER_WEBRTC_OFFER: _validate_server_webrtc_offer,
     MessageType.SERVER_WEBRTC_ANSWER: _validate_server_webrtc_answer,
     MessageType.SERVER_WEBRTC_ICE: _validate_server_webrtc_ice,
+    MessageType.SERVER_PAIR_CHAT: _validate_server_pair_chat,
     MessageType.SERVER_TURN_CREDENTIALS: _validate_server_turn_credentials,
     MessageType.SERVER_EVENT_END: _validate_server_event_end,
     MessageType.SERVER_ERROR: _validate_server_error,

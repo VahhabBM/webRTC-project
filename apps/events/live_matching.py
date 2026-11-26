@@ -24,9 +24,10 @@ from apps.events.presence import get_online_participant_ids
 logger = logging.getLogger(__name__)
 
 _CONNECT_TIMEOUT = timedelta(seconds=60)
-_RECONNECT_GRACE = timedelta(seconds=15)
+_RECONNECT_GRACE = timedelta(seconds=60)
 _ABSENCE_CACHE_TTL = 120
 _GEOGRAPHY_SCALE = 100
+_AGE_PREF_SCALE = 12_000
 _FAIRNESS_EDGE_CEILING = MAX_SCORE * _GEOGRAPHY_SCALE + 20_000
 _PRECONNECT_WINDOW = timedelta(seconds=20)
 
@@ -51,6 +52,33 @@ def _cap(event, participant: Participant) -> int:
         return max(0, int(event.female_date_limit))
     configured = getattr(settings, "LIVE_MATCH_OTHER_DATE_LIMIT", None)
     return max(0, int(configured if configured is not None else event.other_date_limit))
+
+
+def _within_age_preference(participant: Participant, partner: Participant) -> bool:
+    """True when partner.age is inside participant's declared preference range."""
+    age = partner.age
+    if age is None:
+        return True
+    lo = participant.age_pref_min
+    hi = participant.age_pref_max
+    if lo is None and hi is None:
+        return True
+    if lo is not None and age < lo:
+        return False
+    if hi is not None and age > hi:
+        return False
+    return True
+
+
+def _age_preference_score(left: Participant, right: Participant) -> int:
+    """Higher when both participants' ages fit each other's preferred ranges."""
+    if not (_within_age_preference(left, right) and _within_age_preference(right, left)):
+        return 0
+    score = 100
+    if left.age is not None and right.age is not None:
+        gap = abs(left.age - right.age)
+        score += max(0, 40 - gap)
+    return score
 
 
 def _accepts(participant: Participant, partner: Participant) -> bool:
@@ -293,6 +321,7 @@ def reconcile_live_round(event, round_obj, now=None) -> dict:
                     continue
 
                 geo = geographic_score(left, right)
+                age_score = _age_preference_score(left, right)
                 overlap = min(100, len(tags.get(left_id, set()) & tags.get(right_id, set())))
                 debt = successful.get(left_id, 0) + successful.get(right_id, 0)
                 deterministic = int.from_bytes(
@@ -301,6 +330,7 @@ def reconcile_live_round(event, round_obj, now=None) -> dict:
                 ) % 100
                 weight = (
                     -debt * fairness_weight
+                    + age_score * _AGE_PREF_SCALE
                     + geo * _GEOGRAPHY_SCALE
                     + overlap * 100
                     + deterministic
@@ -348,12 +378,12 @@ def reconcile_live_round(event, round_obj, now=None) -> dict:
                 reason = "partner_left"
             elif reservations.get(pid, 0) >= _cap(locked_event, participant):
                 reason = "limit_reached"
+            elif not has_opposite:
+                reason = "waiting_for_partner"
             elif _gender(participant.gender) == "Male" and total_females < total_males:
                 reason = "standby_fewer_women"
             elif _gender(participant.gender) == "Female" and total_males < total_females:
                 reason = "standby_fewer_men"
-            elif not has_opposite:
-                reason = "waiting_for_partner"
             else:
                 reason = "no_compatible_partner"
             result["waiting"][pid] = reason

@@ -35,11 +35,11 @@ class PartnerPresence(StrEnum):
     GONE = "gone"
 
 
-# Client reconnect policy for 5–20s network loss (T-33). Identity hold on the
-# server remains PROTOCOL_RECONNECT_WINDOW_SECONDS (300s).
+# Client reconnect policy. Brief drops stay on the same date for about 60s
+# (sprint 16). Identity hold on the server remains PROTOCOL_RECONNECT_WINDOW_SECONDS (300s).
 RECONNECT_INITIAL_DELAY_MS = 500
 RECONNECT_MAX_DELAY_MS = 4000
-RECONNECT_WINDOW_MS = 45_000
+RECONNECT_WINDOW_MS = 60_000
 
 # Longer than T-33's 5–20s recovery window so a brief drop is not "partner left" (T-34).
 PARTNER_ABSENCE_GRACE_MS = 25_000

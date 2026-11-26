@@ -73,7 +73,7 @@ class Event(models.Model):
         max_length=20, choices=EventStatus.choices, default=EventStatus.DRAFT
     )
     num_rounds = models.PositiveSmallIntegerField(
-        default=5, validators=[MinValueValidator(1), MaxValueValidator(8)]
+        default=5, validators=[MinValueValidator(1), MaxValueValidator(15)]
     )
     round_duration = models.DurationField(
         default=timedelta(minutes=7),
@@ -150,9 +150,32 @@ class Event(models.Model):
         blank=True,
         help_text="Minutes into a date before Leave Date button appears.",
     )
+    participant_age_min = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Minimum participant age for this event (inclusive). Leave blank for 18+ only.",
+    )
+    participant_age_max = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Maximum participant age for this event (inclusive).",
+    )
 
     def clean(self):
         super().clean()
+        if self.participant_age_min is not None and self.participant_age_max is not None:
+            if self.participant_age_min > self.participant_age_max:
+                from django.core.exceptions import ValidationError
+
+                raise ValidationError(
+                    {"participant_age_min": "Minimum age cannot exceed maximum age."}
+                )
+            if self.participant_age_min < 18:
+                from django.core.exceptions import ValidationError
+
+                raise ValidationError(
+                    {"participant_age_min": "Minimum event age must be at least 18."}
+                )
         if bool(self.intro_video_url) != (self.intro_video_duration_seconds > 0):
             from django.core.exceptions import ValidationError
 
@@ -447,6 +470,37 @@ class Pair(models.Model):
         return (
             f"Pair({self.room_id}: {self.participant_a_id} - {self.participant_b_id})"
         )
+
+
+class RoundFeedback(models.Model):
+    """Optional post-round feedback from a participant (not WhatsApp interest)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="round_feedbacks")
+    round = models.ForeignKey(Round, on_delete=models.CASCADE, related_name="feedbacks")
+    participant = models.ForeignKey(
+        Participant, on_delete=models.CASCADE, related_name="round_feedbacks"
+    )
+    rating = models.PositiveSmallIntegerField(
+        null=True, blank=True, validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+    comment = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("round", "participant"),
+                name="uniq_round_feedback_per_participant",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("event", "round")),
+        ]
+
+    def __str__(self) -> str:
+        return f"RoundFeedback(round={self.round_id}, participant={self.participant_id})"
 
 
 class PairInterest(models.Model):

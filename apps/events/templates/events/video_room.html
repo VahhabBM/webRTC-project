@@ -87,6 +87,56 @@
       font-weight: 700;
       color: #fef08a;
     }
+    .round-feedback-panel {
+      margin-top: 1rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid rgba(255,255,255,0.25);
+      text-align: left;
+      font-size: 0.9rem;
+    }
+    .round-feedback-panel label { display: block; margin-bottom: 0.35rem; }
+    .round-feedback-rating { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .round-feedback-rating button {
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.35);
+      color: #fff;
+      border-radius: 6px;
+      padding: 4px 10px;
+      cursor: pointer;
+    }
+    .round-feedback-rating button.selected { background: #fef08a; color: #1e3a8a; font-weight: 700; }
+  .pair-chat-panel {
+      margin-top: 1rem;
+      background: var(--surface);
+      border-radius: 10px;
+      padding: 0.75rem 1rem;
+    }
+    .pair-chat-log {
+      max-height: 120px;
+      overflow-y: auto;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+    }
+    .pair-chat-line { margin-bottom: 4px; }
+    .pair-chat-form { display: flex; gap: 8px; }
+    .pair-chat-form input {
+      flex: 1;
+      padding: 0.45rem 0.6rem;
+      border-radius: 6px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: var(--text);
+    }
+    .pair-chat-form button {
+      padding: 0.45rem 0.85rem;
+      border-radius: 6px;
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+    }
 
     .interest-report-box {
       margin-top: 1rem;
@@ -626,7 +676,20 @@
     <div class="break-banner-content">
       <div class="break-banner-title">You are in break time</div>
       <div class="break-banner-subtitle">
-        Your next date will start in <span id="breakCountdown">02:00</span> minutes.
+        Your next date will start in <span id="breakCountdown">02:00</span>.
+      </div>
+      <div id="roundFeedbackPanel" class="round-feedback-panel" hidden>
+        <label>Optional: how was this date?</label>
+        <div id="roundFeedbackRating" class="round-feedback-rating" role="group" aria-label="Rating 1 to 5">
+          <button type="button" data-rating="1">1</button>
+          <button type="button" data-rating="2">2</button>
+          <button type="button" data-rating="3">3</button>
+          <button type="button" data-rating="4">4</button>
+          <button type="button" data-rating="5">5</button>
+        </div>
+        <textarea id="roundFeedbackComment" rows="2" maxlength="500" placeholder="Short comment (optional)" style="width:100%;margin-bottom:8px;border-radius:6px;padding:6px;"></textarea>
+        <button id="roundFeedbackSubmit" type="button" style="padding:6px 14px;border-radius:6px;border:none;background:#fef08a;color:#1e3a8a;font-weight:700;cursor:pointer;">Send feedback</button>
+        <span id="roundFeedbackStatus" style="margin-left:10px;font-size:0.85rem;"></span>
       </div>
     </div>
   </div>
@@ -651,9 +714,21 @@
     </div>
   </div>
 
+  <div id="pairChatPanel" class="pair-chat-panel" hidden>
+    <div class="pair-chat-title" style="font-weight:600;margin-bottom:0.35rem;">In-call chat</div>
+    <div id="pairChatLog" class="pair-chat-log" aria-live="polite"></div>
+    <form id="pairChatForm" class="pair-chat-form">
+      <input id="pairChatInput" type="text" maxlength="500" autocomplete="off" placeholder="Type a message to your partner…" />
+      <button type="submit">Send</button>
+    </form>
+  </div>
+
   <div id="leaveDateWrapper" class="leave-date-wrapper" hidden>
+    <p class="leave-date-copy" style="max-width: 36rem; margin: 0 auto 12px; color: var(--muted); font-size: 0.95rem; line-height: 1.45;">
+      Not feeling a connection? That's absolutely okay! Say goodbye to your partner, click below, and wait for your next date.
+    </p>
     <button id="leaveDateBtn" class="leave-date-btn" type="button">
-      Leave Date
+      Leave this date
     </button>
   </div>
 
@@ -759,6 +834,9 @@
         interestCloseButton: document.getElementById('interestCloseButton'),
         breakBanner: document.getElementById('breakBanner'),
         breakCountdown: document.getElementById('breakCountdown'),
+        roundFeedbackPanel: document.getElementById('roundFeedbackPanel'),
+        pairChatPanel: document.getElementById('pairChatPanel'),
+        pairChatLog: document.getElementById('pairChatLog'),
         disconnectNotificationBanner: document.getElementById('disconnectNotificationBanner'),
         leaveDateWrapper: document.getElementById('leaveDateWrapper'),
         leaveDateBtn: document.getElementById('leaveDateBtn'),
@@ -789,7 +867,7 @@
           body: JSON.stringify(choice),
         });
         const result = await response.json().catch(() => ({}));
-        return { ...result, ok: response.ok };
+        return { ...result, ok: response.ok, status: response.status };
       },
       onPhaseChange: (phase) => {
         const footer = document.getElementById('statusFooter');
@@ -908,6 +986,69 @@
         onStatus: (message) => {
           if (waitingStatus.textContent !== message) waitingStatus.textContent = message;
         },
+      });
+    }
+
+    let selectedRoundRating = null;
+    const ratingWrap = document.getElementById('roundFeedbackRating');
+    if (ratingWrap) {
+      ratingWrap.querySelectorAll('button[data-rating]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          selectedRoundRating = Number(btn.dataset.rating);
+          ratingWrap.querySelectorAll('button').forEach((b) => b.classList.toggle('selected', b === btn));
+        });
+      });
+    }
+    const roundFeedbackSubmit = document.getElementById('roundFeedbackSubmit');
+    const roundFeedbackStatus = document.getElementById('roundFeedbackStatus');
+    const roundFeedbackComment = document.getElementById('roundFeedbackComment');
+    if (roundFeedbackSubmit) {
+      roundFeedbackSubmit.addEventListener('click', async () => {
+        const roundNumber = controller.roundNumber;
+        if (!roundNumber) return;
+        roundFeedbackSubmit.disabled = true;
+        const csrfToken = document.querySelector(
+          '#interestCsrfForm [name="csrfmiddlewaretoken"]',
+        )?.value;
+        try {
+          const res = await fetch('{% url "submit-round-feedback" %}', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': csrfToken || '',
+            },
+            body: JSON.stringify({
+              round_number: roundNumber,
+              rating: selectedRoundRating,
+              comment: roundFeedbackComment?.value?.trim() || '',
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok) {
+            if (roundFeedbackStatus) {
+              roundFeedbackStatus.textContent = 'Thank you — feedback saved.';
+            }
+          } else if (roundFeedbackStatus) {
+            roundFeedbackStatus.textContent = data?.error?.code || 'Could not save feedback.';
+            roundFeedbackSubmit.disabled = false;
+          }
+        } catch {
+          if (roundFeedbackStatus) roundFeedbackStatus.textContent = 'Network error.';
+          roundFeedbackSubmit.disabled = false;
+        }
+      });
+    }
+
+    const pairChatForm = document.getElementById('pairChatForm');
+    const pairChatInput = document.getElementById('pairChatInput');
+    if (pairChatForm && pairChatInput) {
+      pairChatForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const text = pairChatInput.value;
+        if (controller.sendPairChat(text)) {
+          pairChatInput.value = '';
+        }
       });
     }
 

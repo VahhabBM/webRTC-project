@@ -72,7 +72,7 @@ def test_receipt_failure_keeps_registration_and_retries_without_duplicates(
     assert participant.registration_receipt_sent_at
     assert len(mail.outbox) == 1
     assert "/verify/" not in mail.outbox[0].body
-    assert "/join/" not in mail.outbox[0].body
+    assert "/join/" in mail.outbox[0].body
     call_command("send_due_event_access_emails", confirm_production=True)
     assert len(mail.outbox) == 1
     assert send_registration_receipt_once(participant.pk) is False
@@ -83,11 +83,13 @@ def test_receipt_failure_keeps_registration_and_retries_without_duplicates(
 @pytest.mark.django_db
 def test_waitlist_receipt_does_not_claim_a_confirmed_place(client, event, settings):
     settings.EVENT_REGISTRATION_CAPACITY = 0
-    assert _register(client, event).status_code == 201
-    assert len(mail.outbox) == 1
-    assert "waitlist" in mail.outbox[0].body
-    assert "not yet confirmed" in mail.outbox[0].body
-    assert "/join/" not in mail.outbox[0].body
+    response = _register(client, event)
+    assert response.status_code == 201
+    assert response.json()["registration_status"] == "waitlisted"
+    assert mail.outbox == []
+    participant = Participant.objects.get(event=event)
+    assert participant.registration_receipt_pending is False
+    assert participant.registration_receipt_sent_at is None
 
 
 @pytest.mark.django_db
@@ -133,12 +135,10 @@ def test_late_registration_gets_receipt_then_separate_room_link(client, event):
     event.save(update_fields=["start_time"])
     assert _register(client, event).status_code == 201
     assert len(mail.outbox) == 1
-    assert "Registration complete" in mail.outbox[0].subject
-    assert "/join/" not in mail.outbox[0].body
+    assert "Access Link" in mail.outbox[0].subject
+    assert "/join/" in mail.outbox[0].body
     call_command("send_due_event_access_emails", confirm_production=True)
-    assert len(mail.outbox) == 2
-    assert "Your access link" in mail.outbox[1].subject
-    assert "/join/" in mail.outbox[1].body
+    assert len(mail.outbox) == 1
     assert EmailVerificationToken.objects.count() == 0
 
 

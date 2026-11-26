@@ -28,6 +28,7 @@ from django.utils import timezone
 from apps.registration.services.email_service import EmailService
 
 from .auth import scheduled_event_end
+from .presence import get_online_participant_ids
 from .countries import COUNTRY_NAMES
 from .email_notifications import send_event_access_email_manually
 from .models import (
@@ -43,6 +44,7 @@ from .models import (
     ParticipantStatus,
     ParticipantTag,
     RegistrationStatus,
+    RoundFeedback,
     Round,
     Tag,
     WaitlistInvitation,
@@ -239,6 +241,8 @@ class EventAdmin(admin.ModelAdmin):
         "reminder_lead_time",
         "reminder_audience",
         "early_exit_min_minutes",
+        "participant_age_min",
+        "participant_age_max",
     )
     readonly_fields = ("registration_paused",)
     actions = ["send_selected_matches_summary_emails"]
@@ -500,12 +504,10 @@ class EventAdmin(admin.ModelAdmin):
         male_paired = confirmed_qs.filter(id__in=paired_pids, gender__iexact="male").count()
         female_paired = confirmed_qs.filter(id__in=paired_pids, gender__iexact="female").count()
 
-        active_online_statuses = (
-            ParticipantStatus.READY,
-            ParticipantStatus.ACTIVE,
-            ParticipantStatus.WAITING,
-        )
-        online_qs = confirmed_qs.filter(status__in=active_online_statuses)
+        online_ids: set[str] = set()
+        for overview_event in annotated_events.filter(status__in=overview_statuses):
+            online_ids.update(get_online_participant_ids(overview_event))
+        online_qs = confirmed_qs.filter(pk__in=online_ids) if online_ids else confirmed_qs.none()
         total_online = online_qs.count()
         male_online = online_qs.filter(gender__iexact="male").count()
         female_online = online_qs.filter(gender__iexact="female").count()
@@ -552,8 +554,10 @@ class EventAdmin(admin.ModelAdmin):
             ev.m_att = ev_conf.filter(joined_at__isnull=False, gender__iexact="male").count()
             ev.f_att = ev_conf.filter(joined_at__isnull=False, gender__iexact="female").count()
             ev.tot_att = ev.m_att + ev.f_att
-            ev.m_onl = ev_conf.filter(status__in=active_online_statuses, gender__iexact="male").count()
-            ev.f_onl = ev_conf.filter(status__in=active_online_statuses, gender__iexact="female").count()
+            onl_ids = get_online_participant_ids(ev)
+            onl_qs = ev_conf.filter(pk__in=onl_ids) if onl_ids else ev_conf.none()
+            ev.m_onl = onl_qs.filter(gender__iexact="male").count()
+            ev.f_onl = onl_qs.filter(gender__iexact="female").count()
             ev.tot_onl = ev.m_onl + ev.f_onl
 
         context = {
@@ -684,12 +688,8 @@ class EventAdmin(admin.ModelAdmin):
         m_a = ev_att.filter(gender__iexact="male").count()
         f_a = ev_att.filter(gender__iexact="female").count()
 
-        active_online_statuses = (
-            ParticipantStatus.READY,
-            ParticipantStatus.ACTIVE,
-            ParticipantStatus.WAITING,
-        )
-        ev_onl = ev_conf.filter(status__in=active_online_statuses)
+        onl_ids = get_online_participant_ids(event)
+        ev_onl = ev_conf.filter(pk__in=onl_ids) if onl_ids else ev_conf.none()
         tot_o = ev_onl.count()
         m_o = ev_onl.filter(gender__iexact="male").count()
         f_o = ev_onl.filter(gender__iexact="female").count()
@@ -800,6 +800,30 @@ class EventAdmin(admin.ModelAdmin):
                 else COUNTRY_NAMES.get(value or "", value or "Not provided")
             ),
         )
+
+        def age_bucket_label(age):
+            if age is None:
+                return "Not provided"
+            if age < 25:
+                return "18–24"
+            if age < 30:
+                return "25–29"
+            if age < 40:
+                return "30–39"
+            if age < 50:
+                return "40–49"
+            if age < 60:
+                return "50–59"
+            return "60+"
+
+        age_counts: dict[str, int] = {}
+        for row in event.participants.filter(
+            registration_status=RegistrationStatus.CONFIRMED
+        ).values_list("age", flat=True):
+            label = age_bucket_label(row)
+            age_counts[label] = age_counts.get(label, 0) + 1
+        age_rows = rows_from_counts(age_counts, lambda value: value)
+
         return TemplateResponse(
             request,
             "admin/events/event/registration_stats.html",
@@ -810,6 +834,7 @@ class EventAdmin(admin.ModelAdmin):
                 "total": total,
                 "gender_rows": gender_rows,
                 "country_rows": country_rows,
+                "age_rows": age_rows,
                 "statistics_unavailable": statistics_unavailable,
                 "statistics_retained": snapshot is not None,
                 "opts": self.model._meta,
@@ -1153,6 +1178,14 @@ class TagAdmin(admin.ModelAdmin):
 
         if queryset.exists():
             super().delete_queryset(request, queryset)
+
+
+@admin.register(RoundFeedback)
+class RoundFeedbackAdmin(admin.ModelAdmin):
+    list_display = ("event", "round", "participant", "rating", "created_at")
+    list_filter = ("event", "round__number")
+    search_fields = ("participant__email", "participant__display_name", "comment")
+    readonly_fields = ("created_at", "updated_at")
 
 
 @admin.register(Participant)

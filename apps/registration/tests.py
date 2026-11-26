@@ -35,8 +35,8 @@ class RegistrationTests(TestCase):
             "email": "ali@example.com",
             "email_confirmation": "ali@example.com",
             "age": 30,
-            "country": "NZ",
-            "city": "Wellington",
+            "country": "GB",
+            "city": "London",
             "tag_ids": [str(self.tag1.id)],
             "consents": {
                 "age_confirmation": True,
@@ -63,7 +63,7 @@ class RegistrationTests(TestCase):
         self.assertIsNone(participant.email_verified_at)
         self.assertFalse(EmailVerificationToken.objects.filter(participant=participant).exists())
         self.assertEqual(len(mail.outbox), 1)
-        self.assertIn("Registration complete", mail.outbox[0].subject)
+        self.assertIn("Access Link", mail.outbox[0].subject)
         self.assertNotIn("/verify/", mail.outbox[0].body)
 
     def test_duplicate_email_in_same_event_is_rejected(self):

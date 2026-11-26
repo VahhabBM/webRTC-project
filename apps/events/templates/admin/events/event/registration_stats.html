@@ -19,6 +19,11 @@
   <thead><tr><th>Country</th><th>Count</th><th>Percent</th></tr></thead>
   <tbody>{% for row in country_rows %}<tr><td>{{ row.label }}</td><td>{{ row.count }}</td><td>{{ row.percent }}</td></tr>{% empty %}<tr><td colspan="3">No registrations yet.</td></tr>{% endfor %}</tbody>
 </table>
+<h2>By age</h2>
+<table>
+  <thead><tr><th>Age range</th><th>Count</th><th>Percent</th></tr></thead>
+  <tbody>{% for row in age_rows %}<tr><td>{{ row.label }}</td><td>{{ row.count }}</td><td>{{ row.percent }}</td></tr>{% empty %}<tr><td colspan="3">No registrations yet.</td></tr>{% endfor %}</tbody>
+</table>
 {% endif %}
 <p><a class="button" href="{% url 'admin:events_event_change' event.pk %}">Back to event</a></p>
 {% endblock %}

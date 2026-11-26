@@ -45,7 +45,7 @@ export const CallRoomPhase = Object.freeze({
 
 export const RECONNECT_INITIAL_DELAY_MS = 500;
 export const RECONNECT_MAX_DELAY_MS = 4000;
-export const RECONNECT_WINDOW_MS = 45_000;
+export const RECONNECT_WINDOW_MS = 60_000;
 export const PARTNER_ABSENCE_GRACE_MS = 25_000;
 export const PARTNER_GONE_FOOTER =
   "Your partner left. The round timer continues — no replacement will be assigned.";
@@ -929,6 +929,10 @@ export class CallRoomController {
         this._onSessionReplaced();
         break;
 
+      case "server.pair_chat":
+        this._onPairChat(payload);
+        break;
+
       case "server.partner_state":
       case "server.partner_presence":
         this._onPartnerState(
@@ -1394,6 +1398,8 @@ export class CallRoomController {
       CallRoomPhase.IN_ROUND,
     );
 
+    this._setPairChatVisible(true);
+
     this.serverWarningActive =
       false;
 
@@ -1432,6 +1438,7 @@ export class CallRoomController {
 
   async _onRoundEnd(payload) {
     this._clearEarlyExitTimer();
+    this._setPairChatVisible(false);
     this.roundNumber =
       Number(
         payload.round_number ??
@@ -1474,6 +1481,8 @@ export class CallRoomController {
 
     const breakDurationSec = Number(payload.break_duration_seconds ?? 120);
     this._startBreakCountdown(breakDurationSec);
+    this._clearAutoReload();
+    this._showNextInterestPrompt();
   }
 
   _startBreakCountdown(durationSec) {
@@ -1483,6 +1492,9 @@ export class CallRoomController {
     }
     if (this.elements.breakBanner) {
       this.elements.breakBanner.hidden = false;
+    }
+    if (this.elements.roundFeedbackPanel) {
+      this.elements.roundFeedbackPanel.hidden = false;
     }
     let remaining = durationSec;
     const updateDisplay = () => {
@@ -1501,6 +1513,66 @@ export class CallRoomController {
         this._breakTimer = null;
       }
     }, 1000);
+  }
+
+  _setPairChatVisible(visible) {
+    if (this.elements.pairChatPanel) {
+      this.elements.pairChatPanel.hidden = !visible;
+    }
+    if (!visible && this.elements.pairChatLog) {
+      this.elements.pairChatLog.textContent = "";
+    }
+  }
+
+  _appendChatMessage(senderLabel, text) {
+    if (!this.elements.pairChatLog || !text) {
+      return;
+    }
+    const line = document.createElement("div");
+    line.className = "pair-chat-line";
+    line.textContent = `${senderLabel}: ${text}`;
+    this.elements.pairChatLog.appendChild(line);
+    this.elements.pairChatLog.scrollTop = this.elements.pairChatLog.scrollHeight;
+  }
+
+  _onPairChat(payload) {
+    const fromId = String(payload?.from_participant_id || "");
+    if (fromId && fromId === String(this.myParticipantId)) {
+      return;
+    }
+    const text = String(payload?.text || "").trim();
+    if (text) {
+      this._appendChatMessage("Partner", text);
+    }
+  }
+
+  sendPairChat(text) {
+    const roomId = this.partner?.roomId;
+    if (
+      !roomId ||
+      this.phase !== CallRoomPhase.IN_ROUND ||
+      !this.ws ||
+      this.ws.readyState !== WebSocket.OPEN
+    ) {
+      return false;
+    }
+    const body = String(text || "").trim();
+    if (!body) {
+      return false;
+    }
+    try {
+      this.ws.send(
+        JSON.stringify({
+          type: "client.pair_chat",
+          version: 1,
+          payload: { room_id: roomId, text: body.slice(0, 500) },
+        }),
+      );
+      this._appendChatMessage("You", body);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   _onInterestPrompt(payload) {
@@ -1706,7 +1778,23 @@ export class CallRoomController {
         interested: Boolean(interested),
       });
       if (!result || result.ok === false) {
-        throw new Error(result?.error?.message || "Your choice could not be saved.");
+        const errCode = result?.error?.code;
+        const errMsg =
+          result?.error?.message || "Your choice could not be saved.";
+        if (errCode === "choice_not_open") {
+          if (this.elements.interestStatus) {
+            this.elements.interestStatus.textContent =
+              "The choice window is opening — please try again in a moment.";
+          }
+          this._setInterestButtonsDisabled(false);
+          return;
+        }
+        if (errCode === "choice_already_recorded") {
+          prompt.own_response = Boolean(interested);
+          this._renderInterestPrompt(this._activeInterestPromptId, prompt);
+          return;
+        }
+        throw new Error(errMsg);
       }
       prompt.own_response = Boolean(interested);
       prompt.mutual = Boolean(result.mutual);
@@ -3221,6 +3309,12 @@ export class CallRoomController {
         "failed";
     }
 
+    if (
+      this.phase === CallRoomPhase.ROUND_ENDING ||
+      this._activeInterestPromptId !== null
+    ) {
+      return;
+    }
     this._startAutoReload(5);
   }
 

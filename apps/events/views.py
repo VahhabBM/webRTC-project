@@ -32,6 +32,8 @@ from apps.events.models import (
     Pair,
     Participant,
     ParticipantIncidentNote,
+    Round,
+    RoundFeedback,
 )
 from apps.events.orchestrator import (
     OrchestratorRealtime,
@@ -169,6 +171,56 @@ def complete_event_intro(request: HttpRequest) -> JsonResponse:
             participant.intro_video_completed_at = now
             participant.save(update_fields=["intro_video_completed_at", "updated_at"])
     return JsonResponse({"configured": True, "completed": True})
+
+
+@require_POST
+def submit_round_feedback(request: HttpRequest) -> JsonResponse:
+    """Store optional post-round feedback (separate from WhatsApp interest)."""
+    participant = get_authenticated_participant(request)
+    if participant is None:
+        return JsonResponse({"error": {"code": "authentication_required"}}, status=401)
+
+    try:
+        payload = json.loads(request.body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"error": {"code": "invalid_json"}}, status=400)
+    if not isinstance(payload, dict):
+        return JsonResponse({"error": {"code": "invalid_payload"}}, status=400)
+
+    round_number = payload.get("round_number")
+    rating = payload.get("rating")
+    comment = payload.get("comment", "")
+    if (
+        isinstance(round_number, bool)
+        or not isinstance(round_number, int)
+        or round_number < 1
+    ):
+        return JsonResponse({"error": {"code": "invalid_payload"}}, status=400)
+    if rating is not None and (
+        isinstance(rating, bool) or not isinstance(rating, int) or rating < 1 or rating > 5
+    ):
+        return JsonResponse({"error": {"code": "invalid_payload"}}, status=400)
+    if not isinstance(comment, str) or len(comment) > 2000:
+        return JsonResponse({"error": {"code": "invalid_payload"}}, status=400)
+
+    round_obj = Round.objects.filter(
+        event_id=participant.event_id, number=round_number
+    ).first()
+    if round_obj is None:
+        return JsonResponse({"error": {"code": "round_not_found"}}, status=404)
+
+    feedback, _created = RoundFeedback.objects.update_or_create(
+        round=round_obj,
+        participant=participant,
+        defaults={
+            "event_id": participant.event_id,
+            "rating": rating,
+            "comment": comment.strip(),
+        },
+    )
+    return JsonResponse(
+        {"ok": True, "feedback_id": str(feedback.pk), "round_number": round_number}
+    )
 
 
 @require_POST

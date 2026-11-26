@@ -31,7 +31,7 @@ DEFAULT_RECONNECT_WINDOW_SECONDS: int = 5 * 60
 DEFAULT_RATE_LIMIT_MESSAGES_PER_MINUTE: int = 60
 
 # Event model permits up to eight rounds; protocol bounds must match it.
-MAX_EVENT_ROUNDS: int = 8
+MAX_EVENT_ROUNDS: int = 15
 WAITING_REASONS: frozenset[str] = frozenset(
     {
         "waiting_for_partner",
@@ -151,6 +151,16 @@ class MessageType(StrEnum):
 
     #: Server → Client.  Forwarded ICE candidate from the partner.
     SERVER_WEBRTC_ICE = "server.webrtc.ice_candidate"
+
+    # ------------------------------------------------------------------
+    # In-call text (pair-scoped relay)
+    # ------------------------------------------------------------------
+
+    #: Client → Server.  Short text to the active partner during a live date.
+    CLIENT_PAIR_CHAT = "client.pair_chat"
+
+    #: Server → Client.  Forwarded in-call text from the partner.
+    SERVER_PAIR_CHAT = "server.pair_chat"
 
     # ------------------------------------------------------------------
     # TURN credentials

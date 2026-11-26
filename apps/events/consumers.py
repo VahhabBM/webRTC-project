@@ -32,6 +32,7 @@ from apps.protocol.schemas import (
     build_server_hello,
     build_server_ice_candidate,
     build_server_pong,
+    build_server_pair_chat,
     build_server_webrtc_answer,
     build_server_webrtc_offer,
     error_from_protocol_error,
@@ -298,6 +299,8 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
             MessageType.CLIENT_WEBRTC_ICE,
         ):
             await self._handle_webrtc_signal(msg_type, payload)
+        elif msg_type == MessageType.CLIENT_PAIR_CHAT:
+            await self._handle_pair_chat(payload)
         else:
             await self._send_error(
                 ErrorCode.ERR_INVALID_STATE,
@@ -607,6 +610,40 @@ class ParticipantConsumer(AsyncWebsocketConsumer):
         else:
             return
 
+        if self.channel_layer:
+            await self.channel_layer.group_send(
+                f"participant_{partner.pk}",
+                {
+                    "type": "webrtc_relay",
+                    "message": outbound,
+                },
+            )
+
+    async def _handle_pair_chat(self, payload: dict) -> None:
+        room_id = payload.get("room_id")
+        text = str(payload.get("text", "")).strip()
+        if not text:
+            await self._send_error(
+                ErrorCode.ERR_INVALID_MESSAGE,
+                "Chat text must not be empty.",
+                original_type=str(MessageType.CLIENT_PAIR_CHAT),
+            )
+            return
+        partner = await _resolve_partner_for_participant(self.participant, room_id)
+        if not partner:
+            await self._send_error(
+                ErrorCode.ERR_WRONG_ROOM,
+                f"In-call chat is not available for room {room_id}.",
+                original_type=str(MessageType.CLIENT_PAIR_CHAT),
+            )
+            return
+
+        outbound = build_server_pair_chat(
+            room_id=room_id,
+            from_participant_id=str(self.participant.pk),
+            text=text[:500],
+            server_ts=_timestamp_ms(),
+        )
         if self.channel_layer:
             await self.channel_layer.group_send(
                 f"participant_{partner.pk}",

@@ -11,6 +11,7 @@ from .views import (
     leave_date,
     report_incident,
     submit_connection_report,
+    submit_round_feedback,
     submit_round_interest,
     video_room_page,
 )
@@ -40,6 +41,11 @@ urlpatterns = [
         "api/round-interest/",
         submit_round_interest,
         name="submit-round-interest",
+    ),
+    path(
+        "api/round-feedback/",
+        submit_round_feedback,
+        name="submit-round-feedback",
     ),
     path(
         "api/leave-date/",

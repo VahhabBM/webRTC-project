@@ -259,6 +259,23 @@ def build_server_webrtc_answer(
     )
 
 
+def build_server_pair_chat(
+    *,
+    room_id: str,
+    from_participant_id: str,
+    text: str,
+    server_ts: int,
+) -> dict:
+    """Build a ``server.pair_chat`` message."""
+    return build_message(
+        MessageType.SERVER_PAIR_CHAT,
+        room_id=room_id,
+        from_participant_id=from_participant_id,
+        text=text,
+        server_ts=server_ts,
+    )
+
+
 def build_server_ice_candidate(
     *,
     room_id: str,

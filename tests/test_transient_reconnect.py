@@ -69,9 +69,9 @@ def test_backoff_is_bounded_exponential():
     assert next_reconnect_delay_ms(8) == 4000
     assert RECONNECT_INITIAL_DELAY_MS == 500
     assert RECONNECT_MAX_DELAY_MS == 4000
-    assert RECONNECT_WINDOW_MS == 45_000
-    assert reconnect_window_exhausted(0, 44_999) is False
-    assert reconnect_window_exhausted(0, 45_000) is True
+    assert RECONNECT_WINDOW_MS == 60_000
+    assert reconnect_window_exhausted(0, 59_999) is False
+    assert reconnect_window_exhausted(0, 60_000) is True
 
 
 def test_call_room_reconnect_contract_reuses_t14_and_t31():

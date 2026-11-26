@@ -133,6 +133,7 @@ def register_view(request, event_id=None):
                 if has_capacity
                 else RegistrationStatus.WAITLISTED
             )
+            receipt_pending = registration_status == RegistrationStatus.CONFIRMED
             participant = Participant.objects.create(
                 event=event,
                 display_name=payload["display_name"],
@@ -147,7 +148,7 @@ def register_view(request, event_id=None):
                 whatsapp=payload.get("whatsapp", ""),
                 registration_status=registration_status,
                 reservation_expires_at=None,
-                registration_receipt_pending=True,
+                registration_receipt_pending=receipt_pending,
             )
             TermsAcceptance.objects.create(
                 participant=participant,
@@ -168,16 +169,24 @@ def register_view(request, event_id=None):
             status=500,
         )
 
-    try:
-        send_registration_receipt_once(participant.pk)
-    except Exception:
-        # Registration is committed. The scheduler retries its durable receipt queue.
-        logger.exception("Registration receipt delivery failed for participant %s", participant.pk)
+    if participant.registration_status == RegistrationStatus.CONFIRMED:
+        try:
+            send_registration_receipt_once(participant.pk)
+        except Exception:
+            logger.exception(
+                "Registration receipt delivery failed for participant %s",
+                participant.pk,
+            )
 
+    waitlist_message = (
+        "Registration for this event is currently full for your gender. "
+        "You have been placed on the waitlist. We will email you only if a place "
+        "becomes available — no confirmation email will be sent now."
+    )
     return JsonResponse(
         {
             "message": (
-                "You are on the event waitlist. We will email you if a place becomes available."
+                waitlist_message
                 if participant.registration_status == RegistrationStatus.WAITLISTED
                 else "Your registration is confirmed. Your personal event access link has been sent to your email."
             ),

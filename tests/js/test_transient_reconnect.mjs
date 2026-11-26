@@ -322,9 +322,9 @@ test("bounded exponential backoff caps at max delay", () => {
   assert.equal(nextReconnectDelayMs(6, 500, 4000), 4000);
   assert.equal(RECONNECT_INITIAL_DELAY_MS, 500);
   assert.equal(RECONNECT_MAX_DELAY_MS, 4000);
-  assert.equal(RECONNECT_WINDOW_MS, 45_000);
-  assert.equal(reconnectWindowExhausted(0, 44_999, 45_000), false);
-  assert.equal(reconnectWindowExhausted(0, 45_000, 45_000), true);
+  assert.equal(RECONNECT_WINDOW_MS, 60_000);
+  assert.equal(reconnectWindowExhausted(0, 59_999, 60_000), false);
+  assert.equal(reconnectWindowExhausted(0, 60_000, 60_000), true);
 });
 
 test("signaling drop shows RECONNECTING and keeps the same partner/round/timer", async () => {

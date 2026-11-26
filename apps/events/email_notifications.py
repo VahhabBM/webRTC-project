@@ -32,11 +32,7 @@ def send_registration_receipt_once(participant_id) -> bool:
         not participant.registration_receipt_pending
         or participant.registration_receipt_sent_at
         or not participant.email
-        or participant.registration_status
-        not in {
-            RegistrationStatus.CONFIRMED,
-            RegistrationStatus.WAITLISTED,
-        }
+        or participant.registration_status != RegistrationStatus.CONFIRMED
     ):
         return False
 

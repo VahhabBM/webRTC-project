@@ -98,6 +98,19 @@ def validate_registration_data(event, data=None):
             "Registration is only available to people aged 18 or older.",
             "age_restricted",
         )
+    if event is not None:
+        event_min = getattr(event, "participant_age_min", None)
+        event_max = getattr(event, "participant_age_max", None)
+        if event_min is not None and age < event_min:
+            raise RegistrationError(
+                f"This event is for participants aged {event_min} and above.",
+                "event_age_too_young",
+            )
+        if event_max is not None and age > event_max:
+            raise RegistrationError(
+                f"This event is for participants aged {event_max} and below.",
+                "event_age_too_old",
+            )
     country = data.get("country", "")
     if country is None:
         country = ""
