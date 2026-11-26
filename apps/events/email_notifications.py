@@ -130,6 +130,7 @@ def _send_event_access_email(
     return True
 
 
+@transaction.atomic
 def send_due_event_reminders_for_event(event, *, now=None) -> int:
     """Send reminder emails when within event.reminder_lead_time of start_time."""
     if not event.reminder_lead_time or event.reminder_lead_time.total_seconds() <= 0:
