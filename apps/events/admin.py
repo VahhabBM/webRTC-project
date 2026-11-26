@@ -817,9 +817,7 @@ class EventAdmin(admin.ModelAdmin):
             return "60+"
 
         age_counts: dict[str, int] = {}
-        for row in event.participants.filter(
-            registration_status=RegistrationStatus.CONFIRMED
-        ).values_list("age", flat=True):
+        for row in event.participants.values_list("age", flat=True):
             label = age_bucket_label(row)
             age_counts[label] = age_counts.get(label, 0) + 1
         age_rows = rows_from_counts(age_counts, lambda value: value)
