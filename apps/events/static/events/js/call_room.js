@@ -1645,6 +1645,12 @@ export class CallRoomController {
     if (this.elements.interestDialog) {
       this.elements.interestDialog.hidden = false;
     }
+    if (this.elements.waitingBanner) {
+      this.elements.waitingBanner.hidden = true;
+    }
+    if (this.elements.qualityBanner) {
+      this.elements.qualityBanner.hidden = true;
+    }
     if (this.elements.interestPartnerName) {
       this.elements.interestPartnerName.textContent =
         prompt.partner_display_name;
@@ -1838,6 +1844,9 @@ export class CallRoomController {
       this.elements.interestDialog.hidden = true;
     }
     this._showNextInterestPrompt();
+    if (this._activeInterestPromptId === null && this.phase === CallRoomPhase.IDLE) {
+      this._onServerWaiting({ reason: "waiting_for_partner" });
+    }
   }
 
   async _onEventEnd(payload) {
@@ -3589,26 +3598,36 @@ export class CallRoomController {
 
   async leaveDateEarly() {
     this._clearEarlyExitTimer();
+    if (this.elements.leaveDateConfirmModal) {
+      this.elements.leaveDateConfirmModal.hidden = true;
+    }
+    if (this.elements.qualityBanner) {
+      this.elements.qualityBanner.hidden = true;
+    }
     const roomId = this.partner?.roomId || this.roomId;
     const partnerName = this.partner?.displayName || "your partner";
     const roundNum = Number(this.roundNumber) || 1;
     const nowTs = this._now();
     const durationSec = this.roundStartTs ? (nowTs - this.roundStartTs) / 1000 : 0;
+    let left = false;
 
     if (roomId) {
       try {
         const csrfToken =
           document.querySelector("[name=csrfmiddlewaretoken]")?.value ||
           (document.cookie.match(/csrftoken=([^;]+)/)?.[1] || "");
-        fetch("/api/leave-date/", {
+        const response = await fetch("/api/leave-date/", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "X-CSRFToken": csrfToken,
           },
           body: JSON.stringify({ room_id: roomId, reason: "early_exit" }),
-        }).catch(() => {});
-      } catch (e) {}
+        });
+        left = response.ok;
+      } catch (e) {
+        left = false;
+      }
     }
 
     if (this.negotiator) {
@@ -3628,7 +3647,7 @@ export class CallRoomController {
     } catch (e) {}
 
     const minSec = (this.earlyExitMinMinutes || 3) * 60;
-    if (durationSec >= minSec && roomId) {
+    if (left && durationSec >= minSec && roomId) {
       const promptId = `${roundNum}:${roomId}`;
       if (!this._interestPrompts.has(promptId)) {
         const prompt = {
@@ -3649,7 +3668,9 @@ export class CallRoomController {
     }
 
     this._setPhase(CallRoomPhase.IDLE);
-    this._onServerWaiting({ reason: "waiting_for_partner" });
+    if (this._activeInterestPromptId === null) {
+      this._onServerWaiting({ reason: "waiting_for_partner" });
+    }
   }
 
   _startStandbyCountdown(totalSeconds = 420) {

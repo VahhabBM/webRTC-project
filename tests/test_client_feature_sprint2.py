@@ -118,9 +118,8 @@ class TestSprint2Features:
 
         mail.outbox.clear()
         sent_count = send_event_matches_summary_emails(test_event.pk)
-        assert sent_count == 1
-        assert len(mail.outbox) == 1
-        assert mail.outbox[0].to == ["attended@example.com"]
+        assert sent_count == 0
+        assert mail.outbox == []
 
     def test_task_8_sixty_second_interest_window(self):
         """Task 8: Partner interest response window is 60 seconds."""

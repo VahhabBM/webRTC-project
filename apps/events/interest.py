@@ -7,7 +7,13 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
-from apps.events.models import Pair, PairInterest
+from apps.events.models import (
+    DisconnectionCause,
+    DisconnectionLog,
+    Pair,
+    PairInterest,
+    PairStatus,
+)
 
 INTEREST_RESPONSE_WINDOW = timedelta(seconds=60)
 
@@ -17,6 +23,25 @@ class PairInterestError(Exception):
         super().__init__(message)
         self.code = code
         self.status_code = status_code
+
+
+def _choice_window(pair):
+    """Early leave opens the choice immediately. A normal date waits for round end."""
+    if pair.status == PairStatus.CANCELLED:
+        left_at = (
+            DisconnectionLog.objects.filter(
+                event_id=pair.event_id,
+                round_id=pair.round_id,
+                cause=DisconnectionCause.TAB_CLOSED,
+                participant_id__in=(pair.participant_a_id, pair.participant_b_id),
+            )
+            .order_by("-disconnected_at")
+            .values_list("disconnected_at", flat=True)
+            .first()
+        )
+        if left_at is not None:
+            return left_at, left_at + INTEREST_RESPONSE_WINDOW
+    return pair.round.ends_at, pair.round.ends_at + INTEREST_RESPONSE_WINDOW
 
 
 def submit_pair_interest(
@@ -49,8 +74,8 @@ def submit_pair_interest(
                 "pair_not_found", "This conversation could not be found.", 404
             )
 
-        deadline = pair.round.ends_at + INTEREST_RESPONSE_WINDOW
-        if current < pair.round.ends_at:
+        opened, deadline = _choice_window(pair)
+        if current < opened:
             raise PairInterestError(
                 "choice_not_open", "The choice window has not opened yet.", 409
             )

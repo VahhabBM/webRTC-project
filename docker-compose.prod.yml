@@ -72,7 +72,7 @@ services:
       - send_due_event_access_emails
       - --loop
       - --interval-seconds
-      - "60"
+      - "15"
       - --confirm-production
 
   data_retention:

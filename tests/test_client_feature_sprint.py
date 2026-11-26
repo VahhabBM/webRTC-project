@@ -4,7 +4,10 @@ import pytest
 from django.core import mail
 from django.utils import timezone
 
-from apps.events.email_notifications import send_event_matches_summary_emails
+from apps.events.email_notifications import (
+    send_due_event_reminders_for_event,
+    send_event_matches_summary_emails,
+)
 from apps.events.matching import MatchParticipant, _accepts
 from apps.events.models import Event, EventStatus, Pair, PairInterest, Participant, ParticipantIncidentNote, RegistrationStatus
 from apps.registration.capacity import count_reserved_seats, has_registration_capacity
@@ -190,7 +193,7 @@ class TestMatchesSummaryEmail:
 
         mail.outbox.clear()
         sent_count = send_event_matches_summary_emails(sample_event.pk)
-        assert sent_count == 3  # All 3 participants got an email
+        assert sent_count == 2
 
         # Alice's email should list Bob and Bob's WhatsApp
         alice_email = next(m for m in mail.outbox if "alice@example.com" in m.to)
@@ -203,14 +206,36 @@ class TestMatchesSummaryEmail:
         assert "Alice" in bob_email.body
         assert "+44 7111111111" in bob_email.body
 
-        # Charlie's email has no matches note
-        charlie_email = next(m for m in mail.outbox if "charlie@example.com" in m.to)
-        assert "did not have any mutual matches" in charlie_email.body
+        assert all("charlie@example.com" not in message.to for message in mail.outbox)
 
         # Resend without force should send 0 because matches_email_sent_at is set
         p1.refresh_from_db()
         assert p1.matches_email_sent_at is not None
         assert send_event_matches_summary_emails(sample_event.pk) == 0
+
+
+@pytest.mark.django_db
+def test_three_minute_reminder_is_described_as_three_minutes():
+    now = timezone.now()
+    event = Event.objects.create(
+        name="Soon",
+        start_time=now + timedelta(seconds=150),
+        reminder_lead_time=timedelta(minutes=3),
+        reminder_audience="female",
+        status=EventStatus.SCHEDULED,
+    )
+    Participant.objects.create(
+        event=event,
+        display_name="Mina",
+        email="mina@example.com",
+        gender="Female",
+        registration_status=RegistrationStatus.CONFIRMED,
+        join_token_hash="!",
+    )
+    mail.outbox.clear()
+    assert send_due_event_reminders_for_event(event, now=now) == 1
+    assert "3 minutes" in mail.outbox[0].subject
+    assert "2 minutes" not in mail.outbox[0].subject
 
 
 @pytest.mark.django_db

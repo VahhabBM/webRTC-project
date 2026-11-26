@@ -45,8 +45,8 @@ class Command(BaseCommand):
             )
 
         interval = options["interval_seconds"]
-        if options["loop"] and interval < 30:
-            raise CommandError("--interval-seconds must be at least 30.")
+        if options["loop"] and interval < 10:
+            raise CommandError("--interval-seconds must be at least 10.")
         self.loop_mode = options["loop"]
 
         while True:

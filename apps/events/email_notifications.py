@@ -1,6 +1,7 @@
 """Helpers for scheduled and manually requested event access emails."""
 
 import logging
+import math
 from datetime import timedelta
 
 from django.db import transaction
@@ -157,12 +158,10 @@ def send_due_event_reminders_for_event(event, *, now=None) -> int:
         qs = qs.filter(gender__iexact="male")
 
     remaining_seconds = max(0, int((event.start_time - now).total_seconds()))
-    hours_remaining = round(remaining_seconds / 3600)
-    time_text = (
-        f"{hours_remaining} hours"
-        if hours_remaining > 0
-        else f"{max(1, round(remaining_seconds / 60))} minutes"
-    )
+    if remaining_seconds >= 3600:
+        time_text = f"{max(1, round(remaining_seconds / 3600))} hours"
+    else:
+        time_text = f"{max(1, math.ceil(remaining_seconds / 60))} minutes"
 
     delivered = 0
     for participant in list(qs):
@@ -242,6 +241,8 @@ def send_event_matches_summary_emails(event_id, *, force_resend: bool = False) -
                     "whatsapp": partner.whatsapp or "",
                 }
             )
+        if not matches:
+            continue
 
         try:
             EmailService.send_matches_summary_email(

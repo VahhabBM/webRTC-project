@@ -503,7 +503,7 @@
     .interest-backdrop {
       position: fixed;
       inset: 0;
-      z-index: 1000;
+      z-index: 2000;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -512,6 +512,8 @@
     }
     .interest-dialog {
       width: min(100%, 460px);
+      max-height: min(92vh, 680px);
+      overflow: auto;
       padding: 1.5rem;
       border: 1px solid #475569;
       border-radius: 14px;
@@ -524,13 +526,15 @@
     .interest-status { min-height: 1.5rem; color: var(--text) !important; }
     .interest-contact { margin: 1rem 0; padding: 0.85rem; border-radius: 8px; background: #0f172a; color: var(--text) !important; overflow-wrap: anywhere; }
     .interest-contact a { color: #93c5fd; font-weight: 700; }
-    .interest-actions { display: flex; flex-wrap: wrap; gap: 0.65rem; }
+    .interest-actions { display: flex; flex-direction: column; gap: 0.65rem; }
     .interest-actions button {
+      width: 100%;
+      min-height: 48px;
       border: 0;
       border-radius: 7px;
-      padding: 0.65rem 0.9rem;
+      padding: 0.75rem 0.9rem;
       font: inherit;
-      font-weight: 600;
+      font-weight: 700;
       cursor: pointer;
     }
     .interest-yes { background: var(--success); color: white; }
@@ -865,6 +869,7 @@
             'X-CSRFToken': csrfToken || '',
           },
           body: JSON.stringify(choice),
+          signal: AbortSignal.timeout(8000),
         });
         const result = await response.json().catch(() => ({}));
         return { ...result, ok: response.ok, status: response.status };

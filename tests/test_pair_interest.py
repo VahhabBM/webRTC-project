@@ -196,3 +196,31 @@ def test_no_contact_email_is_sent_after_mutual_yes(matched_pair):
     assert result["mutual"] is True
     assert result["partner_whatsapp"] == first.whatsapp
     assert mail.outbox == []
+
+
+@pytest.mark.django_db
+def test_early_leave_opens_yes_no_and_ends_that_pair(matched_pair):
+    _event, round_obj, pair, first, _second = matched_pair
+    now = timezone.now()
+    round_obj.starts_at = now - timedelta(minutes=2)
+    round_obj.ends_at = now + timedelta(minutes=3)
+    round_obj.save(update_fields=["starts_at", "ends_at"])
+    pair.status = "active"
+    pair.save(update_fields=["status"])
+    client = _authenticated_client(first)
+    response = client.post(
+        "/api/leave-date/",
+        data='{"room_id": "%s"}' % pair.room_id,
+        content_type="application/json",
+        HTTP_X_CSRFTOKEN=client.cookies["csrftoken"].value,
+    )
+    assert response.status_code == 200
+    pair.refresh_from_db()
+    assert pair.status == "cancelled"
+    saved = submit_pair_interest(
+        participant=first,
+        room_id=pair.room_id,
+        round_number=1,
+        interested=False,
+    )
+    assert saved["recorded"] is True

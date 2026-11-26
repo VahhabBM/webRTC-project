@@ -25,11 +25,13 @@ from apps.events.auth import (
     resolve_participant_from_session,
 )
 from apps.events.interest import PairInterestError, submit_pair_interest
+from apps.events.live_dispatch import WAIT_MESSAGES
 from apps.events.models import (
     ConnectionType,
     DisconnectionCause,
     DisconnectionLog,
     Pair,
+    PairStatus,
     Participant,
     ParticipantIncidentNote,
     Round,
@@ -38,7 +40,9 @@ from apps.events.models import (
 from apps.events.orchestrator import (
     OrchestratorRealtime,
     invalidate_participant_sockets,
+    participant_channel_group,
 )
+from apps.protocol.schemas import build_server_waiting
 from apps.events.turn import TurnCredentialService, generate_ice_servers
 from apps.protocol.media_transport import DEFAULT_MEDIA_FALLBACK_ESCALATION_TIMEOUT_MS
 
@@ -580,6 +584,21 @@ def leave_date(request: HttpRequest) -> JsonResponse:
             detail=f"Participant voluntarily left date early in room {room_id} with partner {partner.display_name if partner else 'unknown'}",
             disconnected_at=now,
         )
+        if pair.status in (PairStatus.PENDING, PairStatus.ACTIVE):
+            pair.status = PairStatus.CANCELLED
+            pair.save(update_fields=["status"])
+            if partner is not None:
+                server_ts = int(now.timestamp() * 1000)
+                OrchestratorRealtime(participant.event)._publish(
+                    participant_channel_group(partner.pk),
+                    build_server_waiting(
+                        reason="partner_left",
+                        round_number=pair.round.number,
+                        server_ts=server_ts,
+                        next_check_ts=server_ts + 2000,
+                        message=WAIT_MESSAGES["partner_left"],
+                    ),
+                )
     else:
         DisconnectionLog.objects.create(
             event=participant.event,
