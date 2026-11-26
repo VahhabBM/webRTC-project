@@ -17,31 +17,58 @@
       --danger: #dc2626;
     }
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       font: 15px/1.5 system-ui, sans-serif;
-      max-width: 1000px;
-      margin: 0 auto;
+      max-width: none;
+      height: 100dvh;
+      margin: 0;
+      overflow: hidden;
       background: var(--bg);
       color: var(--text);
-      padding: 1.5rem 1rem 2rem;
+      padding: 12px 16px;
+    }
+    .room-shell {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 0;
+    }
+    .room-stage {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 300px;
+      gap: 10px;
+    }
+    .room-dock {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
     .room-header {
       display: flex;
       align-items: center;
       gap: 0.75rem;
-      margin-bottom: 1rem;
+      margin: 0;
+      flex: 0 0 auto;
     }
-    .room-logo { display: block; width: 132px; height: auto; border-radius: 6px; }
+    .room-logo { display: block; width: 92px; height: auto; border-radius: 6px; }
     h1 { font-size: 1.4rem; margin: 0; }
     .top-bar {
       display: flex;
       flex-wrap: wrap;
       gap: 0.75rem;
       align-items: center;
+      justify-content: space-between;
       background: var(--surface);
-      padding: 0.75rem 1rem;
-      border-radius: 10px;
-      margin-bottom: 1rem;
+      border: 1px solid #334155;
+      padding: 0.7rem 1rem;
+      border-radius: 14px;
+      margin: 0;
+      flex: 0 0 auto;
     }
     .badge {
       padding: 0.25rem 0.6rem;
@@ -106,13 +133,20 @@
     }
     .round-feedback-rating button.selected { background: #fef08a; color: #1e3a8a; font-weight: 700; }
   .pair-chat-panel {
-      margin-top: 1rem;
+      flex: 1;
+      min-height: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
       background: var(--surface);
-      border-radius: 10px;
-      padding: 0.75rem 1rem;
+      border: 1px solid #334155;
+      border-radius: 14px;
+      padding: 0.75rem 0.85rem;
     }
     .pair-chat-log {
-      max-height: 120px;
+      flex: 1;
+      min-height: 0;
+      max-height: none;
       overflow-y: auto;
       font-size: 0.85rem;
       color: var(--muted);
@@ -200,7 +234,7 @@
     .timer-block[data-state="warning"] .timer-value { color: var(--warning); }
     .timer-block[data-state="expired"] .timer-value { color: var(--danger); }
     .timer-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
-    .timer-value { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+    .timer-value { font-size: 1.7rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
 
     .partner-card {
       background: var(--surface);
@@ -212,21 +246,43 @@
     .partner-tags { color: var(--muted); font-size: 0.9rem; margin: 0; }
     .meta-row { display: flex; gap: 1.5rem; margin-top: 0.5rem; font-size: 0.85rem; color: var(--muted); }
 
-    .videos { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-    .video-card {
-      background: var(--surface);
-      border-radius: 10px;
-      overflow: hidden;
-      padding: 0.5rem;
-      text-align: center;
+    .videos {
+      display: grid;
+      grid-template-columns: 0.72fr 1.28fr;
+      gap: 10px;
+      min-height: 0;
+      height: 100%;
     }
-    .video-card h3 { margin: 0.25rem 0 0.5rem; font-size: 0.9rem; color: var(--muted); }
+    .video-card {
+      position: relative;
+      background: #020617;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      overflow: hidden;
+      padding: 0;
+      text-align: center;
+      min-height: 0;
+      height: 100%;
+    }
+    .video-card h3 {
+      position: absolute;
+      left: 0.75rem;
+      bottom: 0.75rem;
+      z-index: 2;
+      margin: 0;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      background: rgb(2 6 23 / 72%);
+      color: #fff;
+      font-size: 0.85rem;
+    }
     video {
       width: 100%;
-      height: auto;
-      max-height: 320px;
+      height: 100%;
+      max-height: none;
+      object-fit: cover;
       background: #000;
-      border-radius: 8px;
+      border-radius: 0;
       transform: scaleX(-1);
     }
     #remoteVideo { transform: none; }
@@ -240,6 +296,14 @@
        Desktop (>640 px): none of these rules apply; the two-column grid
        above is preserved exactly as before.
     ────────────────────────────────────────────────────────────────────── */
+    @media (max-width: 900px) {
+      body { height: auto; overflow: auto; }
+      .room-shell { height: auto; }
+      .room-stage { display: block; }
+      .videos { height: auto; min-height: 420px; }
+      .video-card { height: auto; min-height: 280px; }
+      .video-card video { height: 320px; }
+    }
     @media (max-width: 640px) {
       .videos {
         display: block;
@@ -355,8 +419,8 @@
     }
 
     .status-footer {
-      margin-top: 1rem;
-      font-size: 0.85rem;
+      margin: 0;
+      font-size: 0.8rem;
       color: var(--muted);
       text-align: center;
     }
@@ -386,20 +450,27 @@
       margin-bottom: 0.5rem;
     }
     .partner-gone-banner {
-      background: #334155;
+      background: #1e293b;
       color: #f8fafc;
       font-weight: 600;
-      font-size: 0.9rem;
-      padding: 0.75rem 1rem;
-      border-radius: 8px;
-      margin-bottom: 1rem;
+      font-size: 0.95rem;
+      padding: 0.85rem 1rem;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      margin-bottom: 0.75rem;
     }
     [hidden] { display: none !important; }
 
     /* Leave Date button (Task 3) */
     .leave-date-wrapper {
-      margin-top: 1rem;
+      margin: 0;
       text-align: center;
+    }
+    .leave-date-copy {
+      max-width: none !important;
+      margin: 0 0 8px !important;
+      font-size: 0.8rem !important;
+      line-height: 1.35 !important;
     }
     .leave-date-btn {
       background: #dc2626;
@@ -647,6 +718,7 @@
     </section>
   </div>
 
+  <div class="room-shell">
   <header class="room-header">
     <img class="room-logo" src="{% static 'events/images/meetakk-logo.jpg' %}" alt="Meetakk">
   </header>
@@ -706,6 +778,7 @@
     </div>
   </div>
 
+  <div class="room-stage">
   <div class="videos">
     <div class="video-card" data-video="local">
       <h3>You</h3>
@@ -718,6 +791,7 @@
     </div>
   </div>
 
+  <aside class="room-dock">
   <div id="pairChatPanel" class="pair-chat-panel" hidden>
     <div class="pair-chat-title" style="font-weight:600;margin-bottom:0.35rem;">In-call chat</div>
     <div id="pairChatLog" class="pair-chat-log" aria-live="polite"></div>
@@ -750,6 +824,9 @@
   </div>
 
   <p id="statusFooter" class="status-footer">Connecting…</p>
+  </aside>
+  </div>
+  </div>
 
   <div id="interestDialog" class="interest-backdrop" hidden>
     <section class="interest-dialog" role="dialog" aria-modal="true" aria-labelledby="interestTitle">
