@@ -449,9 +449,9 @@
         margin: 0;
         overflow: hidden;
       }
-      .pair-chat-panel.has-messages .pair-chat-log,
-      .pair-chat-panel:focus-within .pair-chat-log {
-        max-height: 24dvh;
+      .pair-chat-log { flex: none; }
+      .pair-chat-panel.has-messages .pair-chat-log {
+        max-height: 4.5rem;
         margin-bottom: 8px;
         overflow-y: auto;
       }
@@ -479,12 +479,22 @@
       #disconnectNotificationBanner {
         position: absolute;
         z-index: 9;
-        top: calc(58px + env(safe-area-inset-top));
+        top: auto;
         right: 12px;
+        bottom: calc(108px + env(safe-area-inset-bottom));
         left: 12px;
-        max-height: 28dvh;
+        max-height: 7.5rem;
         margin: 0;
         overflow: auto;
+      }
+      .status-footer.is-alert {
+        grid-column: 1 / -1;
+        grid-row: 2;
+      }
+      .room-dock:has(.status-footer.is-alert) .leave-date-wrapper {
+        grid-column: 1 / -1;
+        grid-row: 3;
+        justify-self: end;
       }
       .standby-mainroom-banner {
         margin: calc(72px + env(safe-area-inset-top)) 12px 12px;
@@ -538,6 +548,11 @@
       font-size: 0.8rem;
       color: var(--muted);
       text-align: center;
+    }
+    .status-footer.is-alert {
+      color: #f8fafc;
+      font-size: 0.95rem;
+      font-weight: 650;
     }
     .event-ended-banner {
       display: none;
@@ -986,7 +1001,7 @@
     </div>
   </div>
 
-  <p id="statusFooter" class="status-footer">Connecting…</p>
+  <p id="statusFooter" class="status-footer" aria-live="polite">Connecting…</p>
   </aside>
   </div>
   </div>

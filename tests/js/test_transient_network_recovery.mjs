@@ -394,6 +394,7 @@ test("call room shows quality drop then connected without resetting the timer", 
   const timerDisplay = { textContent: "", dataset: {} };
   const timerContainer = { dataset: {} };
   const errorBanner = { hidden: true, textContent: "" };
+  const statusFooter = { textContent: "", classList: { add() {}, remove() {} } };
   const localVideo = { srcObject: null };
   const ticks = [];
 
@@ -407,6 +408,7 @@ test("call room shows quality drop then connected without resetting the timer", 
       timerDisplay,
       timerContainer,
       errorBanner,
+      statusFooter,
       localVideo,
       remoteVideo: { srcObject: null },
     },
@@ -430,10 +432,10 @@ test("call room shows quality drop then connected without resetting the timer", 
   setConn(pc, "disconnected");
 
   assert.equal(controller.phase, CallRoomPhase.IN_ROUND);
-  assert.equal(connectionBadge.textContent, "QUALITY DROP");
+  assert.equal(connectionBadge.textContent, "PLEASE WAIT");
   assert.equal(connectionBadge.dataset.quality, "degraded");
-  assert.equal(qualityBanner.hidden, false);
-  assert.match(qualityBanner.textContent, /quality drop/i);
+  assert.equal(qualityBanner.hidden, true);
+  assert.match(statusFooter.textContent, /The video froze/);
   assert.equal(errorBanner.hidden, true);
   assert.equal(controller.roundEndTs, roundEndTs);
   assert.equal(controller.roundNumber, 1);
@@ -494,8 +496,8 @@ test("signaling drop during a round keeps the timer and resumes without IDLE res
   assert.ok(controller._timerInterval);
   assert.equal(controller.roundEndTs, roundEndTs);
   assert.equal(connectionBadge.dataset.quality, "reconnecting");
-  assert.equal(connectionBadge.textContent, "RECONNECTING");
-  assert.equal(qualityBanner.hidden, false);
+  assert.equal(connectionBadge.textContent, "PLEASE WAIT");
+  assert.equal(qualityBanner.hidden, true);
   assert.equal(controller.negotiator.localStream, stream);
   assert.equal(getSharedGetUserMediaCallCount(), 1);
 

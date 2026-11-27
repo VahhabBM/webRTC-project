@@ -345,9 +345,10 @@ test("signaling drop shows RECONNECTING and keeps the same partner/round/timer",
   assert.equal(controller.partner.roomId, "room-1");
   assert.equal(controller.roundEndTs, roundEndTs);
   assert.ok(controller._timerInterval);
-  assert.equal(elements.connectionBadge.textContent, "RECONNECTING");
+  assert.equal(elements.connectionBadge.textContent, "PLEASE WAIT");
   assert.equal(elements.connectionBadge.dataset.quality, "reconnecting");
-  assert.match(elements.qualityBanner.textContent, /RECONNECTING/);
+  assert.equal(elements.qualityBanner.hidden, true);
+  assert.match(elements.statusFooter.textContent, /Stay on this page/);
   assert.equal(controller.negotiator.pc, pc);
   assert.equal(controller.negotiator.localStream, stream);
   assert.equal(getSharedGetUserMediaCallCount(), 1);
@@ -405,7 +406,8 @@ test("hello after in-round drop restores the same PC/media and kicks T-32 ICE re
   setConn(pc, "failed");
   controller._onSignalingClosed();
 
-  assert.equal(elements.connectionBadge.textContent, "RECONNECTING");
+  assert.equal(elements.connectionBadge.textContent, "PLEASE WAIT");
+  assert.match(elements.statusFooter.textContent, /Stay on this page/);
   assert.equal(controller.phase, CallRoomPhase.IN_ROUND);
 
   await delay(30);

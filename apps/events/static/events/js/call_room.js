@@ -1121,7 +1121,26 @@ export class CallRoomController {
   _setGuide(text) {
     if (this.elements.statusFooter && text) {
       this.elements.statusFooter.textContent = text;
+      this.elements.statusFooter.classList?.remove("is-alert");
     }
+  }
+
+  _setAlert(text) {
+    if (!text) return;
+    if (this.elements.statusFooter) {
+      this.elements.statusFooter.textContent = text;
+      this.elements.statusFooter.classList?.add("is-alert");
+    }
+  }
+
+  _partnerStoryActive() {
+    return this._holdNotice || this.partnerPresence === "gone" || this.partnerPresence === "reconnecting";
+  }
+
+  _hideQualityBanner() {
+    if (!this.elements.qualityBanner) return;
+    this.elements.qualityBanner.hidden = true;
+    this.elements.qualityBanner.textContent = "";
   }
 
   _onServerWaiting(payload) {
@@ -1154,17 +1173,19 @@ export class CallRoomController {
 
     if (reason === "partner_holding") {
       const message = payload?.message || "We'll hold this date for 1 minute.";
-      const named = String(message).match(/^(.*?)'s connection dropped/);
-      const name = named ? named[1] : (this.partner?.displayName || "your partner");
+      this._holdNotice = true;
+      this._freezeGuide = false;
       if (this.elements.waitingBanner) {
-        this.elements.waitingBanner.textContent = message;
-        this.elements.waitingBanner.hidden = false;
+        this.elements.waitingBanner.hidden = true;
+        this.elements.waitingBanner.textContent = "";
       }
-      if (this.elements.qualityBanner) {
-        this.elements.qualityBanner.hidden = false;
-        this.elements.qualityBanner.textContent = message;
+      this._hideQualityBanner();
+      if (this.elements.connectionBadge) {
+        this.elements.connectionBadge.textContent = "PLEASE WAIT";
+        this.elements.connectionBadge.className = "badge reconnecting";
+        this.elements.connectionBadge.dataset.quality = "partner-reconnecting";
       }
-      this._setGuide(`Please wait while ${name} reconnects.`);
+      this._setAlert(message);
       return;
     }
 
@@ -2174,15 +2195,8 @@ export class CallRoomController {
         bannerText;
     }
 
-    if (
-      this.elements.qualityBanner
-    ) {
-      this.elements.qualityBanner.hidden =
-        false;
-
-      this.elements.qualityBanner.textContent =
-        bannerText;
-    }
+    this._hideQualityBanner();
+    this._holdNotice = true;
 
     if (
       this.elements.remoteVideo
@@ -2302,18 +2316,11 @@ export class CallRoomController {
       presence ===
       "reconnecting"
     ) {
-      if (
-        this.elements
-          .qualityBanner
-      ) {
-        this.elements.qualityBanner.hidden =
-          false;
-
-        const name = this.partner?.displayName || "your partner";
-        const notice = partnerLeftBanner(name);
-        this.elements.qualityBanner.textContent = notice;
-        this._setGuide(`Please wait while ${name} reconnects.`);
-      }
+      const name = this.partner?.displayName || "your partner";
+      this._holdNotice = true;
+      this._freezeGuide = false;
+      this._hideQualityBanner();
+      this._setAlert(partnerLeftBanner(name));
 
       if (
         this.elements
@@ -2399,11 +2406,15 @@ export class CallRoomController {
         "";
     }
 
+    this._holdNotice = false;
+    this._freezeGuide = false;
+
     if (
       this.elements.statusFooter
     ) {
       this.elements.statusFooter.textContent =
         "You're on your date.";
+      this.elements.statusFooter.classList?.remove("is-alert");
     }
 
     if (
@@ -2796,6 +2807,15 @@ export class CallRoomController {
       state === "relay"
     ) {
       this._clearConnectionError();
+      if (this._freezeGuide && !this._partnerStoryActive()) {
+        this._freezeGuide = false;
+        this._setGuide("You're on your date.");
+      }
+    }
+
+    if (this._partnerStoryActive()) {
+      this._hideQualityBanner();
+      return;
     }
 
     if (
@@ -2807,7 +2827,7 @@ export class CallRoomController {
         connected:
           "CONNECTED",
         degraded:
-          "QUALITY DROP",
+          "PLEASE WAIT",
         failed:
           "FAILED",
         closed:
@@ -2838,19 +2858,11 @@ export class CallRoomController {
         state;
     }
 
-    if (
-      this.elements.qualityBanner
-    ) {
-      const degraded =
-        state === "degraded";
+    this._hideQualityBanner();
 
-      this.elements.qualityBanner.hidden =
-        !degraded;
-
-      if (degraded) {
-        this.elements.qualityBanner.textContent =
-          "Temporary quality drop — recovering connection…";
-      }
+    if (state === "degraded") {
+      this._freezeGuide = true;
+      this._setAlert("The video froze. Stay on this page. It should come back by itself.");
     }
   }
 
@@ -3441,7 +3453,7 @@ export class CallRoomController {
       this.elements.connectionBadge
     ) {
       this.elements.connectionBadge.textContent =
-        "RECONNECTING";
+        "PLEASE WAIT";
 
       this.elements.connectionBadge.className =
         "badge reconnecting";
@@ -3458,28 +3470,12 @@ export class CallRoomController {
         "reconnecting";
     }
 
-    if (
-      this.elements.qualityBanner
-    ) {
-      this.elements.qualityBanner.hidden =
-        false;
-
-      this.elements.qualityBanner.textContent =
-        "RECONNECTING — restoring the same round and partner…";
-    }
-
+    this._hideQualityBanner();
     if (this.elements.disconnectNotificationBanner) {
-      this.elements.disconnectNotificationBanner.textContent =
-        "You got disconnected. Please refresh the page if your connection does not restore.";
-      this.elements.disconnectNotificationBanner.hidden = false;
+      this.elements.disconnectNotificationBanner.hidden = true;
+      this.elements.disconnectNotificationBanner.textContent = "";
     }
-
-    if (
-      this.elements.statusFooter
-    ) {
-      this.elements.statusFooter.textContent =
-        "Please wait. We're restoring your date.";
-    }
+    this._setAlert("Your connection dropped. Stay on this page. We're putting you back on this date.");
   }
 
   _bindOnlineListener() {
