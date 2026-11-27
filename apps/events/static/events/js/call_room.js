@@ -1604,6 +1604,7 @@ export class CallRoomController {
     }
     if (!visible && this.elements.pairChatLog) {
       this.elements.pairChatLog.textContent = "";
+      this.elements.pairChatPanel?.classList.remove("has-messages");
     }
   }
 
@@ -1616,6 +1617,7 @@ export class CallRoomController {
     line.textContent = `${senderLabel}: ${text}`;
     this.elements.pairChatLog.appendChild(line);
     this.elements.pairChatLog.scrollTop = this.elements.pairChatLog.scrollHeight;
+    this.elements.pairChatPanel?.classList.add("has-messages");
   }
 
   _onPairChat(payload) {

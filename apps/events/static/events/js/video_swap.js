@@ -41,6 +41,7 @@ export function initVideoSwap(videosContainer, options = {}) {
 
   function handleTap(event) {
     // Only respond to taps that land on a video card (or a child of one).
+    if (event.target.closest("button, a, input, textarea, form")) return;
     if (event.target.closest("[data-video]")) {
       videosContainer.classList.toggle("is-swapped");
     }

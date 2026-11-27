@@ -317,48 +317,71 @@
     #remoteVideo { transform: none; }
     #introVideo { transform: none; }
 
-    /* ── Mobile-only PiP video layout ──────────────────────────────────────
-       On viewports ≤640 px the remote feed is large/primary and the local
-       feed is a small floating thumbnail.  Tapping either card swaps them.
-       The .is-swapped class is toggled by video_swap.js — no WebRTC,
-       MediaStream, or track state is touched.
-       Desktop (>640 px): none of these rules apply; the two-column grid
-       above is preserved exactly as before.
-    ────────────────────────────────────────────────────────────────────── */
     @media (max-width: 900px) {
-      body { height: 100dvh; overflow: hidden; padding: 8px; width: 100%; }
-      .room-shell { height: 100%; gap: 8px; }
-      .room-logo { width: 72px; }
-      .top-bar { padding: 8px 10px; }
+      body {
+        height: 100dvh;
+        width: 100%;
+        overflow: hidden;
+        padding: 0;
+        background: #000;
+      }
+      .room-shell {
+        height: 100dvh;
+        gap: 0;
+        position: relative;
+      }
+      .room-header {
+        position: absolute;
+        z-index: 8;
+        top: 0;
+        left: 0;
+        padding: calc(10px + env(safe-area-inset-top)) 12px 0;
+        pointer-events: none;
+      }
+      .room-logo {
+        width: 68px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgb(0 0 0 / 45%);
+      }
+      .top-bar {
+        position: absolute;
+        z-index: 8;
+        top: calc(10px + env(safe-area-inset-top));
+        right: 12px;
+        width: auto;
+        gap: 8px;
+        margin: 0;
+        padding: 6px 10px 6px 12px;
+        border: 0;
+        border-radius: 999px;
+        background: rgb(2 6 23 / 72%);
+        backdrop-filter: blur(10px);
+      }
+      .top-bar > span { font-size: 0; }
+      .badge { font-size: 0.68rem; letter-spacing: 0.02em; }
       .timer-label { display: none; }
-      .timer-value { font-size: 1.35rem; }
-      .video-card[data-video="local"] { right: 10px; bottom: 10px; }
+      .timer-block { margin: 0; }
+      .timer-value { font-size: 1.15rem; }
       .room-stage {
         display: flex;
+        flex: 1;
         flex-direction: column;
         min-height: 0;
-        flex: 1;
+        height: 100%;
       }
-      .videos { flex: 1; height: auto; min-height: 0; }
-      .room-dock { flex: 0 0 auto; }
-      .pair-chat-panel { max-height: 148px; }
-      .pair-chat-log { max-height: 56px; }
-      .leave-date-copy { display: none; }
-      .leave-date-btn { width: 100%; }
-    }
-    @media (max-width: 900px) {
       .videos {
         display: grid;
+        flex: 1;
         grid-template-columns: 1fr;
         grid-template-rows: 1fr 1fr;
-        position: relative;
+        gap: 3px;
         height: 100%;
-        gap: 8px;
-        background: transparent;
+        min-height: 0;
+        background: #000;
       }
       .video-card,
-      .video-card[data-video="remote"],
       .video-card[data-video="local"],
+      .video-card[data-video="remote"],
       .videos.is-swapped .video-card[data-video="local"],
       .videos.is-swapped .video-card[data-video="remote"] {
         position: relative;
@@ -366,9 +389,148 @@
         width: 100%;
         height: 100%;
         aspect-ratio: auto;
-        border-radius: 16px;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
       }
-      .video-card h3 { display: block; }
+      .video-card h3 {
+        top: 52px;
+        bottom: auto;
+        left: 12px;
+        display: block;
+        font-size: 0.8rem;
+      }
+      .camera-toggle {
+        top: auto;
+        right: 12px;
+        bottom: 12px;
+        min-height: 44px;
+        padding: 0.55rem 0.9rem;
+        border: 1px solid rgb(255 255 255 / 28%);
+      }
+      #qualityBanner {
+        position: absolute;
+        z-index: 3;
+        top: 92px;
+        right: 12px;
+        left: 12px;
+        margin: 0;
+        max-height: 4.6em;
+        overflow: auto;
+      }
+      .room-dock {
+        position: absolute;
+        z-index: 7;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 0 8px;
+        padding: 16px 12px calc(10px + env(safe-area-inset-bottom));
+        background: linear-gradient(transparent, rgb(2 6 23 / 88%) 24%);
+        pointer-events: none;
+      }
+      .room-dock > * { pointer-events: auto; }
+      .pair-chat-panel { grid-column: 1 / -1; grid-row: 1; margin-bottom: 8px; }
+      .status-footer { grid-column: 1; grid-row: 2; align-self: center; margin: 0; text-align: left; }
+      .leave-date-wrapper { grid-column: 2; grid-row: 2; justify-self: end; }
+      .pair-chat-panel {
+        max-height: none;
+        padding: 8px;
+        border: 0;
+        border-radius: 16px;
+        background: rgb(15 23 42 / 92%);
+      }
+      .pair-chat-title { display: none; }
+      .pair-chat-log {
+        max-height: 0;
+        margin: 0;
+        overflow: hidden;
+      }
+      .pair-chat-panel.has-messages .pair-chat-log,
+      .pair-chat-panel:focus-within .pair-chat-log {
+        max-height: 24dvh;
+        margin-bottom: 8px;
+        overflow-y: auto;
+      }
+      .pair-chat-form input { min-width: 0; min-height: 44px; }
+      .pair-chat-form button { flex: none; min-height: 44px; }
+      .room-dock { width: 100%; min-width: 0; }
+      .status-footer { min-width: 0; }
+      .leave-date-copy { display: none; }
+      .leave-date-btn {
+        width: auto;
+        min-height: 40px;
+        padding: 0.45rem 0.9rem;
+        justify-content: center;
+        border-radius: 999px;
+      }
+      .status-footer {
+        color: #f8fafc;
+        font-size: 0.95rem;
+        font-weight: 650;
+        text-shadow: 0 1px 2px #000;
+      }
+      #mediaErrorBanner,
+      #serverWaitingBanner,
+      #partnerGoneBanner,
+      #disconnectNotificationBanner {
+        position: absolute;
+        z-index: 9;
+        top: calc(58px + env(safe-area-inset-top));
+        right: 12px;
+        left: 12px;
+        max-height: 28dvh;
+        margin: 0;
+        overflow: auto;
+      }
+      .standby-mainroom-banner {
+        margin: calc(72px + env(safe-area-inset-top)) 12px 12px;
+        padding: 1rem;
+      }
+      .standby-message { font-size: 0.95rem; }
+      .break-banner:not([hidden]) {
+        top: auto;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        height: auto;
+        max-height: 82dvh;
+        padding: 1.1rem 1rem calc(1rem + env(safe-area-inset-bottom));
+        border-radius: 22px 22px 0 0;
+      }
+      .round-feedback-panel label { font-size: 1.2rem; }
+      .round-feedback-rating button {
+        width: 52px;
+        height: 52px;
+        font-size: 2.3rem;
+      }
+      .interest-backdrop {
+        align-items: flex-end;
+        padding: 0;
+      }
+      .interest-dialog {
+        width: 100%;
+        max-height: 88dvh;
+        border-right: 0;
+        border-bottom: 0;
+        border-left: 0;
+        border-radius: 22px 22px 0 0;
+        padding: 1.15rem 1rem calc(1rem + env(safe-area-inset-bottom));
+      }
+      .intro-backdrop { align-items: end; padding: 0; }
+      .leave-date-modal-card,
+      .intro-dialog {
+        width: 100%;
+        border-radius: 22px 22px 0 0;
+        padding: 1.15rem 1rem calc(1rem + env(safe-area-inset-bottom));
+      }
+      .leave-date-modal-card > div {
+        flex-direction: column !important;
+      }
+      .leave-date-modal-card button { width: 100%; min-height: 48px; }
     }
 
     .status-footer {
@@ -645,6 +807,53 @@
       line-height: 1.15;
     }
     .waiting-note { margin-bottom: 0; font-size: 0.9rem; }
+
+    @media (max-width: 900px) {
+      .status-footer {
+        color: #f8fafc;
+        font-size: 0.92rem;
+        font-weight: 650;
+        text-align: left;
+        text-shadow: 0 1px 2px #000;
+      }
+      .leave-date-btn {
+        border-radius: 999px;
+        padding: 0.45rem 0.9rem;
+      }
+      .interest-backdrop {
+        align-items: flex-end;
+        justify-content: stretch;
+        padding: 0;
+      }
+      .intro-backdrop {
+        align-items: end;
+        justify-items: stretch;
+        padding: 0;
+      }
+      .interest-dialog,
+      .leave-date-modal-card,
+      .intro-dialog {
+        width: 100%;
+        max-width: none;
+        border-right: 0;
+        border-bottom: 0;
+        border-left: 0;
+        border-radius: 22px 22px 0 0;
+        padding: 1.15rem 1rem calc(1rem + env(safe-area-inset-bottom));
+      }
+      .interest-dialog { max-height: 88dvh; }
+    }
+
+    @media (max-width: 900px) and (orientation: landscape) {
+      .videos {
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: 1fr;
+      }
+      .video-card[data-video="local"] h3 { top: 52px; }
+      .video-card[data-video="remote"] h3 { top: 12px; }
+      .camera-toggle { top: auto; bottom: 108px; }
+      .room-dock { padding-top: 8px; }
+    }
   </style>
 </head>
 <body>
