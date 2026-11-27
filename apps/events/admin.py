@@ -28,6 +28,7 @@ from django.utils import timezone
 from apps.registration.services.email_service import EmailService
 
 from .auth import scheduled_event_end
+from .live_matching import live_room_snapshot
 from .presence import get_online_participant_ids
 from .countries import COUNTRY_NAMES
 from .email_notifications import send_event_access_email_manually
@@ -673,10 +674,17 @@ class EventAdmin(admin.ModelAdmin):
             .order_by("-performed_at")[:20]
         )
         pairs = []
+        room_snapshot = live_room_snapshot(event, now)
         if active_round:
-            pairs = active_round.pairs.select_related(
-                "participant_a", "participant_b"
-            ).all()
+            pairs = list(
+                active_round.pairs.select_related(
+                    "participant_a", "participant_b"
+                ).all()
+            )
+            for pair in pairs:
+                pair.monitor_state = room_snapshot["pair_states"].get(
+                    str(pair.pk), pair.status
+                )
 
         ev_conf = event.participants.filter(registration_status=RegistrationStatus.CONFIRMED)
         tot_c = ev_conf.count()
@@ -721,6 +729,7 @@ class EventAdmin(admin.ModelAdmin):
             "active_round": active_round,
             "action_logs": action_logs,
             "pairs": pairs,
+            "room_snapshot": room_snapshot,
             "event_attendance": event_attendance,
             "disconnected_participants": disconnected_participants,
             "search_query": search_query,

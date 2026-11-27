@@ -98,8 +98,9 @@ afterEach(() => {
 test("protocol disconnected maps to a user-facing partner-left state", () => {
   assert.equal(partnerPresenceFromProtocol("disconnected"), "gone");
   assert.equal(partnerPresenceFromProtocol("connected"), "connected");
-  assert.match(partnerLeftBanner("Sara"), /Sara left/);
-  assert.match(PARTNER_GONE_FOOTER, /round timer continues/);
+  assert.match(partnerLeftBanner("Sara"), /Sara's connection dropped/);
+  assert.match(partnerLeftBanner("Sara"), /1 minute/);
+  assert.match(PARTNER_GONE_FOOTER, /set up your next date/);
   assert.doesNotMatch(partnerLeftBanner("Sara"), /error|websocket|ICE/i);
 });
 
@@ -123,7 +124,7 @@ test("long absence shows partner left while the same round timer keeps ticking",
   assert.ok(controller._timerInterval);
   assert.equal(elements.connectionBadge.textContent, "PARTNER LEFT");
   assert.equal(elements.connectionBadge.dataset.quality, "partner-gone");
-  assert.match(elements.partnerGoneBanner.textContent, /Sara left/);
+  assert.match(elements.partnerGoneBanner.textContent, /Sara's connection dropped/);
   assert.equal(elements.statusFooter.textContent, PARTNER_GONE_FOOTER);
   assert.equal(elements.errorBanner.hidden, true);
   assert.equal(elements.remoteVideo.srcObject, null);
@@ -168,7 +169,7 @@ test("partner return restores the same assignment without starting over", () => 
   assert.equal(controller.partner.partnerId, "partner-b");
   assert.equal(controller.roundEndTs, roundEndTs);
   assert.equal(elements.partnerGoneBanner.hidden, true);
-  assert.equal(elements.statusFooter.textContent, "Round in progress");
+  assert.equal(elements.statusFooter.textContent, "Sara is back. Continue your date.");
   controller.disconnect();
 });
 

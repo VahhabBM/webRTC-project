@@ -1,9 +1,12 @@
 """Dispatch live allocations and truthful waiting states without resetting calls."""
 
+from datetime import timedelta
+
 from django.core.cache import cache
 from django.utils import timezone
 
 from apps.events.live_matching import reconcile_live_round
+from apps.events.models import Pair, PairStatus
 from apps.events.orchestrator import (
     OrchestratorRealtime,
     datetime_to_unix_ms,
@@ -15,6 +18,8 @@ from apps.protocol.schemas import build_server_waiting
 
 WAIT_MESSAGES = {
     "partner_left": "Your partner is no longer available. We are looking for another compatible person who is online.",
+    "waiting_next_round": "Your date is complete. Your next date starts with the next round.",
+    "looking_for_date": "We're finding your next date. Please stay here.",
     "limit_reached": "You have completed your dates for tonight. You will not receive any more dates. We hope you have a wonderful night!",
     "no_compatible_partner": "No new compatible partner is available right now. We will check again automatically.",
     "waiting_for_partner": "You are ready. We are waiting for another compatible person to be online. We will check again automatically.",
@@ -47,7 +52,26 @@ def dispatch_live_event(event, *, now=None):
     waiting = dict(allocations["waiting"])
     for pid in allocations["cancelled_participant_ids"]:
         if pid in allocations["online_ids"] and pid not in new_participants:
-            waiting[pid] = "partner_left"
+            waiting.setdefault(pid, "partner_left")
+    for pid, info in (allocations.get("holding") or {}).items():
+        name = (info or {}).get("name") or "Your partner"
+        key = f"live:hold:{event.pk}:{pid}"
+        if not cache.add(key, True, timeout=70):
+            continue
+        orch._publish(
+            participant_channel_group(pid),
+            build_server_waiting(
+                reason="partner_holding",
+                round_number=round_obj.number,
+                server_ts=stamp,
+                next_check_ts=stamp + 60000,
+                message=(
+                    f"{name}'s connection dropped. We'll hold this date for 1 minute. "
+                    f"If {name} comes back in time, you'll continue together. "
+                    "If not, we'll match you with your next date."
+                ),
+            ),
+        )
     for pid, reason in waiting.items():
         key = f"live:wait:{event.pk}:{round_obj.pk}:{pid}:{reason}"
         if cache.add(key, True, timeout=10):
@@ -90,4 +114,21 @@ def dispatch_live_event(event, *, now=None):
             )
     result["allocated"] = len(rooms)
     result["waiting"] = len(waiting)
+    _publish_recovery_interest(orch, event, now)
     return result
+
+
+def _publish_recovery_interest(orch, event, now) -> None:
+    """A recovery date can end after its round, so the round-end prompt would be late."""
+    ended = Pair.objects.filter(
+        event=event,
+        recovery=True,
+        status=PairStatus.COMPLETED,
+        date_ends_at__lte=now,
+        date_ends_at__gte=now - timedelta(seconds=60),
+    ).select_related("participant_a", "participant_b", "round", "interest")
+    for pair in ended:
+        if not cache.add(f"live:recovery-interest:{pair.pk}", True, timeout=120):
+            continue
+        for group, message in orch.recovery_interest_jobs(pair, now=now):
+            orch._publish(group, message)

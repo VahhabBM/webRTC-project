@@ -41,7 +41,8 @@ def _choice_window(pair):
         )
         if left_at is not None:
             return left_at, left_at + INTEREST_RESPONSE_WINDOW
-    return pair.round.ends_at, pair.round.ends_at + INTEREST_RESPONSE_WINDOW
+    end = pair.date_ends_at or pair.round.ends_at
+    return end, end + INTEREST_RESPONSE_WINDOW
 
 
 def submit_pair_interest(

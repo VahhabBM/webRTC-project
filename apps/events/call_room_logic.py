@@ -42,10 +42,8 @@ RECONNECT_MAX_DELAY_MS = 4000
 RECONNECT_WINDOW_MS = 60_000
 
 # Longer than T-33's 5–20s recovery window so a brief drop is not "partner left" (T-34).
-PARTNER_ABSENCE_GRACE_MS = 25_000
-PARTNER_GONE_FOOTER = (
-    "Your partner left. The round timer continues — no replacement will be assigned."
-)
+PARTNER_ABSENCE_GRACE_MS = 60_000
+PARTNER_GONE_FOOTER = "Please stay here while we set up your next date."
 
 _KEEP_ROUND_ON_TRANSIENT_DISCONNECT = frozenset(
     {
@@ -79,7 +77,11 @@ def reconnect_window_exhausted(
 
 def partner_left_banner(name: str = "Partner") -> str:
     """Banner message shown during absence grace window before partner is marked gone."""
-    return f"{name} left. Waiting for them to return — the round continues."
+    return (
+        f"{name}'s connection dropped. We'll hold this date for 1 minute. "
+        f"If {name} comes back in time, you'll continue together. "
+        "If not, we'll match you with your next date."
+    )
 
 
 def absence_grace_elapsed(

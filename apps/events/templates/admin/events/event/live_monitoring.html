@@ -61,55 +61,22 @@
         </div>
     </div>
 
-    <!-- Participant Search Bar -->
-    <div class="module" style="background:#f8f9fa; border:1px solid #ddd; padding:15px; margin-bottom:20px; border-radius:4px;">
-        <h2>🔍 Participant Lookup (Phone Support)</h2>
-        <form method="get" style="display:flex; gap:10px; align-items:center;">
-            <input type="text" name="q" value="{{ search_query }}" placeholder="Search by name or email..." style="flex:1; padding:8px; font-size:14px; border:1px solid #ccc; border-radius:4px;">
-            <button type="submit" class="button default">Search</button>
-            {% if search_query %}
-                <a href="?" class="button">Clear</a>
-            {% endif %}
-        </form>
-
-        {% if search_query %}
-        <div style="margin-top:15px;">
-            <h3>Search Results for: "{{ search_query }}"</h3>
-            {% if search_results %}
-                {% for p in search_results %}
-                <div style="border:1px solid #ccc; padding:12px; margin-bottom:10px; background:#fff; border-radius:4px;">
-                    <strong>{{ p.display_name }}</strong> ({{ p.email|default:"No Email" }}) — 
-                    Current Status: <span class="badge {{ p.status }}">{{ p.get_status_display }}</span>
-                    
-                    <h4 style="margin-top:10px; margin-bottom:5px;">Connection & Disconnection History:</h4>
-                    <ul>
-                      {% for d in p.disconnection_logs.all %}
-                        <li>
-                        Disconnected at <strong>{{ d.disconnected_at|date:"H:i:s" }}</strong> | 
-                        Cause: <span class="badge cause-{{ d.cause }}">{{ d.get_cause_display }}</span>
-                        {% if d.reconnected_at %}| Reconnected: {{ d.reconnected_at|date:"H:i:s" }}{% else %}| <span style="color:red;">Still Disconnected</span>{% endif %}
-                        </li>
-                      {% empty %}
-                        <li>No disconnection history recorded.</li>
-                      {% endfor %}
-                    </ul>
-
-                    <details style="margin-top:10px;">
-                     <summary style="cursor:pointer; color:#0066cc;">📝 Add Incident Note for Participant</summary>
-                      <form method="post" style="margin-top:8px;">
-                        {% csrf_token %}
-                        <input type="hidden" name="participant_id" value="{{ p.id }}">
-                        <textarea name="note" rows="2" style="width:100%; padding:6px; border:1px solid #ccc; border-radius:4px;" placeholder="Reason provided by user via phone call..." required></textarea>
-                        <button type="submit" class="button default" style="margin-top:5px;">Save Note to Report</button>
-                      </form>
-                    </details>
-                </div>
-                {% endfor %}
-            {% else %}
-                <p>No participants found matching this criteria.</p>
-            {% endif %}
-        </div>
-        {% endif %}
+    <!-- Connection counts -->
+    <div class="module" style="background:#fff; border:1px solid #ccc; padding:15px; margin-bottom:20px; border-radius:4px;">
+        <h2>Connection</h2>
+        <p>
+            Connected: <strong>{{ room_snapshot.connected_count }}</strong> ({{ room_snapshot.connected_percent }})
+            |
+            Disconnected: <strong>{{ room_snapshot.disconnected_count }}</strong> ({{ room_snapshot.disconnected_percent }})
+            of {{ room_snapshot.confirmed_count }} confirmed
+        </p>
+        <p>
+            On a date: {{ room_snapshot.states.on_date }}
+            | Holding for reconnect: {{ room_snapshot.states.holding }}
+            | Waiting for the next round: {{ room_snapshot.states.waiting_next_round }}
+            | Looking for a full date: {{ room_snapshot.states.looking_for_date }}
+            | 6-minute recovery date: {{ room_snapshot.states.recovery }}
+        </p>
     </div>
 
     <!-- Currently Disconnected Participants Table -->
@@ -160,6 +127,7 @@
              <th style="padding:8px; border:1px solid #ddd;">Participant A</th>
              <th style="padding:8px; border:1px solid #ddd;">Participant B</th>
              <th style="padding:8px; border:1px solid #ddd;">Status</th>
+             <th style="padding:8px; border:1px solid #ddd;">Date state</th>
             </tr>
             {% for pair in pairs %}
             <tr>
@@ -167,10 +135,11 @@
              <td style="padding:8px; border:1px solid #ddd;">{{ pair.participant_a.display_name }}</td>
              <td style="padding:8px; border:1px solid #ddd;">{{ pair.participant_b.display_name }}</td>
              <td style="padding:8px; border:1px solid #ddd;">{{ pair.status }}</td>
+             <td style="padding:8px; border:1px solid #ddd;">{{ pair.monitor_state }}</td>
             </tr>
             {% empty %}
             <tr>
-             <td colspan="4" style="padding:12px; text-align:center;">No pairs in this round.</td>
+             <td colspan="5" style="padding:12px; text-align:center;">No pairs in this round.</td>
             </tr>
             {% endfor %}
         </table>
@@ -178,20 +147,20 @@
 
     <!-- Recent Operator Actions Log -->
     <div class="module" style="background:#fff; border:1px solid #ccc; padding:15px; border-radius:4px;">
-        <h2>📋 Recent Operator Actions</h2>
+        <h2>Admin actions</h2>
         <table style="width:100%; border-collapse:collapse; text-align:left;">
             <tr style="background:#eee;">
              <th style="padding:8px; border:1px solid #ddd;">Time</th>
              <th style="padding:8px; border:1px solid #ddd;">Action</th>
              <th style="padding:8px; border:1px solid #ddd;">Round</th>
-             <th style="padding:8px; border:1px solid #ddd;">Operator</th>
+             <th style="padding:8px; border:1px solid #ddd;">By</th>
             </tr>
-            {% for log in recent_logs %}
+            {% for log in action_logs %}
             <tr>
-             <td style="padding:8px; border:1px solid #ddd;">{{ log.timestamp|date:"H:i:s" }}</td>
-             <td style="padding:8px; border:1px solid #ddd;">{{ log.action }}</td>
+             <td style="padding:8px; border:1px solid #ddd;">{{ log.performed_at|date:"H:i:s" }}</td>
+             <td style="padding:8px; border:1px solid #ddd;">{{ log.get_action_display }}</td>
              <td style="padding:8px; border:1px solid #ddd;">{{ log.round.number|default:"—" }}</td>
-             <td style="padding:8px; border:1px solid #ddd;">{{ log.operator|default:"System" }}</td>
+             <td style="padding:8px; border:1px solid #ddd;">Admin</td>
             </tr>
             {% empty %}
             <tr>
@@ -200,5 +169,55 @@
             {% endfor %}
         </table>
     </div>
+    <div class="module" id="participant-lookup" style="background:#f8f9fa; border:1px solid #ddd; padding:15px; margin-top:20px; border-radius:4px;">
+        <h2>Participant Lookup (Phone Support)</h2>
+        <form method="get" style="display:flex; gap:10px; align-items:center;">
+            <input type="text" name="q" value="{{ search_query }}" placeholder="Search by name or email..." style="flex:1; padding:8px; font-size:14px; border:1px solid #ccc; border-radius:4px;">
+            <button type="submit" class="button default">Search</button>
+            {% if search_query %}
+                <a href="?" class="button">Clear</a>
+            {% endif %}
+        </form>
+
+        {% if search_query %}
+        <div style="margin-top:15px;">
+            <h3>Search Results for: "{{ search_query }}"</h3>
+            {% if search_results %}
+                {% for p in search_results %}
+                <div style="border:1px solid #ccc; padding:12px; margin-bottom:10px; background:#fff; border-radius:4px;">
+                    <strong>{{ p.display_name }}</strong> ({{ p.email|default:"No Email" }}) — 
+                    Current Status: <span class="badge {{ p.status }}">{{ p.get_status_display }}</span>
+                    
+                    <h4 style="margin-top:10px; margin-bottom:5px;">Connection & Disconnection History:</h4>
+                    <ul>
+                      {% for d in p.disconnection_logs.all %}
+                        <li>
+                        Disconnected at <strong>{{ d.disconnected_at|date:"H:i:s" }}</strong> | 
+                        Cause: <span class="badge cause-{{ d.cause }}">{{ d.get_cause_display }}</span>
+                        {% if d.reconnected_at %}| Reconnected: {{ d.reconnected_at|date:"H:i:s" }}{% else %}| <span style="color:red;">Still Disconnected</span>{% endif %}
+                        </li>
+                      {% empty %}
+                        <li>No disconnection history recorded.</li>
+                      {% endfor %}
+                    </ul>
+
+                    <details style="margin-top:10px;">
+                     <summary style="cursor:pointer; color:#0066cc;">📝 Add Incident Note for Participant</summary>
+                      <form method="post" style="margin-top:8px;">
+                        {% csrf_token %}
+                        <input type="hidden" name="participant_id" value="{{ p.id }}">
+                        <textarea name="note" rows="2" style="width:100%; padding:6px; border:1px solid #ccc; border-radius:4px;" placeholder="Reason provided by user via phone call..." required></textarea>
+                        <button type="submit" class="button default" style="margin-top:5px;">Save Note to Report</button>
+                      </form>
+                    </details>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p>No participants found matching this criteria.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+
 </div>
 {% endblock %}

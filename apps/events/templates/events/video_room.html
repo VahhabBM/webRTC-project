@@ -114,24 +114,39 @@
       font-weight: 700;
       color: #fef08a;
     }
+    .break-banner:not([hidden]) {
+      position: fixed;
+      z-index: 40;
+      left: 16px;
+      right: 16px;
+      top: 12px;
+      height: 50dvh;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: auto;
+    }
     .round-feedback-panel {
-      margin-top: 1rem;
+      margin-top: 0.75rem;
       padding-top: 0.75rem;
       border-top: 1px solid rgba(255,255,255,0.25);
-      text-align: left;
-      font-size: 0.9rem;
+      text-align: center;
+      font-size: 1.15rem;
     }
-    .round-feedback-panel label { display: block; margin-bottom: 0.35rem; }
-    .round-feedback-rating { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .round-feedback-panel label { display: block; margin-bottom: 0.6rem; font-size: 1.35rem; font-weight: 700; }
+    .round-feedback-rating { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-bottom: 0.75rem; }
     .round-feedback-rating button {
-      background: rgba(255,255,255,0.15);
-      border: 1px solid rgba(255,255,255,0.35);
-      color: #fff;
-      border-radius: 6px;
-      padding: 4px 10px;
+      background: transparent;
+      border: none;
+      color: rgba(255,255,255,0.45);
+      font-size: 2.6rem;
+      line-height: 1;
+      width: 56px;
+      height: 56px;
       cursor: pointer;
     }
-    .round-feedback-rating button.selected { background: #fef08a; color: #1e3a8a; font-weight: 700; }
+    .round-feedback-rating button.selected { color: #fbbf24; }
   .pair-chat-panel {
       flex: 1;
       min-height: 0;
@@ -248,7 +263,7 @@
 
     .videos {
       display: grid;
-      grid-template-columns: 0.72fr 1.28fr;
+      grid-template-columns: 1fr 1fr;
       gap: 10px;
       min-height: 0;
       height: 100%;
@@ -276,6 +291,20 @@
       color: #fff;
       font-size: 0.85rem;
     }
+    .camera-toggle {
+      position: absolute;
+      top: 0.75rem;
+      right: 0.75rem;
+      z-index: 4;
+      border: none;
+      border-radius: 999px;
+      padding: 0.4rem 0.75rem;
+      background: rgb(15 23 42 / 82%);
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .video-card.camera-off video { opacity: 0.35; }
     video {
       width: 100%;
       height: 100%;
@@ -319,117 +348,27 @@
     }
     @media (max-width: 900px) {
       .videos {
-        display: block;
+        display: grid;
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 1fr;
         position: relative;
-        aspect-ratio: auto;
         height: 100%;
-        background: #000;
-        border-radius: 16px;
-        overflow: hidden;
-        gap: 0;
-        /* Eliminates Chrome's 300 ms double-tap-zoom delay */
-        touch-action: manipulation;
-      }
-
-      .video-card {
-        position: absolute;
+        gap: 8px;
         background: transparent;
-        padding: 0;
-        border-radius: 0;
-        overflow: hidden;
-        text-align: left;
       }
-
-      /* Remote (partner) is the large primary view by default */
-      .video-card[data-video="remote"] {
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        z-index: 1;
-        cursor: default;
-      }
-
-      /* Local (you) is the small PiP thumbnail by default */
-      .video-card[data-video="local"] {
-        bottom: 12px;
-        right: 12px;
-        width: 28%;
-        aspect-ratio: 3 / 4;
-        top: auto;
-        left: auto;
-        z-index: 2;
-        cursor: pointer;
-        border-radius: 8px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
-        border: 2px solid rgba(255, 255, 255, 0.25);
-      }
-
-      /* Swapped: local becomes large primary */
-      .videos.is-swapped .video-card[data-video="local"] {
-        top: 0;
-        left: 0;
-        bottom: auto;
-        right: auto;
-        width: 100%;
-        height: 100%;
-        z-index: 1;
-        cursor: default;
-        border-radius: 0;
-        box-shadow: none;
-        border: none;
-        aspect-ratio: auto;
-      }
-
-      /* Swapped: remote becomes small PiP thumbnail */
+      .video-card,
+      .video-card[data-video="remote"],
+      .video-card[data-video="local"],
+      .videos.is-swapped .video-card[data-video="local"],
       .videos.is-swapped .video-card[data-video="remote"] {
-        top: auto;
-        left: auto;
-        bottom: 0.75rem;
-        right: 0.75rem;
-        width: 28%;
-        aspect-ratio: 3 / 4;
-        height: auto;
-        z-index: 2;
-        cursor: pointer;
-        border-radius: 8px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
-        border: 2px solid rgba(255, 255, 255, 0.25);
-      }
-
-      /* Videos fill their card completely */
-      .video-card video {
+        position: relative;
+        inset: auto;
         width: 100%;
         height: 100%;
-        max-height: none;
-        object-fit: cover;
-        /* Prevent Chrome composited-layer video elements from swallowing
-           pointer events; taps are handled by the .video-card wrapper. */
-        pointer-events: none;
+        aspect-ratio: auto;
+        border-radius: 16px;
       }
-
-      /* Hide the h3 label in the PiP thumbnail; show it in the primary view */
-      .video-card[data-video="local"] h3,
-      .videos.is-swapped .video-card[data-video="remote"] h3 {
-        display: none;
-      }
-
-      .video-card[data-video="remote"] h3,
-      .videos.is-swapped .video-card[data-video="local"] h3 {
-        position: absolute;
-        top: 0.5rem;
-        left: 0.75rem;
-        margin: 0;
-        z-index: 3;
-        font-size: 0.8rem;
-        color: rgba(255, 255, 255, 0.85);
-        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
-      }
-
-      /* Hide quality banner when remote is the PiP thumbnail */
-      .videos.is-swapped #qualityBanner {
-        display: none !important;
-      }
+      .video-card h3 { display: block; }
     }
 
     .status-footer {
@@ -769,13 +708,13 @@
         Your next date will start in <span id="breakCountdown">02:00</span>.
       </div>
       <div id="roundFeedbackPanel" class="round-feedback-panel" hidden>
-        <label>Optional: how was this date?</label>
-        <div id="roundFeedbackRating" class="round-feedback-rating" role="group" aria-label="Rating 1 to 5">
-          <button type="button" data-rating="1">1</button>
-          <button type="button" data-rating="2">2</button>
-          <button type="button" data-rating="3">3</button>
-          <button type="button" data-rating="4">4</button>
-          <button type="button" data-rating="5">5</button>
+        <label>How was this date?</label>
+        <div id="roundFeedbackRating" class="round-feedback-rating" role="group" aria-label="Rating from 1 to 5 stars">
+          <button type="button" data-rating="1" aria-label="1 star">★</button>
+          <button type="button" data-rating="2" aria-label="2 stars">★</button>
+          <button type="button" data-rating="3" aria-label="3 stars">★</button>
+          <button type="button" data-rating="4" aria-label="4 stars">★</button>
+          <button type="button" data-rating="5" aria-label="5 stars">★</button>
         </div>
         <textarea id="roundFeedbackComment" rows="2" maxlength="500" placeholder="Short comment (optional)" style="width:100%;margin-bottom:8px;border-radius:6px;padding:6px;"></textarea>
         <button id="roundFeedbackSubmit" type="button" style="padding:6px 14px;border-radius:6px;border:none;background:#fef08a;color:#1e3a8a;font-weight:700;cursor:pointer;">Send feedback</button>
@@ -796,6 +735,7 @@
   <div class="videos">
     <div class="video-card" data-video="local">
       <h3>You</h3>
+      <button id="cameraToggle" class="camera-toggle" type="button" aria-pressed="true">Camera on</button>
       <video id="localVideo" autoplay playsinline muted></video>
     </div>
     <div class="video-card" data-video="remote">
@@ -901,6 +841,7 @@
       escalationTimeoutMs: mediaFallbackEscalationTimeoutMs,
       elements: {
         localVideo: document.getElementById('localVideo'),
+        cameraButton: document.getElementById('cameraToggle'),
         remoteVideo: document.getElementById('remoteVideo'),
         timerDisplay: document.getElementById('timerDisplay'),
         timerContainer: document.getElementById('timerContainer'),
@@ -1091,7 +1032,9 @@
       ratingWrap.querySelectorAll('button[data-rating]').forEach((btn) => {
         btn.addEventListener('click', () => {
           selectedRoundRating = Number(btn.dataset.rating);
-          ratingWrap.querySelectorAll('button').forEach((b) => b.classList.toggle('selected', b === btn));
+          ratingWrap.querySelectorAll('button').forEach((b) => {
+            b.classList.toggle('selected', Number(b.dataset.rating) <= selectedRoundRating);
+          });
         });
       });
     }

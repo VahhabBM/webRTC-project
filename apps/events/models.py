@@ -390,6 +390,11 @@ class Pair(models.Model):
     live_allocated = models.BooleanField(default=False)
     media_received_a = models.BooleanField(default=False)
     media_received_b = models.BooleanField(default=False)
+    # When both sides first had media. Talk time is measured from here.
+    talk_started_at = models.DateTimeField(null=True, blank=True)
+    # Set only for a 6-minute recovery date. Null means the round clock.
+    date_ends_at = models.DateTimeField(null=True, blank=True)
+    recovery = models.BooleanField(default=False)
 
     # T-53: Path Type Tracking (Direct vs TURN)
     path_type = models.CharField(

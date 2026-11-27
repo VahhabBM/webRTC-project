@@ -84,6 +84,19 @@ def current_pair_for_participant(
     current = now if now is not None else timezone.now()
     if timezone.is_naive(current):
         current = timezone.make_aware(current, UTC)
+    recovery = (
+        Pair.objects.filter(
+            event_id=event.pk,
+            recovery=True,
+            date_ends_at__gt=current,
+            status__in=("pending", "active"),
+        )
+        .filter(Q(participant_a=participant) | Q(participant_b=participant))
+        .select_related("participant_a", "participant_b", "round")
+        .first()
+    )
+    if recovery:
+        return recovery
     phase, active_round, _remaining = RoundScheduler(event).get_current_phase(current)
     if not active_round or phase not in (EventPhase.PRECONNECT, EventPhase.IN_ROUND, EventPhase.PAUSED):
         return None
@@ -139,6 +152,7 @@ class PairingRecipient:
     partner_display_name: str
     partner_tags: tuple[str, ...]
     group: str
+    ends_at: datetime | None = None
 
 
 def select_pairing_recipients(round_obj: Round) -> list[PairingRecipient]:
@@ -162,6 +176,7 @@ def select_pairing_recipients(round_obj: Round) -> list[PairingRecipient]:
         tags_b = tuple(pair.participant_b.tags.values_list("name", flat=True))
         pid_a = str(pair.participant_a_id)
         pid_b = str(pair.participant_b_id)
+        ends_at = pair.date_ends_at or round_obj.ends_at
         recipients.append(
             PairingRecipient(
                 participant_id=pid_a,
@@ -171,6 +186,7 @@ def select_pairing_recipients(round_obj: Round) -> list[PairingRecipient]:
                 partner_display_name=pair.participant_b.display_name,
                 partner_tags=tags_b,
                 group=participant_channel_group(pid_a),
+                ends_at=ends_at,
             )
         )
         recipients.append(
@@ -182,6 +198,7 @@ def select_pairing_recipients(round_obj: Round) -> list[PairingRecipient]:
                 partner_display_name=pair.participant_a.display_name,
                 partner_tags=tags_a,
                 group=participant_channel_group(pid_b),
+                ends_at=ends_at,
             )
         )
     return recipients
@@ -330,7 +347,7 @@ class OrchestratorRealtime:
             partner_id=recipient.partner_id,
             is_offerer=recipient.is_offerer,
             round_start_ts=datetime_to_unix_ms(round_obj.starts_at),
-            round_end_ts=datetime_to_unix_ms(round_obj.ends_at),
+            round_end_ts=datetime_to_unix_ms(recipient.ends_at or round_obj.ends_at),
             partner_display_name=recipient.partner_display_name,
             partner_tags=list(recipient.partner_tags),
         )
@@ -700,6 +717,8 @@ class OrchestratorRealtime:
         )
         jobs = []
         for pair in pairs:
+            if pair.date_ends_at and pair.date_ends_at > current:
+                continue
             choice = getattr(pair, "interest", None)
             for participant, partner, is_a in (
                 (pair.participant_a, pair.participant_b, True),
@@ -727,6 +746,43 @@ class OrchestratorRealtime:
                     partner_whatsapp=(partner.whatsapp or "") if mutual else None,
                 )
                 jobs.append((participant_channel_group(participant.pk), prompt))
+        return jobs
+
+    def recovery_interest_jobs(self, pair: Pair, *, now: datetime | None = None):
+        """Interest prompt for one recovery date, timed from its own end."""
+        current = self._now(now)
+        if not pair.date_ends_at:
+            return []
+        deadline = pair.date_ends_at + INTEREST_RESPONSE_WINDOW
+        if current < pair.date_ends_at or current > deadline:
+            return []
+        choice = getattr(pair, "interest", None)
+        jobs = []
+        for participant, partner, is_a in (
+            (pair.participant_a, pair.participant_b, True),
+            (pair.participant_b, pair.participant_a, False),
+        ):
+            own_response = None
+            if choice is not None:
+                own_response = (
+                    choice.participant_a_interested
+                    if is_a
+                    else choice.participant_b_interested
+                )
+            if own_response is False:
+                continue
+            mutual = bool(choice and choice.is_mutual)
+            prompt = build_server_interest_prompt(
+                round_number=pair.round.number,
+                room_id=pair.room_id,
+                partner_display_name=partner.display_name,
+                server_ts=self._server_ts_ms(current),
+                deadline_ts=datetime_to_unix_ms(deadline),
+                own_response=own_response,
+                mutual=mutual,
+                partner_whatsapp=(partner.whatsapp or "") if mutual else None,
+            )
+            jobs.append((participant_channel_group(participant.pk), prompt))
         return jobs
 
     def interest_result_jobs(

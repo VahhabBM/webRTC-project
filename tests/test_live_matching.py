@@ -253,7 +253,8 @@ def test_reconnect_grace_preserves_then_cancels_and_requeues(live_event):
     created.refresh_from_db()
     assert created.status == PairStatus.PENDING
 
-    result = reconcile_live_round(event, round_obj, now=now + timedelta(seconds=17))
+    _ready(male, now=now + timedelta(seconds=62))
+    result = reconcile_live_round(event, round_obj, now=now + timedelta(seconds=62))
     created.refresh_from_db()
     assert created.status == PairStatus.CANCELLED
     assert result["cancelled_participant_ids"] == {str(male.pk), str(female.pk)}
@@ -316,7 +317,8 @@ def test_established_call_absence_grace_releases_online_counterpart(live_event):
     assert pair.status == PairStatus.ACTIVE
     assert grace["cancelled_participant_ids"] == set()
 
-    expired = reconcile_live_round(event, round_obj, now=now + timedelta(seconds=17))
+    _ready(present_female, replacement_male, now=now + timedelta(seconds=62))
+    expired = reconcile_live_round(event, round_obj, now=now + timedelta(seconds=62))
     pair.refresh_from_db()
     assert pair.status == PairStatus.CANCELLED
     assert expired["cancelled_participant_ids"] == {

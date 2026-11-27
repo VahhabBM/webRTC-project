@@ -46,14 +46,12 @@ export const CallRoomPhase = Object.freeze({
 export const RECONNECT_INITIAL_DELAY_MS = 500;
 export const RECONNECT_MAX_DELAY_MS = 4000;
 export const RECONNECT_WINDOW_MS = 60_000;
-export const PARTNER_ABSENCE_GRACE_MS = 25_000;
+export const PARTNER_ABSENCE_GRACE_MS = 60_000;
 export const PARTNER_GONE_FOOTER =
-  "Your partner left. The round timer continues — no replacement will be assigned.";
+  "Please stay here while we set up your next date.";
 
-export function partnerLeftBanner(
-  name = "Partner",
-) {
-  return `${name} got disconnected. Please wait up to 1 minute — they may reconnect. If not, you will be connected to your next date.`;
+export function partnerLeftBanner(name = "Partner") {
+  return `${name}'s connection dropped. We'll hold this date for 1 minute. If ${name} comes back in time, you'll continue together. If not, we'll match you with your next date.`;
 }
 
 export function partnerPresenceFromProtocol(
@@ -507,6 +505,41 @@ export class CallRoomController {
         this.leaveDateEarly();
       });
     }
+    if (this.elements.cameraButton) {
+      this.elements.cameraButton.addEventListener("click", () => {
+        void this.toggleCamera();
+      });
+    }
+  }
+
+  async toggleCamera() {
+    const button = this.elements.cameraButton;
+    const track = this._sharedStream?.getVideoTracks?.()[0];
+    if (this._mediaBlocked || !track) {
+      this._mediaBlocked = false;
+      this._mediaPromise = null;
+      const stream = await this.ensureLocalMedia();
+      if (!stream) return;
+      this._sendClientReady();
+      if (button) {
+        button.textContent = "Camera on";
+        button.setAttribute("aria-pressed", "true");
+      }
+      this._setGuide("Camera and microphone are on. We'll connect you when your date is ready.");
+      return;
+    }
+    track.enabled = !track.enabled;
+    const card = button?.closest?.(".video-card");
+    if (card) card.classList.toggle("camera-off", !track.enabled);
+    if (button) {
+      button.textContent = track.enabled ? "Camera on" : "Camera off";
+      button.setAttribute("aria-pressed", String(track.enabled));
+    }
+    this._setGuide(
+      track.enabled
+        ? "You're on your date."
+        : "Your camera is off. Tap it again when you want to be seen.",
+    );
   }
 
   get transport() {
@@ -1085,6 +1118,12 @@ export class CallRoomController {
     }
   }
 
+  _setGuide(text) {
+    if (this.elements.statusFooter && text) {
+      this.elements.statusFooter.textContent = text;
+    }
+  }
+
   _onServerWaiting(payload) {
     if (this._sessionInactive || this.phase === CallRoomPhase.EVENT_ENDED) return;
     const reason = String(payload.reason || "waiting_for_partner");
@@ -1113,10 +1152,27 @@ export class CallRoomController {
       this._clearStandbyCountdown();
     }
 
+    if (reason === "partner_holding") {
+      const message = payload?.message || "We'll hold this date for 1 minute.";
+      const named = String(message).match(/^(.*?)'s connection dropped/);
+      const name = named ? named[1] : (this.partner?.displayName || "your partner");
+      if (this.elements.waitingBanner) {
+        this.elements.waitingBanner.textContent = message;
+        this.elements.waitingBanner.hidden = false;
+      }
+      if (this.elements.qualityBanner) {
+        this.elements.qualityBanner.hidden = false;
+        this.elements.qualityBanner.textContent = message;
+      }
+      this._setGuide(`Please wait while ${name} reconnects.`);
+      return;
+    }
+
     const message = reason === "limit_reached"
       ? (payload?.message || "You have completed your dates for tonight. You will not receive any more dates. We hope you have a wonderful night!")
       : (payload?.message || "Waiting for your next partner. You’ll be connected automatically when someone is available.");
-    if ((reason === "partner_left" || reason === "limit_reached") && this.negotiator && this.partner) {
+    const endsCall = reason === "partner_left" || reason === "limit_reached" || reason === "waiting_next_round" || reason === "looking_for_date";
+    if (endsCall && this.negotiator && this.partner) {
       void this.negotiator.endRound?.();
       this.partner = null;
       this._updatePartnerUI();
@@ -1132,6 +1188,7 @@ export class CallRoomController {
       this.elements.waitingBanner.textContent = message;
     }
     if (this.elements.waitingBanner.hidden) this.elements.waitingBanner.hidden = false;
+    this._setGuide(message);
   }
 
   async ensureLocalMedia() {
@@ -1206,6 +1263,18 @@ export class CallRoomController {
                 } catch {}
               }
 
+              const denied =
+                err?.name === "NotAllowedError" ||
+                err?.name === "PermissionDeniedError";
+              if (denied) {
+                this._mediaBlocked = true;
+                this._setGuide("Tap the camera and microphone button to join your date.");
+                if (this.elements.cameraButton) {
+                  this.elements.cameraButton.hidden = false;
+                  this.elements.cameraButton.textContent = "Turn camera and mic on";
+                }
+                return null;
+              }
               this._showConnectionError(
                 "Could not start the camera or microphone. Check permissions and try again.",
               );
@@ -1263,6 +1332,7 @@ export class CallRoomController {
 
     this.partner =
       next;
+    if (!sameAssignment) this._dateClockEnded = false;
 
     this.roundNumber =
       this.partner.roundNumber;
@@ -1326,7 +1396,11 @@ export class CallRoomController {
     this.negotiator?.setRtcConfig?.(rtcConfig);
 
     try {
-      await this.ensureLocalMedia();
+      const stream = await this.ensureLocalMedia();
+      if (!stream) {
+        this._setGuide("Tap the camera and microphone button to join your date.");
+        return;
+      }
 
       if (!this.negotiator) {
         this.negotiator =
@@ -1394,6 +1468,7 @@ export class CallRoomController {
           this.roundNumber,
       );
 
+    this._dateClockEnded = false;
     this._setPhase(
       CallRoomPhase.IN_ROUND,
     );
@@ -1409,7 +1484,7 @@ export class CallRoomController {
       !this.isPaused
     ) {
       this.elements.statusFooter.textContent =
-        "Round in progress";
+        "You're on your date.";
     }
 
     if (this.negotiator) {
@@ -1421,6 +1496,10 @@ export class CallRoomController {
   }
 
   _onRoundWarning(payload) {
+    const nextEnd = Number(payload?.round_end_ts || 0);
+    if (this.roundEndTs && nextEnd && nextEnd + 1500 < this.roundEndTs) {
+      return;
+    }
     this.serverWarningActive =
       true;
 
@@ -1437,6 +1516,10 @@ export class CallRoomController {
   }
 
   async _onRoundEnd(payload) {
+    const serverNow = this._now() + (this.clockSync?.offsetMs || 0);
+    if (this.roundEndTs && serverNow < this.roundEndTs - 1500) {
+      return;
+    }
     this._clearEarlyExitTimer();
     this._setPairChatVisible(false);
     this.roundNumber =
@@ -1923,7 +2006,7 @@ export class CallRoomController {
     this._applyConnectionQuality("closed");
     this._clearConnectionError();
     if (this.elements.statusFooter) {
-      this.elements.statusFooter.textContent = "Event ended. Thank you for participating.";
+      this.elements.statusFooter.textContent = "The event has ended. Thank you for being here.";
     }
 
     this._intentionalClose =
@@ -2207,6 +2290,7 @@ export class CallRoomController {
         payload,
       ) || "gone";
 
+    const previousPresence = this.partnerPresence;
     this.partnerPresence =
       presence;
 
@@ -2223,8 +2307,10 @@ export class CallRoomController {
         this.elements.qualityBanner.hidden =
           false;
 
-        this.elements.qualityBanner.textContent =
-          "Partner temporarily disconnected. Please wait...";
+        const name = this.partner?.displayName || "your partner";
+        const notice = partnerLeftBanner(name);
+        this.elements.qualityBanner.textContent = notice;
+        this._setGuide(`Please wait while ${name} reconnects.`);
       }
 
       if (
@@ -2232,7 +2318,7 @@ export class CallRoomController {
           .connectionBadge
       ) {
         this.elements.connectionBadge.textContent =
-          "PARTNER RECONNECTING";
+          "PLEASE WAIT";
 
         this.elements.connectionBadge.className =
           "badge reconnecting";
@@ -2252,6 +2338,14 @@ export class CallRoomController {
       presence === "connected"
     ) {
       this._clearPartnerGone();
+      if (previousPresence === "reconnecting" || previousPresence === "gone") {
+        const name = this.partner?.displayName || "Your partner";
+        this._setGuide(`${name} is back. Continue your date.`);
+        if (this.elements.waitingBanner) {
+          this.elements.waitingBanner.textContent = `${name} is back. You'll continue this date together.`;
+          this.elements.waitingBanner.hidden = false;
+        }
+      }
     }
   }
 
@@ -2307,7 +2401,7 @@ export class CallRoomController {
       this.elements.statusFooter
     ) {
       this.elements.statusFooter.textContent =
-        "Round in progress";
+        "You're on your date.";
     }
 
     if (
@@ -3107,6 +3201,19 @@ export class CallRoomController {
       visual,
     );
 
+    if (
+      remainingMs <= 0 &&
+      this.partner &&
+      !this._dateClockEnded &&
+      this.phase === CallRoomPhase.IN_ROUND
+    ) {
+      this._dateClockEnded = true;
+      void this._onRoundEnd({
+        round_number: this.roundNumber,
+        break_duration_seconds: 0,
+      });
+    }
+
     if (this.onTimerTick) {
       this.onTimerTick({
         remainingMs,
@@ -3369,7 +3476,7 @@ export class CallRoomController {
       this.elements.statusFooter
     ) {
       this.elements.statusFooter.textContent =
-        "RECONNECTING — round timer continues";
+        "Please wait. We're restoring your date.";
     }
   }
 

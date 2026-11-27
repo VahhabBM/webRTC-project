@@ -38,6 +38,9 @@ WAITING_REASONS: frozenset[str] = frozenset(
         "limit_reached",
         "no_compatible_partner",
         "partner_left",
+        "partner_holding",
+        "waiting_next_round",
+        "looking_for_date",
         "standby_fewer_women",
         "standby_fewer_men",
     }

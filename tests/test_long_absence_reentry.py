@@ -141,10 +141,11 @@ def test_partner_presence_maps_protocol_disconnected_to_gone():
         partner_presence_from_protocol("reconnecting") == PartnerPresence.RECONNECTING
     )
     assert partner_presence_from_protocol("disconnected") == PartnerPresence.GONE
-    assert "left" in partner_left_banner("Sara").lower()
+    assert "Sara" in partner_left_banner("Sara")
+    assert "1 minute" in partner_left_banner("Sara")
     assert "error" not in partner_left_banner("Sara").lower()
     assert "socket" not in PARTNER_GONE_FOOTER.lower()
-    assert PARTNER_ABSENCE_GRACE_MS == 25_000
+    assert PARTNER_ABSENCE_GRACE_MS == 60_000
 
 
 def test_stale_or_replaced_sockets_do_not_mark_partner_gone():
@@ -153,7 +154,7 @@ def test_stale_or_replaced_sockets_do_not_mark_partner_gone():
             owns_connection=True,
             session_replaced=False,
             disconnected_at_ms=0,
-            now_ms=25_000,
+            now_ms=60_000,
         )
         is True
     )
@@ -162,7 +163,7 @@ def test_stale_or_replaced_sockets_do_not_mark_partner_gone():
             owns_connection=True,
             session_replaced=False,
             disconnected_at_ms=0,
-            now_ms=24_999,
+            now_ms=59_999,
         )
         is False
     )
@@ -216,8 +217,8 @@ def test_call_room_js_and_html_expose_partner_left_copy():
     src = CALL_ROOM_JS.read_text(encoding="utf-8")
     assert "server.partner_state" in src
     assert "PARTNER LEFT" in src
-    assert "no replacement will be assigned" in src
-    assert "You joined from another window" in src
+    assert "Please stay here while we set up your next date." in src
+    assert "Close the other room tabs" in src
     html = VIDEO_ROOM_HTML.read_text(encoding="utf-8")
     assert "partnerGoneBanner" in html
     assert "partner-gone" in html
